@@ -1,0 +1,97 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2026 Oppeko
+ */
+
+#ifndef SYSCALL_H
+#define SYSCALL_H
+
+#include <stdint.h>
+
+struct syscall_regs {
+    uint64_t rax;
+    uint64_t rdx;
+    uint64_t rsi;
+    uint64_t rdi;
+    uint64_t r10;
+    uint64_t r8;
+    uint64_t r9;
+    uint64_t r15;
+    uint64_t r14;
+    uint64_t r13;
+    uint64_t r12;
+    uint64_t rbx;
+    uint64_t rbp;
+    uint64_t rcx;
+    uint64_t r11;
+    uint64_t rsp;
+};
+
+enum linux_syscall_nr {
+    LINUX_SYS_READ = 0,
+    LINUX_SYS_WRITE = 1,
+    LINUX_SYS_OPEN = 2,
+    LINUX_SYS_CLOSE = 3,
+    LINUX_SYS_FSTAT = 5,
+    LINUX_SYS_MMAP = 9,
+    LINUX_SYS_MPROTECT = 10,
+    LINUX_SYS_MUNMAP = 11,
+    LINUX_SYS_BRK = 12,
+    LINUX_SYS_RT_SIGACTION = 13,
+    LINUX_SYS_RT_SIGPROCMASK = 14,
+    LINUX_SYS_IOCTL = 16,
+    LINUX_SYS_LSEEK = 8,
+    LINUX_SYS_ACCESS = 21,
+    LINUX_SYS_PIPE = 22,
+    LINUX_SYS_DUP = 32,
+    LINUX_SYS_DUP2 = 33,
+    LINUX_SYS_CLONE = 56,
+    LINUX_SYS_FORK = 57,
+    LINUX_SYS_GETPID = 39,
+    LINUX_SYS_GETUID = 102,
+    LINUX_SYS_GETGID = 104,
+    LINUX_SYS_SETUID = 105,
+    LINUX_SYS_SETGID = 106,
+    LINUX_SYS_GETEUID = 107,
+    LINUX_SYS_GETEGID = 108,
+    LINUX_SYS_GETPPID = 110,
+    LINUX_SYS_PRCTL = 157,
+    LINUX_SYS_EXECVE = 59,
+    LINUX_SYS_WAIT4 = 61,
+    LINUX_SYS_UNAME = 63,
+    LINUX_SYS_GETCWD = 79,
+    LINUX_SYS_CHDIR = 80,
+    LINUX_SYS_ARCH_PRCTL = 158,
+    LINUX_SYS_CLOCK_GETTIME = 228,
+    LINUX_SYS_EXIT = 60,
+    LINUX_SYS_EXIT_GROUP = 231,
+    LINUX_SYS_READLINKAT = 267,
+    LINUX_SYS_SET_ROBUST_LIST = 273,
+    LINUX_SYS_PRLIMIT64 = 302,
+    LINUX_SYS_GETRANDOM = 318,
+    LINUX_SYS_RSEQ = 334,
+    LINUX_SYS_GETDENTS64 = 217,
+    LINUX_SYS_SET_TID_ADDRESS = 218,
+    LINUX_SYS_OPENAT = 257,
+    LINUX_SYS_NEWFSTATAT = 262,
+    LINUX_SYS_FACCESSAT = 269,
+};
+
+enum linux_errno {
+    LINUX_EPERM = 1,
+    LINUX_EACCES = 13,
+    LINUX_ENOENT = 2,
+    LINUX_E2BIG = 7,
+    LINUX_EINTR = 4,
+    LINUX_EIO = 5,
+    LINUX_EBADF = 9,
+    LINUX_ECHILD = 10,
+    LINUX_EFAULT = 14,
+    LINUX_ENOTDIR = 20,
+    LINUX_EISDIR = 21,
+    LINUX_EINVAL = 22,
+    LINUX_EMFILE = 24,
+    LINUX_ERANGE = 34,
+    LINUX_ENOSYS = 38,
+};
+
+#endif
