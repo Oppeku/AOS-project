@@ -15,6 +15,7 @@
 #include <process.h>
 #include <vga.h>
 #include <tmpfs.h>
+#include <partition.h>
 
 extern void outb(uint16_t port, uint8_t val);
 extern void serial_print(const char* s);
@@ -69,6 +70,30 @@ extern void switch_to_process(process_t* proc);
 #define LINUX_ARCH_SET_FS 0x1002
 #define LINUX_ARCH_GET_FS 0x1003
 #define LINUX_ARCH_GET_GS 0x1004
+#define LINUX_TCGETS 0x5401
+#define LINUX_TCSETS 0x5402
+#define LINUX_TCSETSW 0x5403
+#define LINUX_TCSETSF 0x5404
+#define LINUX_TIOCGWINSZ 0x5413
+#define LINUX_TIOCSWINSZ 0x5414
+#define LINUX_FIONREAD 0x541B
+#define LINUX_TIOCGPGRP 0x540F
+#define LINUX_TIOCSPGRP 0x5410
+#define LINUX_F_DUPFD 0
+#define LINUX_F_GETFD 1
+#define LINUX_F_SETFD 2
+#define LINUX_F_GETFL 3
+#define LINUX_F_SETFL 4
+#define LINUX_TERMIOS_ICRNL 0000400U
+#define LINUX_TERMIOS_OPOST 0000001U
+#define LINUX_TERMIOS_CS8 0000060U
+#define LINUX_TERMIOS_CREAD 0000200U
+#define LINUX_TERMIOS_ISIG 0000001U
+#define LINUX_TERMIOS_ICANON 0000002U
+#define LINUX_TERMIOS_ECHO 0000010U
+#define LINUX_TERMIOS_ECHOE 0000020U
+#define LINUX_TERMIOS_ECHOK 0000040U
+#define LINUX_TERMIOS_IEXTEN 0100000U
 static unsigned char g_vga_stream_color = 0x0F;
 
 struct linux_utsname {
@@ -78,6 +103,39 @@ struct linux_utsname {
     char version[65];
     char machine[65];
     char domainname[65];
+};
+
+struct linux_termios {
+    uint32_t c_iflag;
+    uint32_t c_oflag;
+    uint32_t c_cflag;
+    uint32_t c_lflag;
+    uint8_t c_line;
+    uint8_t c_cc[19];
+};
+
+struct linux_winsize {
+    uint16_t ws_row;
+    uint16_t ws_col;
+    uint16_t ws_xpixel;
+    uint16_t ws_ypixel;
+};
+
+struct linux_iovec {
+    uint64_t iov_base;
+    uint64_t iov_len;
+};
+
+struct aos_partition_user {
+    uint64_t size;
+    uint64_t offset;
+    uint32_t start;
+    uint32_t end;
+    uint16_t index;
+    uint8_t fs_type;
+    uint8_t flags;
+    char name[16];
+    char fs_name[16];
 };
 
 enum fd_kind {
@@ -1372,7 +1430,111 @@ static int64_t sys_write(struct syscall_regs* regs) {
     return (int64_t)len;
 }
 
+static int is_tty_fd_kind(uint8_t kind) {
+    return kind == FD_KIND_STDIN || kind == FD_KIND_STDOUT || kind == FD_KIND_STDERR;
+}
+
+static void fill_default_termios(struct linux_termios* term) {
+    local_memset(term, 0, sizeof(*term));
+    term->c_iflag = LINUX_TERMIOS_ICRNL;
+    term->c_oflag = LINUX_TERMIOS_OPOST;
+    term->c_cflag = LINUX_TERMIOS_CREAD | LINUX_TERMIOS_CS8;
+    term->c_lflag = LINUX_TERMIOS_ISIG | LINUX_TERMIOS_ICANON | LINUX_TERMIOS_ECHO |
+        LINUX_TERMIOS_ECHOE | LINUX_TERMIOS_ECHOK | LINUX_TERMIOS_IEXTEN;
+    term->c_cc[0] = 3;     /* VINTR: Ctrl-C */
+    term->c_cc[1] = 28;    /* VQUIT: Ctrl-\ */
+    term->c_cc[2] = 127;   /* VERASE */
+    term->c_cc[3] = 21;    /* VKILL: Ctrl-U */
+    term->c_cc[4] = 4;     /* VEOF: Ctrl-D */
+    term->c_cc[5] = 0;     /* VTIME */
+    term->c_cc[6] = 1;     /* VMIN */
+    term->c_cc[8] = 17;    /* VSTART: Ctrl-Q */
+    term->c_cc[9] = 19;    /* VSTOP: Ctrl-S */
+    term->c_cc[10] = 26;   /* VSUSP: Ctrl-Z */
+}
+
+static int64_t sys_ioctl(struct syscall_regs* regs) {
+    uint64_t fd = regs->rdi;
+    uint64_t request = regs->rsi;
+    void* arg = (void*)(uintptr_t)regs->rdx;
+    struct fd_entry* entry = get_fd_entry(fd);
+
+    if (!entry) return -(int64_t)LINUX_EBADF;
+
+    switch (request) {
+        case LINUX_TCGETS:
+            if (!is_tty_fd_kind(entry->kind)) return -(int64_t)LINUX_ENOTTY;
+            if (!arg) return -(int64_t)LINUX_EFAULT;
+            fill_default_termios((struct linux_termios*)arg);
+            return 0;
+        case LINUX_TCSETS:
+        case LINUX_TCSETSW:
+        case LINUX_TCSETSF:
+            if (!is_tty_fd_kind(entry->kind)) return -(int64_t)LINUX_ENOTTY;
+            if (!arg) return -(int64_t)LINUX_EFAULT;
+            return 0;
+        case LINUX_TIOCGWINSZ:
+            if (!is_tty_fd_kind(entry->kind)) return -(int64_t)LINUX_ENOTTY;
+            if (!arg) return -(int64_t)LINUX_EFAULT;
+            ((struct linux_winsize*)arg)->ws_row = 25;
+            ((struct linux_winsize*)arg)->ws_col = 80;
+            ((struct linux_winsize*)arg)->ws_xpixel = 0;
+            ((struct linux_winsize*)arg)->ws_ypixel = 0;
+            return 0;
+        case LINUX_TIOCSWINSZ:
+            if (!is_tty_fd_kind(entry->kind)) return -(int64_t)LINUX_ENOTTY;
+            if (!arg) return -(int64_t)LINUX_EFAULT;
+            return 0;
+        case LINUX_FIONREAD:
+            if (!arg) return -(int64_t)LINUX_EFAULT;
+            *(int*)(uintptr_t)arg = 0;
+            return 0;
+        case LINUX_TIOCGPGRP:
+            if (!is_tty_fd_kind(entry->kind)) return -(int64_t)LINUX_ENOTTY;
+            if (!arg) return -(int64_t)LINUX_EFAULT;
+            *(int*)(uintptr_t)arg = 1;
+            return 0;
+        case LINUX_TIOCSPGRP:
+            if (!is_tty_fd_kind(entry->kind)) return -(int64_t)LINUX_ENOTTY;
+            if (!arg) return -(int64_t)LINUX_EFAULT;
+            return 0;
+        default:
+            return -(int64_t)LINUX_ENOTTY;
+    }
+}
+
+static int64_t sys_writev(struct syscall_regs* regs) {
+    uint64_t fd = regs->rdi;
+    const struct linux_iovec* iov = (const struct linux_iovec*)(uintptr_t)regs->rsi;
+    uint64_t iovcnt = regs->rdx;
+    int64_t total = 0;
+
+    if (!iov && iovcnt != 0) return -(int64_t)LINUX_EFAULT;
+    if (iovcnt > 64) return -(int64_t)LINUX_EINVAL;
+
+    for (uint64_t i = 0; i < iovcnt; i++) {
+        struct syscall_regs write_regs = *regs;
+        if (!iov[i].iov_base && iov[i].iov_len != 0) return -(int64_t)LINUX_EFAULT;
+        write_regs.rdi = fd;
+        write_regs.rsi = iov[i].iov_base;
+        write_regs.rdx = iov[i].iov_len;
+        int64_t rc = sys_write(&write_regs);
+        if (rc < 0) {
+            return total > 0 ? total : rc;
+        }
+        total += rc;
+        if ((uint64_t)rc != iov[i].iov_len) {
+            break;
+        }
+    }
+
+    return total;
+}
+
+static int64_t sys_readv(struct syscall_regs* regs);
+
 extern char keyboard_pop();
+extern void keyboard_handler_main();
 
 static int64_t sys_open(struct syscall_regs* regs) {
     char path_buf[MAX_EXEC_STRING];
@@ -1488,15 +1650,51 @@ static int64_t sys_read(struct syscall_regs* regs) {
         return (int64_t)bytes_read;
     }
     if (entry->kind != FD_KIND_STDIN) return -(int64_t)LINUX_EBADF;
+    if (len == 0) return 0;
 
     uint64_t bytes_read = 0;
     while (bytes_read < len) {
         char c = keyboard_pop();
-        if (c == 0) break; // Buffer empty
+        if (c == 0) {
+            if (bytes_read == 0) {
+                keyboard_handler_main();
+                continue;
+            }
+            break;
+        }
         buf[bytes_read++] = c;
+        if (c == '\n' || c == '\r') break;
     }
 
     return (int64_t)bytes_read;
+}
+
+static int64_t sys_readv(struct syscall_regs* regs) {
+    uint64_t fd = regs->rdi;
+    const struct linux_iovec* iov = (const struct linux_iovec*)(uintptr_t)regs->rsi;
+    uint64_t iovcnt = regs->rdx;
+    int64_t total = 0;
+
+    if (!iov && iovcnt != 0) return -(int64_t)LINUX_EFAULT;
+    if (iovcnt > 64) return -(int64_t)LINUX_EINVAL;
+
+    for (uint64_t i = 0; i < iovcnt; i++) {
+        struct syscall_regs read_regs = *regs;
+        if (!iov[i].iov_base && iov[i].iov_len != 0) return -(int64_t)LINUX_EFAULT;
+        read_regs.rdi = fd;
+        read_regs.rsi = iov[i].iov_base;
+        read_regs.rdx = iov[i].iov_len;
+        int64_t rc = sys_read(&read_regs);
+        if (rc < 0) {
+            return total > 0 ? total : rc;
+        }
+        total += rc;
+        if ((uint64_t)rc != iov[i].iov_len) {
+            break;
+        }
+    }
+
+    return total;
 }
 
 static int64_t sys_lseek(struct syscall_regs* regs) {
@@ -1718,6 +1916,29 @@ static int64_t sys_dup2(struct syscall_regs* regs) {
     return dup_fd_common(regs->rdi, (int64_t)regs->rsi, 1);
 }
 
+static int64_t sys_fcntl(struct syscall_regs* regs) {
+    uint64_t fd = regs->rdi;
+    uint64_t cmd = regs->rsi;
+    struct fd_entry* entry = get_fd_entry(fd);
+
+    if (!entry) return -(int64_t)LINUX_EBADF;
+
+    switch (cmd) {
+        case LINUX_F_DUPFD:
+            return dup_fd_common(fd, -1, 0);
+        case LINUX_F_GETFD:
+            return 0;
+        case LINUX_F_SETFD:
+            return 0;
+        case LINUX_F_GETFL:
+            return 0;
+        case LINUX_F_SETFL:
+            return 0;
+        default:
+            return -(int64_t)LINUX_EINVAL;
+    }
+}
+
 static int64_t sys_execve(struct syscall_regs* regs) {
     const char* path_user = (const char*)(uintptr_t)regs->rdi;
     const uint64_t* argv_user = (const uint64_t*)(uintptr_t)regs->rsi;
@@ -1858,6 +2079,57 @@ static int64_t sys_prlimit64(struct syscall_regs* regs) {
     return 0;
 }
 
+static int64_t sys_partition_info(struct syscall_regs* regs) {
+    uint64_t index = regs->rdi;
+    struct aos_partition_user* out = (struct aos_partition_user*)(uintptr_t)regs->rsi;
+    const struct partition* part;
+    const char* fs_name;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+
+    part = partition_get((size_t)index);
+    if (!part) return -(int64_t)LINUX_ENOENT;
+
+    local_memset(out, 0, sizeof(*out));
+    out->size = part->size;
+    out->offset = part->offset;
+    out->start = part->start;
+    out->end = part->end;
+    out->index = part->index;
+    out->fs_type = part->fs_type;
+    if (!part->start && !part->end) {
+        out->flags = 1;
+    }
+
+    for (size_t i = 0; i + 1 < sizeof(out->name) && part->name[i]; i++) {
+        out->name[i] = part->name[i];
+    }
+    fs_name = partition_fs_name(part->fs_type);
+    for (size_t i = 0; i + 1 < sizeof(out->fs_name) && fs_name[i]; i++) {
+        out->fs_name[i] = fs_name[i];
+    }
+
+    return 0;
+}
+
+static int64_t sys_partition_create(struct syscall_regs* regs) {
+    uint8_t fs_type = (uint8_t)regs->rdi;
+    uint64_t size = regs->rsi;
+    int rc = partition_create_planned(fs_type, size);
+    if (rc < 0) return -(int64_t)LINUX_EINVAL;
+    return rc;
+}
+
+static int64_t sys_partition_delete(struct syscall_regs* regs) {
+    if (partition_delete_planned((size_t)regs->rdi) != 0) return -(int64_t)LINUX_EINVAL;
+    return 0;
+}
+
+static int64_t sys_partition_type(struct syscall_regs* regs) {
+    if (partition_cycle_planned_type((size_t)regs->rdi) != 0) return -(int64_t)LINUX_EINVAL;
+    return 0;
+}
+
 static void halt_forever(void) {
     for (;;) {
         asm volatile("hlt");
@@ -1889,7 +2161,13 @@ void syscall_handler(struct syscall_regs* regs) {
             regs->rax = (uint64_t)sys_write(regs);
             return;
         case LINUX_SYS_IOCTL:
-            regs->rax = (uint64_t)(-(int64_t)LINUX_EINVAL);
+            regs->rax = (uint64_t)sys_ioctl(regs);
+            return;
+        case LINUX_SYS_READV:
+            regs->rax = (uint64_t)sys_readv(regs);
+            return;
+        case LINUX_SYS_WRITEV:
+            regs->rax = (uint64_t)sys_writev(regs);
             return;
         case LINUX_SYS_OPEN:
             regs->rax = (uint64_t)sys_open(regs);
@@ -1964,6 +2242,18 @@ void syscall_handler(struct syscall_regs* regs) {
         case LINUX_SYS_GETRANDOM:
             regs->rax = (uint64_t)sys_getrandom(regs);
             return;
+        case AOS_SYS_PARTITION_INFO:
+            regs->rax = (uint64_t)sys_partition_info(regs);
+            return;
+        case AOS_SYS_PARTITION_CREATE:
+            regs->rax = (uint64_t)sys_partition_create(regs);
+            return;
+        case AOS_SYS_PARTITION_DELETE:
+            regs->rax = (uint64_t)sys_partition_delete(regs);
+            return;
+        case AOS_SYS_PARTITION_TYPE:
+            regs->rax = (uint64_t)sys_partition_type(regs);
+            return;
         case LINUX_SYS_FACCESSAT:
             regs->rax = (uint64_t)sys_faccessat(regs);
             return;
@@ -1984,6 +2274,9 @@ void syscall_handler(struct syscall_regs* regs) {
             return;
         case LINUX_SYS_UNAME:
             regs->rax = (uint64_t)sys_uname(regs);
+            return;
+        case LINUX_SYS_FCNTL:
+            regs->rax = (uint64_t)sys_fcntl(regs);
             return;
         case LINUX_SYS_GETCWD:
             regs->rax = (uint64_t)sys_getcwd(regs);

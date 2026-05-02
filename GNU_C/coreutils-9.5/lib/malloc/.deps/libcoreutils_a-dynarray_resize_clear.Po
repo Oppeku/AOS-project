@@ -1,0 +1,24 @@
+lib/malloc/libcoreutils_a-dynarray_resize_clear.o: \
+ lib/malloc/dynarray_resize_clear.c lib/libc-config.h lib/config.h \
+ /usr/include/x86_64-linux-musl/errno.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/errno.h lib/cdefs.h lib/dynarray.h \
+ lib/malloc/dynarray.h lib/stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h lib/string.h \
+ /usr/include/x86_64-linux-musl/string.h \
+ /usr/include/x86_64-linux-musl/strings.h
+lib/libc-config.h:
+lib/config.h:
+/usr/include/x86_64-linux-musl/errno.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/errno.h:
+lib/cdefs.h:
+lib/dynarray.h:
+lib/malloc/dynarray.h:
+lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+lib/string.h:
+/usr/include/x86_64-linux-musl/string.h:
+/usr/include/x86_64-linux-musl/strings.h:

@@ -1,0 +1,38 @@
+lib/libcoreutils_a-c32isspace.o: lib/c32isspace.c lib/config.h \
+ lib/uchar.h /usr/include/x86_64-linux-musl/uchar.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h lib/stdint.h \
+ /usr/include/x86_64-linux-musl/stdint.h \
+ /usr/include/x86_64-linux-musl/bits/stdint.h lib/limits.h \
+ /usr/include/x86_64-linux-musl/limits.h \
+ /usr/include/x86_64-linux-musl/bits/limits.h lib/wchar.h lib/stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h \
+ /usr/include/x86_64-linux-musl/wchar.h lib/string.h \
+ /usr/include/x86_64-linux-musl/string.h \
+ /usr/include/x86_64-linux-musl/strings.h lib/wctype.h \
+ /usr/include/x86_64-linux-musl/wctype.h lib/c32is-impl.h lib/unictype.h \
+ lib/unitypes.h /usr/include/x86_64-linux-musl/stdbool.h
+lib/config.h:
+lib/uchar.h:
+/usr/include/x86_64-linux-musl/uchar.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+lib/stdint.h:
+/usr/include/x86_64-linux-musl/stdint.h:
+/usr/include/x86_64-linux-musl/bits/stdint.h:
+lib/limits.h:
+/usr/include/x86_64-linux-musl/limits.h:
+/usr/include/x86_64-linux-musl/bits/limits.h:
+lib/wchar.h:
+lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+/usr/include/x86_64-linux-musl/wchar.h:
+lib/string.h:
+/usr/include/x86_64-linux-musl/string.h:
+/usr/include/x86_64-linux-musl/strings.h:
+lib/wctype.h:
+/usr/include/x86_64-linux-musl/wctype.h:
+lib/c32is-impl.h:
+lib/unictype.h:
+lib/unitypes.h:
+/usr/include/x86_64-linux-musl/stdbool.h:

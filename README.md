@@ -156,6 +156,8 @@ Things may crash.
 Sometimes things will work for no clear reason.
 
 That is normal when building an operating system.
+And i used CODEX to add comment to all my codes since 
+AI EXISTS TO HELP HUMAN BEING and with this i can rest a bit 
 -----------------------------------------------------
 7. License
 -----------------------------------------------------
@@ -168,6 +170,7 @@ See the LICENSE file for details.
 Email id - abhigyannarayan653@gmail.com
 Created by Abhigyan.
 ------------------------------------------
-
-#MAN JUST HOW HARD IS IT TO BE FORMAL 
-#BTW DID U WATCH THE LATEST ONE PIECE ELBAF ARC ITS FIRE WITH HIGH LVL ANIMATIONS 
+Open source applications used
+------------------------------------------
+1. Busybox - https://busybox.net/
+2. GNU - https://www.gnu.org/software/coreutils/

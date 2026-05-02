@@ -1,0 +1,147 @@
+src/runcon.o: src/runcon.c lib/config.h lib/stdio.h \
+ /usr/include/x86_64-linux-musl/stdio.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h \
+ /usr/include/x86_64-linux-musl/stdarg.h lib/stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h lib/sys/types.h \
+ /usr/include/x86_64-linux-musl/sys/types.h \
+ /usr/include/x86_64-linux-musl/endian.h lib/sys/select.h lib/sys/time.h \
+ /usr/include/x86_64-linux-musl/sys/time.h \
+ /usr/include/x86_64-linux-musl/sys/select.h lib/signal.h \
+ /usr/include/x86_64-linux-musl/signal.h \
+ /usr/include/x86_64-linux-musl/bits/signal.h lib/getopt.h \
+ /usr/include/x86_64-linux-musl/getopt.h lib/getopt-cdefs.h \
+ lib/getopt-pfx-core.h lib/getopt-core.h lib/getopt-pfx-ext.h \
+ lib/getopt-ext.h lib/selinux/selinux.h \
+ /usr/include/x86_64-linux-musl/errno.h \
+ /usr/include/x86_64-linux-musl/bits/errno.h lib/selinux/context.h \
+ src/system.h lib/attribute.h lib/alloca.h lib/sys/stat.h lib/time.h \
+ /usr/include/x86_64-linux-musl/time.h \
+ /usr/include/x86_64-linux-musl/sys/stat.h \
+ /usr/include/x86_64-linux-musl/bits/stat.h \
+ /usr/include/x86_64-linux-musl/sys/param.h lib/sys/resource.h \
+ /usr/include/x86_64-linux-musl/sys/resource.h \
+ /usr/include/x86_64-linux-musl/bits/resource.h lib/limits.h \
+ /usr/include/x86_64-linux-musl/limits.h \
+ /usr/include/x86_64-linux-musl/bits/limits.h lib/unistd.h \
+ /usr/include/x86_64-linux-musl/unistd.h \
+ /usr/include/x86_64-linux-musl/bits/posix.h lib/stdlib.h \
+ /usr/include/x86_64-linux-musl/stdlib.h lib/pathmax.h lib/configmake.h \
+ /usr/include/x86_64-linux-musl/sys/sysmacros.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/stdckdint.h lib/string.h \
+ /usr/include/x86_64-linux-musl/string.h \
+ /usr/include/x86_64-linux-musl/strings.h src/version.h lib/exitfail.h \
+ lib/fcntl.h /usr/include/x86_64-linux-musl/fcntl.h \
+ /usr/include/x86_64-linux-musl/bits/fcntl.h lib/dirent.h \
+ /usr/include/x86_64-linux-musl/dirent.h \
+ /usr/include/x86_64-linux-musl/bits/dirent.h lib/inttypes.h \
+ /usr/include/x86_64-linux-musl/inttypes.h lib/stdint.h \
+ /usr/include/x86_64-linux-musl/stdint.h \
+ /usr/include/x86_64-linux-musl/bits/stdint.h lib/stat-macros.h \
+ lib/timespec.h lib/arg-nonnull.h lib/locale.h \
+ /usr/include/x86_64-linux-musl/locale.h lib/setlocale_null.h \
+ lib/gettext.h lib/idx.h lib/xalloc.h lib/idx.h lib/verify.h \
+ lib/unlocked-io.h lib/same-inode.h lib/dirname.h lib/filename.h \
+ lib/basename-lgpl.h lib/openat.h lib/closein.h lib/closeout.h \
+ lib/version-etc.h lib/propername.h lib/progname.h lib/minmax.h \
+ lib/intprops.h lib/intprops-internal.h lib/inttostr.h lib/intprops.h \
+ lib/error.h lib/quotearg.h lib/quote.h
+lib/config.h:
+lib/stdio.h:
+/usr/include/x86_64-linux-musl/stdio.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+/usr/include/x86_64-linux-musl/stdarg.h:
+lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+lib/sys/types.h:
+/usr/include/x86_64-linux-musl/sys/types.h:
+/usr/include/x86_64-linux-musl/endian.h:
+lib/sys/select.h:
+lib/sys/time.h:
+/usr/include/x86_64-linux-musl/sys/time.h:
+/usr/include/x86_64-linux-musl/sys/select.h:
+lib/signal.h:
+/usr/include/x86_64-linux-musl/signal.h:
+/usr/include/x86_64-linux-musl/bits/signal.h:
+lib/getopt.h:
+/usr/include/x86_64-linux-musl/getopt.h:
+lib/getopt-cdefs.h:
+lib/getopt-pfx-core.h:
+lib/getopt-core.h:
+lib/getopt-pfx-ext.h:
+lib/getopt-ext.h:
+lib/selinux/selinux.h:
+/usr/include/x86_64-linux-musl/errno.h:
+/usr/include/x86_64-linux-musl/bits/errno.h:
+lib/selinux/context.h:
+src/system.h:
+lib/attribute.h:
+lib/alloca.h:
+lib/sys/stat.h:
+lib/time.h:
+/usr/include/x86_64-linux-musl/time.h:
+/usr/include/x86_64-linux-musl/sys/stat.h:
+/usr/include/x86_64-linux-musl/bits/stat.h:
+/usr/include/x86_64-linux-musl/sys/param.h:
+lib/sys/resource.h:
+/usr/include/x86_64-linux-musl/sys/resource.h:
+/usr/include/x86_64-linux-musl/bits/resource.h:
+lib/limits.h:
+/usr/include/x86_64-linux-musl/limits.h:
+/usr/include/x86_64-linux-musl/bits/limits.h:
+lib/unistd.h:
+/usr/include/x86_64-linux-musl/unistd.h:
+/usr/include/x86_64-linux-musl/bits/posix.h:
+lib/stdlib.h:
+/usr/include/x86_64-linux-musl/stdlib.h:
+lib/pathmax.h:
+lib/configmake.h:
+/usr/include/x86_64-linux-musl/sys/sysmacros.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/stdckdint.h:
+lib/string.h:
+/usr/include/x86_64-linux-musl/string.h:
+/usr/include/x86_64-linux-musl/strings.h:
+src/version.h:
+lib/exitfail.h:
+lib/fcntl.h:
+/usr/include/x86_64-linux-musl/fcntl.h:
+/usr/include/x86_64-linux-musl/bits/fcntl.h:
+lib/dirent.h:
+/usr/include/x86_64-linux-musl/dirent.h:
+/usr/include/x86_64-linux-musl/bits/dirent.h:
+lib/inttypes.h:
+/usr/include/x86_64-linux-musl/inttypes.h:
+lib/stdint.h:
+/usr/include/x86_64-linux-musl/stdint.h:
+/usr/include/x86_64-linux-musl/bits/stdint.h:
+lib/stat-macros.h:
+lib/timespec.h:
+lib/arg-nonnull.h:
+lib/locale.h:
+/usr/include/x86_64-linux-musl/locale.h:
+lib/setlocale_null.h:
+lib/gettext.h:
+lib/idx.h:
+lib/xalloc.h:
+lib/idx.h:
+lib/verify.h:
+lib/unlocked-io.h:
+lib/same-inode.h:
+lib/dirname.h:
+lib/filename.h:
+lib/basename-lgpl.h:
+lib/openat.h:
+lib/closein.h:
+lib/closeout.h:
+lib/version-etc.h:
+lib/propername.h:
+lib/progname.h:
+lib/minmax.h:
+lib/intprops.h:
+lib/intprops-internal.h:
+lib/inttostr.h:
+lib/intprops.h:
+lib/error.h:
+lib/quotearg.h:
+lib/quote.h:

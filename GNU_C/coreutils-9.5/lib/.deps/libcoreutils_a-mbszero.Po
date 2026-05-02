@@ -1,0 +1,17 @@
+lib/libcoreutils_a-mbszero.o: lib/mbszero.c lib/config.h lib/wchar.h \
+ /usr/include/x86_64-linux-musl/features.h lib/stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h \
+ /usr/include/x86_64-linux-musl/wchar.h lib/string.h \
+ /usr/include/x86_64-linux-musl/string.h \
+ /usr/include/x86_64-linux-musl/strings.h
+lib/config.h:
+lib/wchar.h:
+/usr/include/x86_64-linux-musl/features.h:
+lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+/usr/include/x86_64-linux-musl/wchar.h:
+lib/string.h:
+/usr/include/x86_64-linux-musl/string.h:
+/usr/include/x86_64-linux-musl/strings.h:

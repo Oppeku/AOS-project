@@ -1,0 +1,17 @@
+lib/libcoreutils_a-printf-frexpl.o: lib/printf-frexpl.c lib/config.h \
+ lib/printf-frexp.c lib/printf-frexpl.h \
+ /usr/include/x86_64-linux-musl/float.h \
+ /usr/include/x86_64-linux-musl/bits/float.h lib/math.h \
+ /usr/include/x86_64-linux-musl/math.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h lib/fpucw.h
+lib/config.h:
+lib/printf-frexp.c:
+lib/printf-frexpl.h:
+/usr/include/x86_64-linux-musl/float.h:
+/usr/include/x86_64-linux-musl/bits/float.h:
+lib/math.h:
+/usr/include/x86_64-linux-musl/math.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+lib/fpucw.h:

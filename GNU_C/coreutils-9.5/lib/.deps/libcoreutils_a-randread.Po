@@ -1,0 +1,101 @@
+lib/libcoreutils_a-randread.o: lib/randread.c lib/config.h lib/randread.h \
+ lib/stddef.h /usr/include/x86_64-linux-musl/stddef.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h \
+ /usr/include/x86_64-linux-musl/errno.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/errno.h lib/error.h lib/stdio.h \
+ /usr/include/x86_64-linux-musl/stdio.h \
+ /usr/include/x86_64-linux-musl/stdarg.h lib/sys/types.h \
+ /usr/include/x86_64-linux-musl/sys/types.h \
+ /usr/include/x86_64-linux-musl/endian.h lib/sys/select.h lib/sys/time.h \
+ /usr/include/x86_64-linux-musl/sys/time.h \
+ /usr/include/x86_64-linux-musl/sys/select.h lib/signal.h \
+ /usr/include/x86_64-linux-musl/signal.h \
+ /usr/include/x86_64-linux-musl/bits/signal.h lib/exitfail.h lib/fcntl.h \
+ lib/sys/stat.h lib/time.h /usr/include/x86_64-linux-musl/time.h \
+ /usr/include/x86_64-linux-musl/sys/stat.h \
+ /usr/include/x86_64-linux-musl/bits/stat.h \
+ /usr/include/x86_64-linux-musl/fcntl.h \
+ /usr/include/x86_64-linux-musl/bits/fcntl.h lib/unistd.h \
+ /usr/include/x86_64-linux-musl/unistd.h \
+ /usr/include/x86_64-linux-musl/bits/posix.h lib/stdlib.h \
+ /usr/include/x86_64-linux-musl/stdlib.h lib/alloca.h lib/getopt-cdefs.h \
+ lib/getopt-pfx-core.h lib/getopt-core.h lib/quote.h lib/stdint.h \
+ /usr/include/x86_64-linux-musl/stdint.h \
+ /usr/include/x86_64-linux-musl/bits/stdint.h lib/limits.h \
+ /usr/include/x86_64-linux-musl/limits.h \
+ /usr/include/x86_64-linux-musl/bits/limits.h lib/string.h \
+ /usr/include/x86_64-linux-musl/string.h \
+ /usr/include/x86_64-linux-musl/strings.h lib/sys/random.h \
+ /usr/include/x86_64-linux-musl/sys/random.h lib/gettext.h lib/assure.h \
+ /usr/include/x86_64-linux-musl/assert.h lib/verify.h lib/minmax.h \
+ /usr/include/x86_64-linux-musl/sys/param.h lib/sys/resource.h \
+ /usr/include/x86_64-linux-musl/sys/resource.h \
+ /usr/include/x86_64-linux-musl/bits/resource.h lib/rand-isaac.h \
+ lib/stdio-safer.h lib/unlocked-io.h lib/xalloc.h lib/idx.h
+lib/config.h:
+lib/randread.h:
+lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+/usr/include/x86_64-linux-musl/errno.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/errno.h:
+lib/error.h:
+lib/stdio.h:
+/usr/include/x86_64-linux-musl/stdio.h:
+/usr/include/x86_64-linux-musl/stdarg.h:
+lib/sys/types.h:
+/usr/include/x86_64-linux-musl/sys/types.h:
+/usr/include/x86_64-linux-musl/endian.h:
+lib/sys/select.h:
+lib/sys/time.h:
+/usr/include/x86_64-linux-musl/sys/time.h:
+/usr/include/x86_64-linux-musl/sys/select.h:
+lib/signal.h:
+/usr/include/x86_64-linux-musl/signal.h:
+/usr/include/x86_64-linux-musl/bits/signal.h:
+lib/exitfail.h:
+lib/fcntl.h:
+lib/sys/stat.h:
+lib/time.h:
+/usr/include/x86_64-linux-musl/time.h:
+/usr/include/x86_64-linux-musl/sys/stat.h:
+/usr/include/x86_64-linux-musl/bits/stat.h:
+/usr/include/x86_64-linux-musl/fcntl.h:
+/usr/include/x86_64-linux-musl/bits/fcntl.h:
+lib/unistd.h:
+/usr/include/x86_64-linux-musl/unistd.h:
+/usr/include/x86_64-linux-musl/bits/posix.h:
+lib/stdlib.h:
+/usr/include/x86_64-linux-musl/stdlib.h:
+lib/alloca.h:
+lib/getopt-cdefs.h:
+lib/getopt-pfx-core.h:
+lib/getopt-core.h:
+lib/quote.h:
+lib/stdint.h:
+/usr/include/x86_64-linux-musl/stdint.h:
+/usr/include/x86_64-linux-musl/bits/stdint.h:
+lib/limits.h:
+/usr/include/x86_64-linux-musl/limits.h:
+/usr/include/x86_64-linux-musl/bits/limits.h:
+lib/string.h:
+/usr/include/x86_64-linux-musl/string.h:
+/usr/include/x86_64-linux-musl/strings.h:
+lib/sys/random.h:
+/usr/include/x86_64-linux-musl/sys/random.h:
+lib/gettext.h:
+lib/assure.h:
+/usr/include/x86_64-linux-musl/assert.h:
+lib/verify.h:
+lib/minmax.h:
+/usr/include/x86_64-linux-musl/sys/param.h:
+lib/sys/resource.h:
+/usr/include/x86_64-linux-musl/sys/resource.h:
+/usr/include/x86_64-linux-musl/bits/resource.h:
+lib/rand-isaac.h:
+lib/stdio-safer.h:
+lib/unlocked-io.h:
+lib/xalloc.h:
+lib/idx.h:

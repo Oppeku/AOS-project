@@ -1,0 +1,374 @@
+src/libcksum_pclmul_a-cksum_pclmul.o: src/cksum_pclmul.c lib/config.h \
+ lib/stdio.h /usr/include/x86_64-linux-musl/stdio.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h \
+ /usr/include/x86_64-linux-musl/stdarg.h lib/stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h lib/sys/types.h \
+ /usr/include/x86_64-linux-musl/sys/types.h \
+ /usr/include/x86_64-linux-musl/endian.h lib/sys/select.h lib/sys/time.h \
+ /usr/include/x86_64-linux-musl/sys/time.h \
+ /usr/include/x86_64-linux-musl/sys/select.h lib/signal.h \
+ /usr/include/x86_64-linux-musl/signal.h \
+ /usr/include/x86_64-linux-musl/bits/signal.h lib/stdint.h \
+ /usr/include/x86_64-linux-musl/stdint.h \
+ /usr/include/x86_64-linux-musl/bits/stdint.h lib/limits.h \
+ /usr/include/x86_64-linux-musl/limits.h \
+ /usr/include/x86_64-linux-musl/bits/limits.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/x86intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/x86gprintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/ia32intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/adxintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/bmiintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/bmi2intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/cetintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/cldemoteintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/clflushoptintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/clwbintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/clzerointrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/cmpccxaddintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/enqcmdintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/fxsrintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/lzcntintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/lwpintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/movdirintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/mwaitintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/mwaitxintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/pconfigintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/popcntintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/pkuintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/prfchiintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/raointintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/rdseedintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/rtmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/serializeintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/sgxintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/tbmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/tsxldtrkintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/uintrintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/waitpkgintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/wbnoinvdintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/xsaveintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/xsavecintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/xsaveoptintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/xsavesintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/xtestintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/hresetintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/usermsrintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/immintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/mmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/xmmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/mm_malloc.h lib/stdlib.h \
+ /usr/include/x86_64-linux-musl/stdlib.h lib/alloca.h lib/unistd.h \
+ /usr/include/x86_64-linux-musl/unistd.h \
+ /usr/include/x86_64-linux-musl/bits/posix.h lib/getopt-cdefs.h \
+ lib/getopt-pfx-core.h lib/getopt-core.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/emmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/pmmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/tmmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/smmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/wmmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avxintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avxvnniintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avxifmaintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avxvnniint8intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avxvnniint16intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx2intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512fintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512cdintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vlintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512bwintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512dqintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vlbwintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vldqintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512ifmaintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512ifmavlintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vbmiintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vbmivlintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vpopcntdqintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vbmi2intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vbmi2vlintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vnniintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vnnivlintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vpopcntdqvlintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512bitalgintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512bitalgvlintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vp2intersectintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vp2intersectvlintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512fp16intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512fp16vlintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/shaintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/sm3intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/sha512intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/sm4intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/fmaintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/f16cintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/gfniintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/vaesintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/vpclmulqdqintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512bf16vlintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx512bf16intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avxneconvertintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/amxtileintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/amxint8intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/amxbf16intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/amxcomplexintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/amxavx512intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/amxtf32intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/amxtransposeintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/amxfp8intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/prfchwintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/keylockerintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/amxfp16intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2mediaintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2-512mediaintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2convertintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2-512convertintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2bf16intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2-512bf16intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2satcvtintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2-512satcvtintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2minmaxintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2-512minmaxintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2copyintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/movrsintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/amxmovrsintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/mm3dnow.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/fma4intrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/ammintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/xopintrin.h src/system.h \
+ lib/attribute.h lib/sys/stat.h lib/time.h \
+ /usr/include/x86_64-linux-musl/time.h \
+ /usr/include/x86_64-linux-musl/sys/stat.h \
+ /usr/include/x86_64-linux-musl/bits/stat.h \
+ /usr/include/x86_64-linux-musl/sys/param.h lib/sys/resource.h \
+ /usr/include/x86_64-linux-musl/sys/resource.h \
+ /usr/include/x86_64-linux-musl/bits/resource.h lib/pathmax.h \
+ lib/configmake.h /usr/include/x86_64-linux-musl/sys/sysmacros.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/stdckdint.h lib/string.h \
+ /usr/include/x86_64-linux-musl/string.h \
+ /usr/include/x86_64-linux-musl/strings.h \
+ /usr/include/x86_64-linux-musl/errno.h \
+ /usr/include/x86_64-linux-musl/bits/errno.h src/version.h lib/exitfail.h \
+ lib/fcntl.h /usr/include/x86_64-linux-musl/fcntl.h \
+ /usr/include/x86_64-linux-musl/bits/fcntl.h lib/dirent.h \
+ /usr/include/x86_64-linux-musl/dirent.h \
+ /usr/include/x86_64-linux-musl/bits/dirent.h lib/inttypes.h \
+ /usr/include/x86_64-linux-musl/inttypes.h lib/stat-macros.h \
+ lib/timespec.h lib/arg-nonnull.h lib/locale.h \
+ /usr/include/x86_64-linux-musl/locale.h lib/setlocale_null.h \
+ lib/gettext.h lib/idx.h lib/xalloc.h lib/idx.h lib/verify.h \
+ lib/unlocked-io.h lib/same-inode.h lib/dirname.h lib/filename.h \
+ lib/basename-lgpl.h lib/openat.h lib/closein.h lib/closeout.h \
+ lib/version-etc.h lib/propername.h lib/progname.h lib/minmax.h \
+ lib/intprops.h lib/intprops-internal.h lib/inttostr.h lib/intprops.h \
+ lib/error.h lib/quotearg.h
+lib/config.h:
+lib/stdio.h:
+/usr/include/x86_64-linux-musl/stdio.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+/usr/include/x86_64-linux-musl/stdarg.h:
+lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+lib/sys/types.h:
+/usr/include/x86_64-linux-musl/sys/types.h:
+/usr/include/x86_64-linux-musl/endian.h:
+lib/sys/select.h:
+lib/sys/time.h:
+/usr/include/x86_64-linux-musl/sys/time.h:
+/usr/include/x86_64-linux-musl/sys/select.h:
+lib/signal.h:
+/usr/include/x86_64-linux-musl/signal.h:
+/usr/include/x86_64-linux-musl/bits/signal.h:
+lib/stdint.h:
+/usr/include/x86_64-linux-musl/stdint.h:
+/usr/include/x86_64-linux-musl/bits/stdint.h:
+lib/limits.h:
+/usr/include/x86_64-linux-musl/limits.h:
+/usr/include/x86_64-linux-musl/bits/limits.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/x86intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/x86gprintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/ia32intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/adxintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/bmiintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/bmi2intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/cetintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/cldemoteintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/clflushoptintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/clwbintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/clzerointrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/cmpccxaddintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/enqcmdintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/fxsrintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/lzcntintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/lwpintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/movdirintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/mwaitintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/mwaitxintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/pconfigintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/popcntintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/pkuintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/prfchiintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/raointintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/rdseedintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/rtmintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/serializeintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/sgxintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/tbmintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/tsxldtrkintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/uintrintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/waitpkgintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/wbnoinvdintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/xsaveintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/xsavecintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/xsaveoptintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/xsavesintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/xtestintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/hresetintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/usermsrintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/immintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/mmintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/xmmintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/mm_malloc.h:
+lib/stdlib.h:
+/usr/include/x86_64-linux-musl/stdlib.h:
+lib/alloca.h:
+lib/unistd.h:
+/usr/include/x86_64-linux-musl/unistd.h:
+/usr/include/x86_64-linux-musl/bits/posix.h:
+lib/getopt-cdefs.h:
+lib/getopt-pfx-core.h:
+lib/getopt-core.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/emmintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/pmmintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/tmmintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/smmintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/wmmintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avxintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avxvnniintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avxifmaintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avxvnniint8intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avxvnniint16intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx2intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512fintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512cdintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vlintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512bwintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512dqintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vlbwintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vldqintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512ifmaintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512ifmavlintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vbmiintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vbmivlintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vpopcntdqintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vbmi2intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vbmi2vlintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vnniintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vnnivlintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vpopcntdqvlintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512bitalgintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512bitalgvlintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vp2intersectintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512vp2intersectvlintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512fp16intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512fp16vlintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/shaintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/sm3intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/sha512intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/sm4intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/fmaintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/f16cintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/gfniintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/vaesintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/vpclmulqdqintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512bf16vlintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx512bf16intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avxneconvertintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/amxtileintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/amxint8intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/amxbf16intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/amxcomplexintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/amxavx512intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/amxtf32intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/amxtransposeintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/amxfp8intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/prfchwintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/keylockerintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/amxfp16intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2mediaintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2-512mediaintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2convertintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2-512convertintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2bf16intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2-512bf16intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2satcvtintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2-512satcvtintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2minmaxintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2-512minmaxintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/avx10_2copyintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/movrsintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/amxmovrsintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/mm3dnow.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/fma4intrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/ammintrin.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/xopintrin.h:
+src/system.h:
+lib/attribute.h:
+lib/sys/stat.h:
+lib/time.h:
+/usr/include/x86_64-linux-musl/time.h:
+/usr/include/x86_64-linux-musl/sys/stat.h:
+/usr/include/x86_64-linux-musl/bits/stat.h:
+/usr/include/x86_64-linux-musl/sys/param.h:
+lib/sys/resource.h:
+/usr/include/x86_64-linux-musl/sys/resource.h:
+/usr/include/x86_64-linux-musl/bits/resource.h:
+lib/pathmax.h:
+lib/configmake.h:
+/usr/include/x86_64-linux-musl/sys/sysmacros.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/stdckdint.h:
+lib/string.h:
+/usr/include/x86_64-linux-musl/string.h:
+/usr/include/x86_64-linux-musl/strings.h:
+/usr/include/x86_64-linux-musl/errno.h:
+/usr/include/x86_64-linux-musl/bits/errno.h:
+src/version.h:
+lib/exitfail.h:
+lib/fcntl.h:
+/usr/include/x86_64-linux-musl/fcntl.h:
+/usr/include/x86_64-linux-musl/bits/fcntl.h:
+lib/dirent.h:
+/usr/include/x86_64-linux-musl/dirent.h:
+/usr/include/x86_64-linux-musl/bits/dirent.h:
+lib/inttypes.h:
+/usr/include/x86_64-linux-musl/inttypes.h:
+lib/stat-macros.h:
+lib/timespec.h:
+lib/arg-nonnull.h:
+lib/locale.h:
+/usr/include/x86_64-linux-musl/locale.h:
+lib/setlocale_null.h:
+lib/gettext.h:
+lib/idx.h:
+lib/xalloc.h:
+lib/idx.h:
+lib/verify.h:
+lib/unlocked-io.h:
+lib/same-inode.h:
+lib/dirname.h:
+lib/filename.h:
+lib/basename-lgpl.h:
+lib/openat.h:
+lib/closein.h:
+lib/closeout.h:
+lib/version-etc.h:
+lib/propername.h:
+lib/progname.h:
+lib/minmax.h:
+lib/intprops.h:
+lib/intprops-internal.h:
+lib/inttostr.h:
+lib/intprops.h:
+lib/error.h:
+lib/quotearg.h:

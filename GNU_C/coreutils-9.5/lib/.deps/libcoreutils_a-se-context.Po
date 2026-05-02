@@ -1,0 +1,9 @@
+lib/libcoreutils_a-se-context.o: lib/se-context.c lib/config.h \
+ lib/selinux/context.h /usr/include/x86_64-linux-musl/errno.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/errno.h
+lib/config.h:
+lib/selinux/context.h:
+/usr/include/x86_64-linux-musl/errno.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/errno.h:

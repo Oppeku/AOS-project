@@ -1,0 +1,39 @@
+lib/libcoreutils_a-close-stream.o: lib/close-stream.c lib/config.h \
+ lib/close-stream.h lib/stdio.h /usr/include/x86_64-linux-musl/stdio.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h \
+ /usr/include/x86_64-linux-musl/stdarg.h lib/stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h lib/sys/types.h \
+ /usr/include/x86_64-linux-musl/sys/types.h \
+ /usr/include/x86_64-linux-musl/endian.h lib/sys/select.h lib/sys/time.h \
+ /usr/include/x86_64-linux-musl/sys/time.h \
+ /usr/include/x86_64-linux-musl/sys/select.h lib/signal.h \
+ /usr/include/x86_64-linux-musl/signal.h \
+ /usr/include/x86_64-linux-musl/bits/signal.h \
+ /usr/include/x86_64-linux-musl/errno.h \
+ /usr/include/x86_64-linux-musl/bits/errno.h lib/fpending.h \
+ /usr/include/x86_64-linux-musl/stdio_ext.h lib/unlocked-io.h
+lib/config.h:
+lib/close-stream.h:
+lib/stdio.h:
+/usr/include/x86_64-linux-musl/stdio.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+/usr/include/x86_64-linux-musl/stdarg.h:
+lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+lib/sys/types.h:
+/usr/include/x86_64-linux-musl/sys/types.h:
+/usr/include/x86_64-linux-musl/endian.h:
+lib/sys/select.h:
+lib/sys/time.h:
+/usr/include/x86_64-linux-musl/sys/time.h:
+/usr/include/x86_64-linux-musl/sys/select.h:
+lib/signal.h:
+/usr/include/x86_64-linux-musl/signal.h:
+/usr/include/x86_64-linux-musl/bits/signal.h:
+/usr/include/x86_64-linux-musl/errno.h:
+/usr/include/x86_64-linux-musl/bits/errno.h:
+lib/fpending.h:
+/usr/include/x86_64-linux-musl/stdio_ext.h:
+lib/unlocked-io.h:

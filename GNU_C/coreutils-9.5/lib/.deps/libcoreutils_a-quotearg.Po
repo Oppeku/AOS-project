@@ -1,0 +1,88 @@
+lib/libcoreutils_a-quotearg.o: lib/quotearg.c lib/config.h lib/quotearg.h \
+ lib/stdlib.h /usr/include/x86_64-linux-musl/stdlib.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h lib/alloca.h lib/stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h lib/unistd.h \
+ /usr/include/x86_64-linux-musl/unistd.h \
+ /usr/include/x86_64-linux-musl/bits/posix.h lib/sys/types.h \
+ /usr/include/x86_64-linux-musl/sys/types.h \
+ /usr/include/x86_64-linux-musl/endian.h lib/sys/select.h lib/sys/time.h \
+ /usr/include/x86_64-linux-musl/sys/time.h \
+ /usr/include/x86_64-linux-musl/sys/select.h lib/signal.h \
+ /usr/include/x86_64-linux-musl/signal.h \
+ /usr/include/x86_64-linux-musl/bits/signal.h lib/getopt-cdefs.h \
+ lib/getopt-pfx-core.h lib/getopt-core.h lib/quote.h lib/attribute.h \
+ lib/minmax.h /usr/include/x86_64-linux-musl/sys/param.h \
+ lib/sys/resource.h /usr/include/x86_64-linux-musl/sys/resource.h \
+ /usr/include/x86_64-linux-musl/bits/resource.h lib/limits.h \
+ /usr/include/x86_64-linux-musl/limits.h \
+ /usr/include/x86_64-linux-musl/bits/limits.h lib/xalloc.h lib/idx.h \
+ lib/stdint.h /usr/include/x86_64-linux-musl/stdint.h \
+ /usr/include/x86_64-linux-musl/bits/stdint.h lib/c-strcaseeq.h \
+ lib/c-strcase.h lib/c-ctype.h lib/localcharset.h lib/ctype.h \
+ /usr/include/x86_64-linux-musl/ctype.h \
+ /usr/include/x86_64-linux-musl/errno.h \
+ /usr/include/x86_64-linux-musl/bits/errno.h lib/string.h \
+ /usr/include/x86_64-linux-musl/string.h \
+ /usr/include/x86_64-linux-musl/strings.h lib/uchar.h \
+ /usr/include/x86_64-linux-musl/uchar.h lib/wchar.h \
+ /usr/include/x86_64-linux-musl/wchar.h lib/wctype.h \
+ /usr/include/x86_64-linux-musl/wctype.h lib/gettext.h
+lib/config.h:
+lib/quotearg.h:
+lib/stdlib.h:
+/usr/include/x86_64-linux-musl/stdlib.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+lib/alloca.h:
+lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+lib/unistd.h:
+/usr/include/x86_64-linux-musl/unistd.h:
+/usr/include/x86_64-linux-musl/bits/posix.h:
+lib/sys/types.h:
+/usr/include/x86_64-linux-musl/sys/types.h:
+/usr/include/x86_64-linux-musl/endian.h:
+lib/sys/select.h:
+lib/sys/time.h:
+/usr/include/x86_64-linux-musl/sys/time.h:
+/usr/include/x86_64-linux-musl/sys/select.h:
+lib/signal.h:
+/usr/include/x86_64-linux-musl/signal.h:
+/usr/include/x86_64-linux-musl/bits/signal.h:
+lib/getopt-cdefs.h:
+lib/getopt-pfx-core.h:
+lib/getopt-core.h:
+lib/quote.h:
+lib/attribute.h:
+lib/minmax.h:
+/usr/include/x86_64-linux-musl/sys/param.h:
+lib/sys/resource.h:
+/usr/include/x86_64-linux-musl/sys/resource.h:
+/usr/include/x86_64-linux-musl/bits/resource.h:
+lib/limits.h:
+/usr/include/x86_64-linux-musl/limits.h:
+/usr/include/x86_64-linux-musl/bits/limits.h:
+lib/xalloc.h:
+lib/idx.h:
+lib/stdint.h:
+/usr/include/x86_64-linux-musl/stdint.h:
+/usr/include/x86_64-linux-musl/bits/stdint.h:
+lib/c-strcaseeq.h:
+lib/c-strcase.h:
+lib/c-ctype.h:
+lib/localcharset.h:
+lib/ctype.h:
+/usr/include/x86_64-linux-musl/ctype.h:
+/usr/include/x86_64-linux-musl/errno.h:
+/usr/include/x86_64-linux-musl/bits/errno.h:
+lib/string.h:
+/usr/include/x86_64-linux-musl/string.h:
+/usr/include/x86_64-linux-musl/strings.h:
+lib/uchar.h:
+/usr/include/x86_64-linux-musl/uchar.h:
+lib/wchar.h:
+/usr/include/x86_64-linux-musl/wchar.h:
+lib/wctype.h:
+/usr/include/x86_64-linux-musl/wctype.h:
+lib/gettext.h:

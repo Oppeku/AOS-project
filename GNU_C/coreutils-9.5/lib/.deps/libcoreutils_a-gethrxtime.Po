@@ -1,0 +1,33 @@
+lib/libcoreutils_a-gethrxtime.o: lib/gethrxtime.c lib/config.h \
+ lib/gethrxtime.h lib/xtime.h lib/sys/time.h \
+ /usr/include/x86_64-linux-musl/sys/time.h \
+ /usr/include/x86_64-linux-musl/features.h lib/sys/select.h \
+ lib/sys/types.h /usr/include/x86_64-linux-musl/sys/types.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h \
+ /usr/include/x86_64-linux-musl/endian.h \
+ /usr/include/x86_64-linux-musl/sys/select.h lib/signal.h \
+ /usr/include/x86_64-linux-musl/signal.h \
+ /usr/include/x86_64-linux-musl/bits/signal.h lib/timespec.h lib/time.h \
+ /usr/include/x86_64-linux-musl/time.h lib/stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h lib/arg-nonnull.h
+lib/config.h:
+lib/gethrxtime.h:
+lib/xtime.h:
+lib/sys/time.h:
+/usr/include/x86_64-linux-musl/sys/time.h:
+/usr/include/x86_64-linux-musl/features.h:
+lib/sys/select.h:
+lib/sys/types.h:
+/usr/include/x86_64-linux-musl/sys/types.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+/usr/include/x86_64-linux-musl/endian.h:
+/usr/include/x86_64-linux-musl/sys/select.h:
+lib/signal.h:
+/usr/include/x86_64-linux-musl/signal.h:
+/usr/include/x86_64-linux-musl/bits/signal.h:
+lib/timespec.h:
+lib/time.h:
+/usr/include/x86_64-linux-musl/time.h:
+lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+lib/arg-nonnull.h:

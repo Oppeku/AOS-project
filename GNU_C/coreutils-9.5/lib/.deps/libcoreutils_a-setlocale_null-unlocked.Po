@@ -1,0 +1,25 @@
+lib/libcoreutils_a-setlocale_null-unlocked.o: \
+ lib/setlocale_null-unlocked.c lib/config.h lib/setlocale_null.h \
+ lib/stddef.h /usr/include/x86_64-linux-musl/stddef.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h lib/arg-nonnull.h \
+ /usr/include/x86_64-linux-musl/errno.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/errno.h lib/locale.h \
+ /usr/include/x86_64-linux-musl/locale.h lib/setlocale_null.h \
+ lib/string.h /usr/include/x86_64-linux-musl/string.h \
+ /usr/include/x86_64-linux-musl/strings.h
+lib/config.h:
+lib/setlocale_null.h:
+lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+lib/arg-nonnull.h:
+/usr/include/x86_64-linux-musl/errno.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/errno.h:
+lib/locale.h:
+/usr/include/x86_64-linux-musl/locale.h:
+lib/setlocale_null.h:
+lib/string.h:
+/usr/include/x86_64-linux-musl/string.h:
+/usr/include/x86_64-linux-musl/strings.h:

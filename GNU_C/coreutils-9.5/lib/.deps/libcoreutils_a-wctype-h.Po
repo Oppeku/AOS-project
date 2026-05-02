@@ -1,0 +1,20 @@
+lib/libcoreutils_a-wctype-h.o: lib/wctype-h.c lib/config.h lib/wctype.h \
+ lib/wchar.h /usr/include/x86_64-linux-musl/features.h lib/stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h \
+ /usr/include/x86_64-linux-musl/wchar.h lib/string.h \
+ /usr/include/x86_64-linux-musl/string.h \
+ /usr/include/x86_64-linux-musl/strings.h \
+ /usr/include/x86_64-linux-musl/wctype.h
+lib/config.h:
+lib/wctype.h:
+lib/wchar.h:
+/usr/include/x86_64-linux-musl/features.h:
+lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+/usr/include/x86_64-linux-musl/wchar.h:
+lib/string.h:
+/usr/include/x86_64-linux-musl/string.h:
+/usr/include/x86_64-linux-musl/strings.h:
+/usr/include/x86_64-linux-musl/wctype.h:

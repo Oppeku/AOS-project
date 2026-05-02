@@ -1,0 +1,3 @@
+lib/libcoreutils_a-xtime.o: lib/xtime.c lib/config.h lib/xtime.h
+lib/config.h:
+lib/xtime.h:

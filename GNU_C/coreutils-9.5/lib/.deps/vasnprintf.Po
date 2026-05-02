@@ -1,0 +1,84 @@
+lib/vasnprintf.o: lib/vasnprintf.c lib/config.h lib/alloca.h \
+ lib/vasnprintf.h /usr/include/x86_64-linux-musl/stdarg.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h lib/stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h lib/stdio.h \
+ /usr/include/x86_64-linux-musl/stdio.h \
+ /usr/include/x86_64-linux-musl/features.h lib/sys/types.h \
+ /usr/include/x86_64-linux-musl/sys/types.h \
+ /usr/include/x86_64-linux-musl/endian.h lib/sys/select.h lib/sys/time.h \
+ /usr/include/x86_64-linux-musl/sys/time.h \
+ /usr/include/x86_64-linux-musl/sys/select.h lib/signal.h \
+ /usr/include/x86_64-linux-musl/signal.h \
+ /usr/include/x86_64-linux-musl/bits/signal.h lib/locale.h \
+ /usr/include/x86_64-linux-musl/locale.h lib/setlocale_null.h \
+ lib/arg-nonnull.h lib/stdlib.h /usr/include/x86_64-linux-musl/stdlib.h \
+ lib/unistd.h /usr/include/x86_64-linux-musl/unistd.h \
+ /usr/include/x86_64-linux-musl/bits/posix.h lib/getopt-cdefs.h \
+ lib/getopt-pfx-core.h lib/getopt-core.h lib/string.h \
+ /usr/include/x86_64-linux-musl/string.h \
+ /usr/include/x86_64-linux-musl/strings.h lib/wchar.h \
+ /usr/include/x86_64-linux-musl/wchar.h \
+ /usr/include/x86_64-linux-musl/errno.h \
+ /usr/include/x86_64-linux-musl/bits/errno.h lib/limits.h \
+ /usr/include/x86_64-linux-musl/limits.h \
+ /usr/include/x86_64-linux-musl/bits/limits.h \
+ /usr/include/x86_64-linux-musl/float.h \
+ /usr/include/x86_64-linux-musl/bits/float.h lib/langinfo.h \
+ /usr/include/x86_64-linux-musl/langinfo.h \
+ /usr/include/x86_64-linux-musl/nl_types.h lib/printf-parse.h \
+ lib/printf-args.h lib/stdint.h /usr/include/x86_64-linux-musl/stdint.h \
+ /usr/include/x86_64-linux-musl/bits/stdint.h lib/xsize.h lib/attribute.h
+lib/config.h:
+lib/alloca.h:
+lib/vasnprintf.h:
+/usr/include/x86_64-linux-musl/stdarg.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+lib/stdio.h:
+/usr/include/x86_64-linux-musl/stdio.h:
+/usr/include/x86_64-linux-musl/features.h:
+lib/sys/types.h:
+/usr/include/x86_64-linux-musl/sys/types.h:
+/usr/include/x86_64-linux-musl/endian.h:
+lib/sys/select.h:
+lib/sys/time.h:
+/usr/include/x86_64-linux-musl/sys/time.h:
+/usr/include/x86_64-linux-musl/sys/select.h:
+lib/signal.h:
+/usr/include/x86_64-linux-musl/signal.h:
+/usr/include/x86_64-linux-musl/bits/signal.h:
+lib/locale.h:
+/usr/include/x86_64-linux-musl/locale.h:
+lib/setlocale_null.h:
+lib/arg-nonnull.h:
+lib/stdlib.h:
+/usr/include/x86_64-linux-musl/stdlib.h:
+lib/unistd.h:
+/usr/include/x86_64-linux-musl/unistd.h:
+/usr/include/x86_64-linux-musl/bits/posix.h:
+lib/getopt-cdefs.h:
+lib/getopt-pfx-core.h:
+lib/getopt-core.h:
+lib/string.h:
+/usr/include/x86_64-linux-musl/string.h:
+/usr/include/x86_64-linux-musl/strings.h:
+lib/wchar.h:
+/usr/include/x86_64-linux-musl/wchar.h:
+/usr/include/x86_64-linux-musl/errno.h:
+/usr/include/x86_64-linux-musl/bits/errno.h:
+lib/limits.h:
+/usr/include/x86_64-linux-musl/limits.h:
+/usr/include/x86_64-linux-musl/bits/limits.h:
+/usr/include/x86_64-linux-musl/float.h:
+/usr/include/x86_64-linux-musl/bits/float.h:
+lib/langinfo.h:
+/usr/include/x86_64-linux-musl/langinfo.h:
+/usr/include/x86_64-linux-musl/nl_types.h:
+lib/printf-parse.h:
+lib/printf-args.h:
+lib/stdint.h:
+/usr/include/x86_64-linux-musl/stdint.h:
+/usr/include/x86_64-linux-musl/bits/stdint.h:
+lib/xsize.h:
+lib/attribute.h:

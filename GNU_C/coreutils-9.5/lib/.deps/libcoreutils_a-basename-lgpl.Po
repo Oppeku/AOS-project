@@ -1,0 +1,16 @@
+lib/libcoreutils_a-basename-lgpl.o: lib/basename-lgpl.c lib/config.h \
+ lib/basename-lgpl.h lib/stddef.h /usr/include/x86_64-linux-musl/stddef.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h lib/string.h \
+ /usr/include/x86_64-linux-musl/string.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/strings.h lib/filename.h
+lib/config.h:
+lib/basename-lgpl.h:
+lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+lib/string.h:
+/usr/include/x86_64-linux-musl/string.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/strings.h:
+lib/filename.h:

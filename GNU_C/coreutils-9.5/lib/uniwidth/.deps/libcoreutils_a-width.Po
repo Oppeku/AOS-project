@@ -1,0 +1,35 @@
+lib/uniwidth/libcoreutils_a-width.o: lib/uniwidth/width.c lib/config.h \
+ lib/uniwidth.h lib/unitypes.h lib/stdint.h \
+ /usr/include/x86_64-linux-musl/stdint.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h \
+ /usr/include/x86_64-linux-musl/bits/stdint.h lib/limits.h \
+ /usr/include/x86_64-linux-musl/limits.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/limits.h lib/stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h lib/localcharset.h \
+ lib/uniwidth/cjk.h lib/streq.h lib/string.h \
+ /usr/include/x86_64-linux-musl/string.h \
+ /usr/include/x86_64-linux-musl/strings.h lib/uniwidth/width0.h \
+ lib/uniwidth/width2.h lib/unictype/bitmap.h
+lib/config.h:
+lib/uniwidth.h:
+lib/unitypes.h:
+lib/stdint.h:
+/usr/include/x86_64-linux-musl/stdint.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+/usr/include/x86_64-linux-musl/bits/stdint.h:
+lib/limits.h:
+/usr/include/x86_64-linux-musl/limits.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/limits.h:
+lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+lib/localcharset.h:
+lib/uniwidth/cjk.h:
+lib/streq.h:
+lib/string.h:
+/usr/include/x86_64-linux-musl/string.h:
+/usr/include/x86_64-linux-musl/strings.h:
+lib/uniwidth/width0.h:
+lib/uniwidth/width2.h:
+lib/unictype/bitmap.h:

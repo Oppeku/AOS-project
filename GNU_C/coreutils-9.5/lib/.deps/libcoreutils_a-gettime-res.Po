@@ -1,0 +1,14 @@
+lib/libcoreutils_a-gettime-res.o: lib/gettime-res.c lib/config.h \
+ lib/timespec.h lib/time.h /usr/include/x86_64-linux-musl/time.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h lib/stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h lib/arg-nonnull.h
+lib/config.h:
+lib/timespec.h:
+lib/time.h:
+/usr/include/x86_64-linux-musl/time.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+lib/arg-nonnull.h:

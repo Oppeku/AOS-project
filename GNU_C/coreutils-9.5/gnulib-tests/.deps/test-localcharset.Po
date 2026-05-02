@@ -1,0 +1,38 @@
+test-localcharset.o: test-localcharset.c ../lib/config.h \
+ ../lib/localcharset.h ../lib/locale.h \
+ /usr/include/x86_64-linux-musl/locale.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h ../lib/stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h ../lib/setlocale_null.h \
+ ../lib/arg-nonnull.h ../lib/stdio.h \
+ /usr/include/x86_64-linux-musl/stdio.h \
+ /usr/include/x86_64-linux-musl/stdarg.h ../lib/sys/types.h \
+ /usr/include/x86_64-linux-musl/sys/types.h \
+ /usr/include/x86_64-linux-musl/endian.h ../lib/sys/select.h \
+ ../lib/sys/time.h /usr/include/x86_64-linux-musl/sys/time.h \
+ /usr/include/x86_64-linux-musl/sys/select.h ../lib/signal.h \
+ /usr/include/x86_64-linux-musl/signal.h \
+ /usr/include/x86_64-linux-musl/bits/signal.h
+../lib/config.h:
+../lib/localcharset.h:
+../lib/locale.h:
+/usr/include/x86_64-linux-musl/locale.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+../lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+../lib/setlocale_null.h:
+../lib/arg-nonnull.h:
+../lib/stdio.h:
+/usr/include/x86_64-linux-musl/stdio.h:
+/usr/include/x86_64-linux-musl/stdarg.h:
+../lib/sys/types.h:
+/usr/include/x86_64-linux-musl/sys/types.h:
+/usr/include/x86_64-linux-musl/endian.h:
+../lib/sys/select.h:
+../lib/sys/time.h:
+/usr/include/x86_64-linux-musl/sys/time.h:
+/usr/include/x86_64-linux-musl/sys/select.h:
+../lib/signal.h:
+/usr/include/x86_64-linux-musl/signal.h:
+/usr/include/x86_64-linux-musl/bits/signal.h:

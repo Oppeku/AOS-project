@@ -1,0 +1,18 @@
+lib/libcoreutils_a-memcasecmp.o: lib/memcasecmp.c lib/config.h \
+ lib/memcasecmp.h lib/stddef.h /usr/include/x86_64-linux-musl/stddef.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h lib/ctype.h \
+ /usr/include/x86_64-linux-musl/ctype.h \
+ /usr/include/x86_64-linux-musl/features.h lib/limits.h \
+ /usr/include/x86_64-linux-musl/limits.h \
+ /usr/include/x86_64-linux-musl/bits/limits.h
+lib/config.h:
+lib/memcasecmp.h:
+lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+lib/ctype.h:
+/usr/include/x86_64-linux-musl/ctype.h:
+/usr/include/x86_64-linux-musl/features.h:
+lib/limits.h:
+/usr/include/x86_64-linux-musl/limits.h:
+/usr/include/x86_64-linux-musl/bits/limits.h:

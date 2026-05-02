@@ -1,0 +1,28 @@
+lib/unicase/libcoreutils_a-tolower.o: lib/unicase/tolower.c lib/config.h \
+ lib/unicase.h lib/unitypes.h lib/stdint.h \
+ /usr/include/x86_64-linux-musl/stdint.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h \
+ /usr/include/x86_64-linux-musl/bits/stdint.h lib/limits.h \
+ /usr/include/x86_64-linux-musl/limits.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/limits.h \
+ /usr/include/x86_64-linux-musl/stdbool.h lib/stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h lib/uninorm.h \
+ lib/unicase/tolower.h lib/unicase/simple-mapping.h
+lib/config.h:
+lib/unicase.h:
+lib/unitypes.h:
+lib/stdint.h:
+/usr/include/x86_64-linux-musl/stdint.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+/usr/include/x86_64-linux-musl/bits/stdint.h:
+lib/limits.h:
+/usr/include/x86_64-linux-musl/limits.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/limits.h:
+/usr/include/x86_64-linux-musl/stdbool.h:
+lib/stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+lib/uninorm.h:
+lib/unicase/tolower.h:
+lib/unicase/simple-mapping.h:

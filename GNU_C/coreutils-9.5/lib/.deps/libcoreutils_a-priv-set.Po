@@ -1,0 +1,3 @@
+lib/libcoreutils_a-priv-set.o: lib/priv-set.c lib/config.h lib/priv-set.h
+lib/config.h:
+lib/priv-set.h:

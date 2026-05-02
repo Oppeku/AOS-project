@@ -16,6 +16,7 @@
 #include <elf64_loader.h>
 #include <multiboot2.h>
 #include <panic.h>
+#include <partition.h>
 #include <process.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -163,6 +164,8 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
     boot_log_ok("Starting interrupt descriptor table");
     init_process();
     boot_log_ok("Starting process management");
+    partition_init();
+    boot_log_ok("Starting PartiotionMANAGAER");
     vfs_init_mounts();
     boot_log_ok("Starting VFS mount table");
     extern void init_timer(uint32_t);
@@ -173,7 +176,7 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
     asm volatile("sti");
     boot_log_ok("Starting hardware interrupts");
 
-    // Handle boot modules: initrd first, FAT32 second, EXT4 third.
+    // Handle boot modules: initrd first, remaining modules as RAM-backed partitions.
     struct multiboot_tag* tag;
     uint32_t module_index = 0;
     uint8_t initrd_ready = 0;
@@ -195,21 +198,11 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
                 }
                 initrd_ready = 1;
                 boot_log_ok("Starting initrd mount");
-            } else if (module_index == 1) {
-                fat32_seen = 1;
-                if (fat32_init(mod->mod_start, mod->mod_end) == 0) {
-                    fat32_ready = 1;
-                    boot_log_ok("Starting FAT32 mount at /mnt/fat32");
-                } else {
-                    boot_log_warn("Starting FAT32 mount at /mnt/fat32");
-                }
-            } else if (module_index == 2) {
-                ext4_seen = 1;
-                if (ext4_init(mod->mod_start, mod->mod_end) == 0) {
-                    ext4_ready = 1;
-                    boot_log_ok("Starting EXT4 mount at /mnt/ext4");
-                } else {
-                    boot_log_warn("Starting EXT4 mount at /mnt/ext4");
+            } else {
+                char part_name[16] = "ram0p0";
+                part_name[5] = (char)('0' + (module_index - 1));
+                if (partition_register_memory(mod->mod_start, mod->mod_end, part_name) < 0) {
+                    boot_log_warn("Registering boot partition");
                 }
             }
             module_index++;
@@ -219,6 +212,30 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
         boot_log_fail("Starting initrd mount");
         aos_panic("Boot failure", "The initrd boot module is missing.");
     }
+    partition_print_table();
+
+    const struct partition* fat32_part = partition_find_by_fs(PARTITION_FS_FAT32);
+    if (fat32_part) {
+        fat32_seen = 1;
+        if (fat32_init(fat32_part->start, fat32_part->end) == 0) {
+            fat32_ready = 1;
+            boot_log_ok("Starting FAT32 mount at /mnt/fat32");
+        } else {
+            boot_log_warn("Starting FAT32 mount at /mnt/fat32");
+        }
+    }
+
+    const struct partition* ext4_part = partition_find_by_fs(PARTITION_FS_EXT4);
+    if (ext4_part) {
+        ext4_seen = 1;
+        if (ext4_init(ext4_part->start, ext4_part->end) == 0) {
+            ext4_ready = 1;
+            boot_log_ok("Starting EXT4 mount at /mnt/ext4");
+        } else {
+            boot_log_warn("Starting EXT4 mount at /mnt/ext4");
+        }
+    }
+
     if (!fat32_ready && !fat32_seen) {
         boot_log_warn("Starting FAT32 mount at /mnt/fat32");
     }

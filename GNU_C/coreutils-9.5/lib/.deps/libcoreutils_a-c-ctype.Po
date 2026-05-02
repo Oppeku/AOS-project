@@ -1,0 +1,3 @@
+lib/libcoreutils_a-c-ctype.o: lib/c-ctype.c lib/config.h lib/c-ctype.h
+lib/config.h:
+lib/c-ctype.h:

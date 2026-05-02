@@ -1231,6 +1231,12 @@ run_foreground_command:
     call save_and_apply_foreground_redirections
     test eax, eax
     jne run_foreground_redir_failed
+    call command_prefers_external
+    test eax, eax
+    jz run_foreground_dispatch
+    call spawn_external_foreground
+    jmp run_foreground_restore
+run_foreground_dispatch:
     call dispatch_command
     cmp eax, 127
     jne run_foreground_restore
@@ -1250,6 +1256,12 @@ run_foreground_redir_failed:
     ret
 
 run_child_command:
+    call command_prefers_external
+    test eax, eax
+    jz run_child_dispatch
+    call exec_external_current
+    jmp run_child_return
+run_child_dispatch:
     call dispatch_command
     cmp eax, 127
     jne run_child_return
@@ -1291,7 +1303,7 @@ exec_external_current:
     jne exec_external_failed
 
     mov rax, SYS_EXECVE
-    lea rdi, [rel busybox_path]
+    lea rdi, [rel coreutils_path]
     mov rsi, r15
     xor rdx, rdx
     syscall
@@ -1299,7 +1311,7 @@ exec_external_current:
     jne exec_external_failed
 
     mov rax, SYS_EXECVE
-    lea rdi, [rel coreutils_path]
+    lea rdi, [rel busybox_path]
     mov rsi, r15
     xor rdx, rdx
     syscall
@@ -1310,6 +1322,38 @@ exec_external_failed:
     mov rdx, command_exec_failed_msg_end - command_exec_failed_msg
     call write_stdout
     mov eax, 127
+    ret
+
+command_prefers_external:
+    mov rdi, [r15]
+    lea rsi, [rel cat_cmd]
+    call strcmp
+    test eax, eax
+    jz command_prefers_external_yes
+
+    mov rdi, [r15]
+    lea rsi, [rel ls_cmd]
+    call strcmp
+    test eax, eax
+    jz command_prefers_external_yes
+
+    mov rdi, [r15]
+    lea rsi, [rel pwd_cmd]
+    call strcmp
+    test eax, eax
+    jz command_prefers_external_yes
+
+    mov rdi, [r15]
+    lea rsi, [rel echo_cmd]
+    call strcmp
+    test eax, eax
+    jz command_prefers_external_yes
+
+    xor eax, eax
+    ret
+
+command_prefers_external_yes:
+    mov eax, 1
     ret
 
 dispatch_command:
@@ -1881,23 +1925,19 @@ coreutils_path:
     db "coreutils", 0
 
 help_msg:
-    db "help - show commands", 10
-    db "cat [file] - print a file or stdin", 10
-    db "ls [path] - list files", 10
-    db "cd [path] - change directory", 10
-    db "pwd - print current directory", 10
-    db "clear - clear the VGA screen", 10
-    db "write <file> <text...> - create or replace a tmpfs file", 10
-    db "echo [args...] - print text", 10
-    db "< and > supported, plus >> append redirection", 10
-    db "<program> [args...] - run initrd program as child", 10
-    db "unknown commands retry through busybox/coreutils applets automatically", 10
-    db "exec <program> - replace the shell with an initrd program", 10
-    db "quotes supported: 'one two' and ", 34, "one two", 34, 10
-    db "multiple pipes supported: cmd1 | cmd2 | cmd3", 10
-    db "history recall: Up/Down arrows", 10
-    db "example: echo hello | stdincat.elf | stdincat.elf", 10
-    db "mount path: /mnt/fat32", 10
+    db "AOS shell help", 10
+    db "Builtins: help cd clear write exec", 10
+    db "PartiotionMANAGAER: run partitions or PartiotionMANAGER", 10
+    db "BusyBox applets: sh ash test [ env printf true false head tail uname", 10
+    db "BusyBox fallback: commands not found as GNU or initrd programs retry through BusyBox", 10
+    db "GNU coreutils: ls cat echo pwd uname head tail true false whoami mkdir", 10
+    db "GNU priority: ls cat echo pwd run GNU first, then BusyBox if missing", 10
+    db "Per-command help: run ls --help, cat --help, echo --help, pwd --help", 10
+    db "Redirection: < > and >> are supported", 10
+    db "Pipes: cmd1 | cmd2 | cmd3", 10
+    db "Quotes: 'one two' and ", 34, "one two", 34, 10
+    db "History: Up/Down arrows", 10
+    db "Mounts: /tmp /fat32 /mnt/fat32 /ext4 /mnt/ext4", 10
 help_msg_end:
 
 cat_usage_msg:

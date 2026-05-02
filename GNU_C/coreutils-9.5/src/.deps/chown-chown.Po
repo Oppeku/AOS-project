@@ -1,0 +1,2 @@
+src/chown-chown.o: src/chown-chown.c src/chown.h
+src/chown.h:

@@ -1,0 +1,13 @@
+lib/libcoreutils_a-getopt1.o: lib/getopt1.c lib/config.h lib/getopt.h \
+ /usr/include/x86_64-linux-musl/getopt.h lib/getopt-cdefs.h \
+ lib/getopt-pfx-core.h lib/getopt-core.h lib/getopt-pfx-ext.h \
+ lib/getopt-ext.h lib/getopt_int.h
+lib/config.h:
+lib/getopt.h:
+/usr/include/x86_64-linux-musl/getopt.h:
+lib/getopt-cdefs.h:
+lib/getopt-pfx-core.h:
+lib/getopt-core.h:
+lib/getopt-pfx-ext.h:
+lib/getopt-ext.h:
+lib/getopt_int.h:
