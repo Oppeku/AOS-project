@@ -1,0 +1,9 @@
+libgnu_a-math.o: math.c ../config.h math.h \
+ /usr/include/x86_64-linux-musl/math.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h
+../config.h:
+math.h:
+/usr/include/x86_64-linux-musl/math.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:

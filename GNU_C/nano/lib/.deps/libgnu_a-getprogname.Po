@@ -1,0 +1,47 @@
+libgnu_a-getprogname.o: getprogname.c ../config.h stdlib.h \
+ /usr/include/x86_64-linux-musl/stdlib.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h alloca.h stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h unistd.h \
+ /usr/include/x86_64-linux-musl/unistd.h \
+ /usr/include/x86_64-linux-musl/bits/posix.h sys/types.h \
+ /usr/include/x86_64-linux-musl/sys/types.h \
+ /usr/include/x86_64-linux-musl/endian.h \
+ /usr/include/x86_64-linux-musl/sys/select.h getopt-cdefs.h \
+ getopt-pfx-core.h getopt-core.h fcntl.h sys/stat.h time.h \
+ /usr/include/x86_64-linux-musl/time.h \
+ /usr/include/x86_64-linux-musl/sys/stat.h \
+ /usr/include/x86_64-linux-musl/bits/stat.h \
+ /usr/include/x86_64-linux-musl/fcntl.h \
+ /usr/include/x86_64-linux-musl/bits/fcntl.h \
+ /usr/include/x86_64-linux-musl/errno.h \
+ /usr/include/x86_64-linux-musl/bits/errno.h basename-lgpl.h
+../config.h:
+stdlib.h:
+/usr/include/x86_64-linux-musl/stdlib.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+alloca.h:
+stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+unistd.h:
+/usr/include/x86_64-linux-musl/unistd.h:
+/usr/include/x86_64-linux-musl/bits/posix.h:
+sys/types.h:
+/usr/include/x86_64-linux-musl/sys/types.h:
+/usr/include/x86_64-linux-musl/endian.h:
+/usr/include/x86_64-linux-musl/sys/select.h:
+getopt-cdefs.h:
+getopt-pfx-core.h:
+getopt-core.h:
+fcntl.h:
+sys/stat.h:
+time.h:
+/usr/include/x86_64-linux-musl/time.h:
+/usr/include/x86_64-linux-musl/sys/stat.h:
+/usr/include/x86_64-linux-musl/bits/stat.h:
+/usr/include/x86_64-linux-musl/fcntl.h:
+/usr/include/x86_64-linux-musl/bits/fcntl.h:
+/usr/include/x86_64-linux-musl/errno.h:
+/usr/include/x86_64-linux-musl/bits/errno.h:
+basename-lgpl.h:

@@ -1,0 +1,62 @@
+libgnu_a-openat-die.o: openat-die.c ../config.h openat.h fcntl.h \
+ sys/types.h /usr/include/x86_64-linux-musl/sys/types.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h \
+ /usr/include/x86_64-linux-musl/endian.h \
+ /usr/include/x86_64-linux-musl/sys/select.h sys/stat.h time.h \
+ /usr/include/x86_64-linux-musl/time.h stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h \
+ /usr/include/x86_64-linux-musl/sys/stat.h \
+ /usr/include/x86_64-linux-musl/bits/stat.h \
+ /usr/include/x86_64-linux-musl/fcntl.h \
+ /usr/include/x86_64-linux-musl/bits/fcntl.h unistd.h \
+ /usr/include/x86_64-linux-musl/unistd.h \
+ /usr/include/x86_64-linux-musl/bits/posix.h stdlib.h \
+ /usr/include/x86_64-linux-musl/stdlib.h alloca.h getopt-cdefs.h \
+ getopt-pfx-core.h getopt-core.h error.h \
+ /usr/include/x86_64-linux-musl/stdarg.h stdio.h \
+ /usr/include/x86_64-linux-musl/stdio.h exitfail.h gettext.h locale.h \
+ /usr/include/x86_64-linux-musl/locale.h setlocale_null.h arg-nonnull.h \
+ string.h /usr/include/x86_64-linux-musl/string.h strings.h \
+ /usr/include/x86_64-linux-musl/strings.h
+../config.h:
+openat.h:
+fcntl.h:
+sys/types.h:
+/usr/include/x86_64-linux-musl/sys/types.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+/usr/include/x86_64-linux-musl/endian.h:
+/usr/include/x86_64-linux-musl/sys/select.h:
+sys/stat.h:
+time.h:
+/usr/include/x86_64-linux-musl/time.h:
+stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+/usr/include/x86_64-linux-musl/sys/stat.h:
+/usr/include/x86_64-linux-musl/bits/stat.h:
+/usr/include/x86_64-linux-musl/fcntl.h:
+/usr/include/x86_64-linux-musl/bits/fcntl.h:
+unistd.h:
+/usr/include/x86_64-linux-musl/unistd.h:
+/usr/include/x86_64-linux-musl/bits/posix.h:
+stdlib.h:
+/usr/include/x86_64-linux-musl/stdlib.h:
+alloca.h:
+getopt-cdefs.h:
+getopt-pfx-core.h:
+getopt-core.h:
+error.h:
+/usr/include/x86_64-linux-musl/stdarg.h:
+stdio.h:
+/usr/include/x86_64-linux-musl/stdio.h:
+exitfail.h:
+gettext.h:
+locale.h:
+/usr/include/x86_64-linux-musl/locale.h:
+setlocale_null.h:
+arg-nonnull.h:
+string.h:
+/usr/include/x86_64-linux-musl/string.h:
+strings.h:
+/usr/include/x86_64-linux-musl/strings.h:

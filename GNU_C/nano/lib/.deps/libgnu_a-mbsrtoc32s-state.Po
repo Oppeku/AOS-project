@@ -1,0 +1,18 @@
+libgnu_a-mbsrtoc32s-state.o: mbsrtoc32s-state.c ../config.h wchar.h \
+ /usr/include/x86_64-linux-musl/features.h stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h \
+ /usr/include/x86_64-linux-musl/wchar.h string.h \
+ /usr/include/x86_64-linux-musl/string.h strings.h \
+ /usr/include/x86_64-linux-musl/strings.h
+../config.h:
+wchar.h:
+/usr/include/x86_64-linux-musl/features.h:
+stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+/usr/include/x86_64-linux-musl/wchar.h:
+string.h:
+/usr/include/x86_64-linux-musl/string.h:
+strings.h:
+/usr/include/x86_64-linux-musl/strings.h:

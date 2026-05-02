@@ -1,0 +1,35 @@
+libgnu_a-snprintf.o: snprintf.c ../config.h stdio.h \
+ /usr/include/x86_64-linux-musl/stdio.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h \
+ /usr/include/x86_64-linux-musl/stdarg.h stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h sys/types.h \
+ /usr/include/x86_64-linux-musl/sys/types.h \
+ /usr/include/x86_64-linux-musl/endian.h \
+ /usr/include/x86_64-linux-musl/sys/select.h \
+ /usr/include/x86_64-linux-musl/errno.h \
+ /usr/include/x86_64-linux-musl/bits/errno.h limits.h \
+ /usr/include/x86_64-linux-musl/limits.h \
+ /usr/include/x86_64-linux-musl/bits/limits.h stdint.h \
+ /usr/include/x86_64-linux-musl/stdint.h \
+ /usr/include/x86_64-linux-musl/bits/stdint.h
+../config.h:
+stdio.h:
+/usr/include/x86_64-linux-musl/stdio.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+/usr/include/x86_64-linux-musl/stdarg.h:
+stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+sys/types.h:
+/usr/include/x86_64-linux-musl/sys/types.h:
+/usr/include/x86_64-linux-musl/endian.h:
+/usr/include/x86_64-linux-musl/sys/select.h:
+/usr/include/x86_64-linux-musl/errno.h:
+/usr/include/x86_64-linux-musl/bits/errno.h:
+limits.h:
+/usr/include/x86_64-linux-musl/limits.h:
+/usr/include/x86_64-linux-musl/bits/limits.h:
+stdint.h:
+/usr/include/x86_64-linux-musl/stdint.h:
+/usr/include/x86_64-linux-musl/bits/stdint.h:

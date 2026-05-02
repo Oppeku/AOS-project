@@ -1,0 +1,61 @@
+malloc/libgnu_a-dynarray_at_failure.o: malloc/dynarray_at_failure.c \
+ libc-config.h ../config.h /usr/include/x86_64-linux-musl/errno.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/errno.h cdefs.h stdlib.h \
+ /usr/include/x86_64-linux-musl/stdlib.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h alloca.h stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h unistd.h \
+ /usr/include/x86_64-linux-musl/unistd.h \
+ /usr/include/x86_64-linux-musl/bits/posix.h sys/types.h \
+ /usr/include/x86_64-linux-musl/sys/types.h \
+ /usr/include/x86_64-linux-musl/endian.h \
+ /usr/include/x86_64-linux-musl/sys/select.h getopt-cdefs.h \
+ getopt-pfx-core.h getopt-core.h fcntl.h sys/stat.h time.h \
+ /usr/include/x86_64-linux-musl/time.h \
+ /usr/include/x86_64-linux-musl/sys/stat.h \
+ /usr/include/x86_64-linux-musl/bits/stat.h \
+ /usr/include/x86_64-linux-musl/fcntl.h \
+ /usr/include/x86_64-linux-musl/bits/fcntl.h dynarray.h malloc/dynarray.h \
+ string.h /usr/include/x86_64-linux-musl/string.h strings.h \
+ /usr/include/x86_64-linux-musl/strings.h stdio.h \
+ /usr/include/x86_64-linux-musl/stdio.h \
+ /usr/include/x86_64-linux-musl/stdarg.h
+libc-config.h:
+../config.h:
+/usr/include/x86_64-linux-musl/errno.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/errno.h:
+cdefs.h:
+stdlib.h:
+/usr/include/x86_64-linux-musl/stdlib.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+alloca.h:
+stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+unistd.h:
+/usr/include/x86_64-linux-musl/unistd.h:
+/usr/include/x86_64-linux-musl/bits/posix.h:
+sys/types.h:
+/usr/include/x86_64-linux-musl/sys/types.h:
+/usr/include/x86_64-linux-musl/endian.h:
+/usr/include/x86_64-linux-musl/sys/select.h:
+getopt-cdefs.h:
+getopt-pfx-core.h:
+getopt-core.h:
+fcntl.h:
+sys/stat.h:
+time.h:
+/usr/include/x86_64-linux-musl/time.h:
+/usr/include/x86_64-linux-musl/sys/stat.h:
+/usr/include/x86_64-linux-musl/bits/stat.h:
+/usr/include/x86_64-linux-musl/fcntl.h:
+/usr/include/x86_64-linux-musl/bits/fcntl.h:
+dynarray.h:
+malloc/dynarray.h:
+string.h:
+/usr/include/x86_64-linux-musl/string.h:
+strings.h:
+/usr/include/x86_64-linux-musl/strings.h:
+stdio.h:
+/usr/include/x86_64-linux-musl/stdio.h:
+/usr/include/x86_64-linux-musl/stdarg.h:

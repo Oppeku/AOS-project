@@ -1,0 +1,26 @@
+unictype/libgnu_a-ctype_space.o: unictype/ctype_space.c ../config.h \
+ unictype.h unitypes.h stdint.h /usr/include/x86_64-linux-musl/stdint.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h \
+ /usr/include/x86_64-linux-musl/bits/stdint.h limits.h \
+ /usr/include/x86_64-linux-musl/limits.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/limits.h \
+ /usr/include/x86_64-linux-musl/stdbool.h stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h unictype/bitmap.h \
+ unictype/ctype_space.h
+../config.h:
+unictype.h:
+unitypes.h:
+stdint.h:
+/usr/include/x86_64-linux-musl/stdint.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+/usr/include/x86_64-linux-musl/bits/stdint.h:
+limits.h:
+/usr/include/x86_64-linux-musl/limits.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/limits.h:
+/usr/include/x86_64-linux-musl/stdbool.h:
+stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+unictype/bitmap.h:
+unictype/ctype_space.h:

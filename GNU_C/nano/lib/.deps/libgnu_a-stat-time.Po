@@ -1,0 +1,32 @@
+libgnu_a-stat-time.o: stat-time.c ../config.h stat-time.h \
+ /usr/include/x86_64-linux-musl/errno.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/errno.h stdckdint.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/stdckdint.h stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h sys/stat.h sys/types.h \
+ /usr/include/x86_64-linux-musl/sys/types.h \
+ /usr/include/x86_64-linux-musl/endian.h \
+ /usr/include/x86_64-linux-musl/sys/select.h time.h \
+ /usr/include/x86_64-linux-musl/time.h \
+ /usr/include/x86_64-linux-musl/sys/stat.h \
+ /usr/include/x86_64-linux-musl/bits/stat.h
+../config.h:
+stat-time.h:
+/usr/include/x86_64-linux-musl/errno.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/errno.h:
+stdckdint.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/stdckdint.h:
+stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+sys/stat.h:
+sys/types.h:
+/usr/include/x86_64-linux-musl/sys/types.h:
+/usr/include/x86_64-linux-musl/endian.h:
+/usr/include/x86_64-linux-musl/sys/select.h:
+time.h:
+/usr/include/x86_64-linux-musl/time.h:
+/usr/include/x86_64-linux-musl/sys/stat.h:
+/usr/include/x86_64-linux-musl/bits/stat.h:

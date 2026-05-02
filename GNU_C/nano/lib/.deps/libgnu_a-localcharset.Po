@@ -1,0 +1,59 @@
+libgnu_a-localcharset.o: localcharset.c ../config.h localcharset.h \
+ stddef.h /usr/include/x86_64-linux-musl/stddef.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h stdio.h \
+ /usr/include/x86_64-linux-musl/stdio.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/stdarg.h sys/types.h \
+ /usr/include/x86_64-linux-musl/sys/types.h \
+ /usr/include/x86_64-linux-musl/endian.h \
+ /usr/include/x86_64-linux-musl/sys/select.h string.h \
+ /usr/include/x86_64-linux-musl/string.h strings.h \
+ /usr/include/x86_64-linux-musl/strings.h stdlib.h \
+ /usr/include/x86_64-linux-musl/stdlib.h alloca.h unistd.h \
+ /usr/include/x86_64-linux-musl/unistd.h \
+ /usr/include/x86_64-linux-musl/bits/posix.h getopt-cdefs.h \
+ getopt-pfx-core.h getopt-core.h fcntl.h sys/stat.h time.h \
+ /usr/include/x86_64-linux-musl/time.h \
+ /usr/include/x86_64-linux-musl/sys/stat.h \
+ /usr/include/x86_64-linux-musl/bits/stat.h \
+ /usr/include/x86_64-linux-musl/fcntl.h \
+ /usr/include/x86_64-linux-musl/bits/fcntl.h langinfo.h \
+ /usr/include/x86_64-linux-musl/langinfo.h \
+ /usr/include/x86_64-linux-musl/nl_types.h
+../config.h:
+localcharset.h:
+stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+stdio.h:
+/usr/include/x86_64-linux-musl/stdio.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/stdarg.h:
+sys/types.h:
+/usr/include/x86_64-linux-musl/sys/types.h:
+/usr/include/x86_64-linux-musl/endian.h:
+/usr/include/x86_64-linux-musl/sys/select.h:
+string.h:
+/usr/include/x86_64-linux-musl/string.h:
+strings.h:
+/usr/include/x86_64-linux-musl/strings.h:
+stdlib.h:
+/usr/include/x86_64-linux-musl/stdlib.h:
+alloca.h:
+unistd.h:
+/usr/include/x86_64-linux-musl/unistd.h:
+/usr/include/x86_64-linux-musl/bits/posix.h:
+getopt-cdefs.h:
+getopt-pfx-core.h:
+getopt-core.h:
+fcntl.h:
+sys/stat.h:
+time.h:
+/usr/include/x86_64-linux-musl/time.h:
+/usr/include/x86_64-linux-musl/sys/stat.h:
+/usr/include/x86_64-linux-musl/bits/stat.h:
+/usr/include/x86_64-linux-musl/fcntl.h:
+/usr/include/x86_64-linux-musl/bits/fcntl.h:
+langinfo.h:
+/usr/include/x86_64-linux-musl/langinfo.h:
+/usr/include/x86_64-linux-musl/nl_types.h:

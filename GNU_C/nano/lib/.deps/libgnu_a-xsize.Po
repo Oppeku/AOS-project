@@ -1,0 +1,21 @@
+libgnu_a-xsize.o: xsize.c ../config.h xsize.h stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h limits.h \
+ /usr/include/x86_64-linux-musl/limits.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/limits.h stdint.h \
+ /usr/include/x86_64-linux-musl/stdint.h \
+ /usr/include/x86_64-linux-musl/bits/stdint.h attribute.h
+../config.h:
+xsize.h:
+stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+limits.h:
+/usr/include/x86_64-linux-musl/limits.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/limits.h:
+stdint.h:
+/usr/include/x86_64-linux-musl/stdint.h:
+/usr/include/x86_64-linux-musl/bits/stdint.h:
+attribute.h:

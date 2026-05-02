@@ -1729,6 +1729,8 @@ static int64_t sys_lseek(struct syscall_regs* regs) {
     return new_offset;
 }
 
+static int64_t sys_newfstatat(struct syscall_regs* regs);
+
 static int64_t sys_fstat(struct syscall_regs* regs) {
     struct fd_entry* entry = get_fd_entry(regs->rdi);
     struct linux_stat* st = (struct linux_stat*)(uintptr_t)regs->rsi;
@@ -1754,6 +1756,15 @@ static int64_t sys_fstat(struct syscall_regs* regs) {
 
     fill_linux_stat(st, regs->rdi + 1, 0, LINUX_S_IFCHR | LINUX_S_IRUSR | LINUX_S_IWUSR | LINUX_S_IRGRP | LINUX_S_IROTH);
     return 0;
+}
+
+static int64_t sys_stat(struct syscall_regs* regs) {
+    struct syscall_regs statat_regs = *regs;
+    statat_regs.rdi = (uint64_t)(int64_t)LINUX_AT_FDCWD;
+    statat_regs.rsi = regs->rdi;
+    statat_regs.rdx = regs->rsi;
+    statat_regs.r10 = 0;
+    return sys_newfstatat(&statat_regs);
 }
 
 static int64_t sys_newfstatat(struct syscall_regs* regs) {
@@ -2192,6 +2203,9 @@ void syscall_handler(struct syscall_regs* regs) {
             return;
         case LINUX_SYS_CLOSE:
             regs->rax = (uint64_t)sys_close(regs);
+            return;
+        case LINUX_SYS_STAT:
+            regs->rax = (uint64_t)sys_stat(regs);
             return;
         case LINUX_SYS_FSTAT:
             regs->rax = (uint64_t)sys_fstat(regs);

@@ -31,6 +31,7 @@ enum linux_syscall_nr {
     LINUX_SYS_WRITE = 1,
     LINUX_SYS_OPEN = 2,
     LINUX_SYS_CLOSE = 3,
+    LINUX_SYS_STAT = 4,
     LINUX_SYS_FSTAT = 5,
     LINUX_SYS_MMAP = 9,
     LINUX_SYS_MPROTECT = 10,

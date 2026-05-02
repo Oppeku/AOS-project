@@ -1,0 +1,7 @@
+libgnu_a-float.o: float.c ../config.h float.h \
+ /usr/include/x86_64-linux-musl/float.h \
+ /usr/include/x86_64-linux-musl/bits/float.h
+../config.h:
+float.h:
+/usr/include/x86_64-linux-musl/float.h:
+/usr/include/x86_64-linux-musl/bits/float.h:

@@ -1,0 +1,16 @@
+libgnu_a-strnlen1.o: strnlen1.c ../config.h strnlen1.h stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h string.h \
+ /usr/include/x86_64-linux-musl/string.h \
+ /usr/include/x86_64-linux-musl/features.h strings.h \
+ /usr/include/x86_64-linux-musl/strings.h
+../config.h:
+strnlen1.h:
+stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+string.h:
+/usr/include/x86_64-linux-musl/string.h:
+/usr/include/x86_64-linux-musl/features.h:
+strings.h:
+/usr/include/x86_64-linux-musl/strings.h:

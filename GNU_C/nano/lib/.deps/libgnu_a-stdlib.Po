@@ -1,0 +1,42 @@
+libgnu_a-stdlib.o: stdlib.c ../config.h stdlib.h \
+ /usr/include/x86_64-linux-musl/stdlib.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h alloca.h stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h unistd.h \
+ /usr/include/x86_64-linux-musl/unistd.h \
+ /usr/include/x86_64-linux-musl/bits/posix.h sys/types.h \
+ /usr/include/x86_64-linux-musl/sys/types.h \
+ /usr/include/x86_64-linux-musl/endian.h \
+ /usr/include/x86_64-linux-musl/sys/select.h getopt-cdefs.h \
+ getopt-pfx-core.h getopt-core.h fcntl.h sys/stat.h time.h \
+ /usr/include/x86_64-linux-musl/time.h \
+ /usr/include/x86_64-linux-musl/sys/stat.h \
+ /usr/include/x86_64-linux-musl/bits/stat.h \
+ /usr/include/x86_64-linux-musl/fcntl.h \
+ /usr/include/x86_64-linux-musl/bits/fcntl.h
+../config.h:
+stdlib.h:
+/usr/include/x86_64-linux-musl/stdlib.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+alloca.h:
+stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+unistd.h:
+/usr/include/x86_64-linux-musl/unistd.h:
+/usr/include/x86_64-linux-musl/bits/posix.h:
+sys/types.h:
+/usr/include/x86_64-linux-musl/sys/types.h:
+/usr/include/x86_64-linux-musl/endian.h:
+/usr/include/x86_64-linux-musl/sys/select.h:
+getopt-cdefs.h:
+getopt-pfx-core.h:
+getopt-core.h:
+fcntl.h:
+sys/stat.h:
+time.h:
+/usr/include/x86_64-linux-musl/time.h:
+/usr/include/x86_64-linux-musl/sys/stat.h:
+/usr/include/x86_64-linux-musl/bits/stat.h:
+/usr/include/x86_64-linux-musl/fcntl.h:
+/usr/include/x86_64-linux-musl/bits/fcntl.h:

@@ -1,0 +1,54 @@
+libgnu_a-hard-locale.o: hard-locale.c ../config.h hard-locale.h locale.h \
+ /usr/include/x86_64-linux-musl/locale.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h setlocale_null.h arg-nonnull.h \
+ stdlib.h /usr/include/x86_64-linux-musl/stdlib.h alloca.h unistd.h \
+ /usr/include/x86_64-linux-musl/unistd.h \
+ /usr/include/x86_64-linux-musl/bits/posix.h sys/types.h \
+ /usr/include/x86_64-linux-musl/sys/types.h \
+ /usr/include/x86_64-linux-musl/endian.h \
+ /usr/include/x86_64-linux-musl/sys/select.h getopt-cdefs.h \
+ getopt-pfx-core.h getopt-core.h fcntl.h sys/stat.h time.h \
+ /usr/include/x86_64-linux-musl/time.h \
+ /usr/include/x86_64-linux-musl/sys/stat.h \
+ /usr/include/x86_64-linux-musl/bits/stat.h \
+ /usr/include/x86_64-linux-musl/fcntl.h \
+ /usr/include/x86_64-linux-musl/bits/fcntl.h string.h \
+ /usr/include/x86_64-linux-musl/string.h strings.h \
+ /usr/include/x86_64-linux-musl/strings.h
+../config.h:
+hard-locale.h:
+locale.h:
+/usr/include/x86_64-linux-musl/locale.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+setlocale_null.h:
+arg-nonnull.h:
+stdlib.h:
+/usr/include/x86_64-linux-musl/stdlib.h:
+alloca.h:
+unistd.h:
+/usr/include/x86_64-linux-musl/unistd.h:
+/usr/include/x86_64-linux-musl/bits/posix.h:
+sys/types.h:
+/usr/include/x86_64-linux-musl/sys/types.h:
+/usr/include/x86_64-linux-musl/endian.h:
+/usr/include/x86_64-linux-musl/sys/select.h:
+getopt-cdefs.h:
+getopt-pfx-core.h:
+getopt-core.h:
+fcntl.h:
+sys/stat.h:
+time.h:
+/usr/include/x86_64-linux-musl/time.h:
+/usr/include/x86_64-linux-musl/sys/stat.h:
+/usr/include/x86_64-linux-musl/bits/stat.h:
+/usr/include/x86_64-linux-musl/fcntl.h:
+/usr/include/x86_64-linux-musl/bits/fcntl.h:
+string.h:
+/usr/include/x86_64-linux-musl/string.h:
+strings.h:
+/usr/include/x86_64-linux-musl/strings.h:

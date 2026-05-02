@@ -1,0 +1,116 @@
+libgnu_a-regex.o: regex.c libc-config.h ../config.h \
+ /usr/include/x86_64-linux-musl/errno.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/errno.h cdefs.h limits.h \
+ /usr/include/x86_64-linux-musl/limits.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h \
+ /usr/include/x86_64-linux-musl/bits/limits.h regex.h sys/types.h \
+ /usr/include/x86_64-linux-musl/sys/types.h \
+ /usr/include/x86_64-linux-musl/endian.h \
+ /usr/include/x86_64-linux-musl/sys/select.h regex_internal.h ctype.h \
+ /usr/include/x86_64-linux-musl/ctype.h stdio.h \
+ /usr/include/x86_64-linux-musl/stdio.h \
+ /usr/include/x86_64-linux-musl/stdarg.h stddef.h \
+ /usr/include/x86_64-linux-musl/stddef.h stdlib.h \
+ /usr/include/x86_64-linux-musl/stdlib.h alloca.h unistd.h \
+ /usr/include/x86_64-linux-musl/unistd.h \
+ /usr/include/x86_64-linux-musl/bits/posix.h getopt-cdefs.h \
+ getopt-pfx-core.h getopt-core.h fcntl.h sys/stat.h time.h \
+ /usr/include/x86_64-linux-musl/time.h \
+ /usr/include/x86_64-linux-musl/sys/stat.h \
+ /usr/include/x86_64-linux-musl/bits/stat.h \
+ /usr/include/x86_64-linux-musl/fcntl.h \
+ /usr/include/x86_64-linux-musl/bits/fcntl.h string.h \
+ /usr/include/x86_64-linux-musl/string.h strings.h \
+ /usr/include/x86_64-linux-musl/strings.h langinfo.h \
+ /usr/include/x86_64-linux-musl/langinfo.h \
+ /usr/include/x86_64-linux-musl/nl_types.h locale.h \
+ /usr/include/x86_64-linux-musl/locale.h setlocale_null.h arg-nonnull.h \
+ wchar.h /usr/include/x86_64-linux-musl/wchar.h wctype.h \
+ /usr/include/x86_64-linux-musl/wctype.h stdckdint.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/stdckdint.h stdcountof.h \
+ stdint.h /usr/include/x86_64-linux-musl/stdint.h \
+ /usr/include/x86_64-linux-musl/bits/stdint.h dynarray.h \
+ malloc/dynarray.h intprops.h intprops-internal.h verify.h \
+ glthread/lock.h glthread/once.h pthread.h \
+ /usr/include/x86_64-linux-musl/pthread.h sched.h \
+ /usr/include/x86_64-linux-musl/sched.h gettext.h attribute.h \
+ regex_internal.c regcomp.c regexec.c malloc/dynarray-skeleton.c
+libc-config.h:
+../config.h:
+/usr/include/x86_64-linux-musl/errno.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/errno.h:
+cdefs.h:
+limits.h:
+/usr/include/x86_64-linux-musl/limits.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
+/usr/include/x86_64-linux-musl/bits/limits.h:
+regex.h:
+sys/types.h:
+/usr/include/x86_64-linux-musl/sys/types.h:
+/usr/include/x86_64-linux-musl/endian.h:
+/usr/include/x86_64-linux-musl/sys/select.h:
+regex_internal.h:
+ctype.h:
+/usr/include/x86_64-linux-musl/ctype.h:
+stdio.h:
+/usr/include/x86_64-linux-musl/stdio.h:
+/usr/include/x86_64-linux-musl/stdarg.h:
+stddef.h:
+/usr/include/x86_64-linux-musl/stddef.h:
+stdlib.h:
+/usr/include/x86_64-linux-musl/stdlib.h:
+alloca.h:
+unistd.h:
+/usr/include/x86_64-linux-musl/unistd.h:
+/usr/include/x86_64-linux-musl/bits/posix.h:
+getopt-cdefs.h:
+getopt-pfx-core.h:
+getopt-core.h:
+fcntl.h:
+sys/stat.h:
+time.h:
+/usr/include/x86_64-linux-musl/time.h:
+/usr/include/x86_64-linux-musl/sys/stat.h:
+/usr/include/x86_64-linux-musl/bits/stat.h:
+/usr/include/x86_64-linux-musl/fcntl.h:
+/usr/include/x86_64-linux-musl/bits/fcntl.h:
+string.h:
+/usr/include/x86_64-linux-musl/string.h:
+strings.h:
+/usr/include/x86_64-linux-musl/strings.h:
+langinfo.h:
+/usr/include/x86_64-linux-musl/langinfo.h:
+/usr/include/x86_64-linux-musl/nl_types.h:
+locale.h:
+/usr/include/x86_64-linux-musl/locale.h:
+setlocale_null.h:
+arg-nonnull.h:
+wchar.h:
+/usr/include/x86_64-linux-musl/wchar.h:
+wctype.h:
+/usr/include/x86_64-linux-musl/wctype.h:
+stdckdint.h:
+/usr/lib/gcc/x86_64-linux-gnu/15/include/stdckdint.h:
+stdcountof.h:
+stdint.h:
+/usr/include/x86_64-linux-musl/stdint.h:
+/usr/include/x86_64-linux-musl/bits/stdint.h:
+dynarray.h:
+malloc/dynarray.h:
+intprops.h:
+intprops-internal.h:
+verify.h:
+glthread/lock.h:
+glthread/once.h:
+pthread.h:
+/usr/include/x86_64-linux-musl/pthread.h:
+sched.h:
+/usr/include/x86_64-linux-musl/sched.h:
+gettext.h:
+attribute.h:
+regex_internal.c:
+regcomp.c:
+regexec.c:
+malloc/dynarray-skeleton.c:

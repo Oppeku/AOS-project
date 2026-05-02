@@ -13,6 +13,9 @@ COREUTILS_BINARY ?=
 GNU_C_DIR ?= GNU_C
 GNU_COREUTILS_SRC ?= $(GNU_C_DIR)/coreutils-9.5/src
 GNU_PROGRAMS ?= ls cat echo pwd uname head tail true false whoami mkdir
+GNU_NANO_BINARY ?=
+GNU_NANO_SRC ?= $(GNU_C_DIR)/nano/src/nano
+GNU_NANO_ALT ?= $(GNU_C_DIR)/nano/nano
 PARTITION_ALIASES ?= partition PartiotionMANAGAER PartiotionMANAGER PartitionMANAGER PartitionsMANAGER
 GRUB_I386_DIR ?= /usr/lib/grub/i386-pc
 
@@ -87,7 +90,7 @@ $(BUILD_DIR)/aos.iso: $(BUILD_DIR)/kernel.bin $(BUILD_DIR)/initrd.img $(BUILD_DI
 	grub-mkimage -O i386-pc -o $(ISO_DIR)/boot/grub/i386-pc/core.img -p /boot/grub iso9660 biosdisk multiboot2 normal configfile
 	xorriso -as mkisofs -R -b boot/grub/i386-pc/eltorito.img -no-emul-boot -boot-load-size 4 -boot-info-table -o $(BUILD_DIR)/aos.iso $(ISO_DIR)
 
-$(BUILD_DIR)/initrd.img: hello.txt $(BUILD_DIR)/user.elf $(BUILD_DIR)/user2.elf $(BUILD_DIR)/shell.elf $(BUILD_DIR)/filetest.elf $(BUILD_DIR)/accesstest.elf $(BUILD_DIR)/openflagstest.elf $(BUILD_DIR)/duptest.elf $(BUILD_DIR)/pipetest.elf $(BUILD_DIR)/wait4test.elf $(BUILD_DIR)/stdincat.elf $(BUILD_DIR)/argvtest.elf $(BUILD_DIR)/pathtest.elf $(BUILD_DIR)/partitions.elf $(BUILD_DIR)/nano.elf $(BUILD_DIR)/busybox $(BUILD_DIR)/coreutils $(BUILD_DIR)/gnu-coreutils.stamp
+$(BUILD_DIR)/initrd.img: hello.txt $(BUILD_DIR)/user.elf $(BUILD_DIR)/user2.elf $(BUILD_DIR)/shell.elf $(BUILD_DIR)/filetest.elf $(BUILD_DIR)/accesstest.elf $(BUILD_DIR)/openflagstest.elf $(BUILD_DIR)/duptest.elf $(BUILD_DIR)/pipetest.elf $(BUILD_DIR)/wait4test.elf $(BUILD_DIR)/stdincat.elf $(BUILD_DIR)/argvtest.elf $(BUILD_DIR)/pathtest.elf $(BUILD_DIR)/partitions.elf $(BUILD_DIR)/nano.elf $(BUILD_DIR)/gnu-nano $(BUILD_DIR)/busybox $(BUILD_DIR)/coreutils $(BUILD_DIR)/gnu-coreutils.stamp
 	rm -rf $(BUILD_DIR)/initrd_root
 	@mkdir -p $(BUILD_DIR)/initrd_root
 	cp hello.txt $(BUILD_DIR)/initrd_root/hello.txt
@@ -106,12 +109,13 @@ $(BUILD_DIR)/initrd.img: hello.txt $(BUILD_DIR)/user.elf $(BUILD_DIR)/user2.elf 
 	cp $(BUILD_DIR)/partitions.elf $(BUILD_DIR)/initrd_root/partitions.elf
 	cp $(BUILD_DIR)/partitions.elf $(BUILD_DIR)/initrd_root/partitions
 	for alias in $(PARTITION_ALIASES); do cp $(BUILD_DIR)/partitions.elf "$(BUILD_DIR)/initrd_root/$$alias"; done
-	cp $(BUILD_DIR)/nano.elf $(BUILD_DIR)/initrd_root/nano.elf
-	cp $(BUILD_DIR)/nano.elf $(BUILD_DIR)/initrd_root/nano
+	cp $(BUILD_DIR)/nano.elf $(BUILD_DIR)/initrd_root/aosnano.elf
+	cp $(BUILD_DIR)/nano.elf $(BUILD_DIR)/initrd_root/aosnano
+	if [ -f $(BUILD_DIR)/gnu-nano ]; then cp $(BUILD_DIR)/gnu-nano $(BUILD_DIR)/initrd_root/nano; else echo "GNU nano not found; /nano not installed. Put it at $(GNU_NANO_SRC) or set GNU_NANO_BINARY=..."; fi
 	cp $(BUILD_DIR)/busybox $(BUILD_DIR)/initrd_root/busybox
 	if [ -f $(BUILD_DIR)/coreutils ]; then cp $(BUILD_DIR)/coreutils $(BUILD_DIR)/initrd_root/coreutils; fi
 	for prog in $(GNU_PROGRAMS); do if [ -f "$(BUILD_DIR)/gnu-coreutils/$$prog" ]; then cp "$(BUILD_DIR)/gnu-coreutils/$$prog" "$(BUILD_DIR)/initrd_root/$$prog"; fi; done
-	cd $(BUILD_DIR)/initrd_root && { printf "hello.txt\nuser.elf\nuser2.elf\nshell.elf\nfiletest.elf\naccesstest.elf\nopenflagstest.elf\nduptest.elf\npipetest.elf\nwait4test.elf\nstdincat.elf\nargvtest.elf\npathtest.elf\npartitions.elf\npartitions\n"; for alias in $(PARTITION_ALIASES); do printf "%s\n" "$$alias"; done; printf "nano.elf\nnano\nbusybox\n"; if [ -f coreutils ]; then printf "coreutils\n"; fi; for prog in $(GNU_PROGRAMS); do if [ -f "$$prog" ]; then printf "%s\n" "$$prog"; fi; done; } | cpio -o -H newc > ../initrd.img
+	cd $(BUILD_DIR)/initrd_root && { printf "hello.txt\nuser.elf\nuser2.elf\nshell.elf\nfiletest.elf\naccesstest.elf\nopenflagstest.elf\nduptest.elf\npipetest.elf\nwait4test.elf\nstdincat.elf\nargvtest.elf\npathtest.elf\npartitions.elf\npartitions\n"; for alias in $(PARTITION_ALIASES); do printf "%s\n" "$$alias"; done; printf "aosnano.elf\naosnano\nbusybox\n"; if [ -f nano ]; then printf "nano\n"; fi; if [ -f coreutils ]; then printf "coreutils\n"; fi; for prog in $(GNU_PROGRAMS); do if [ -f "$$prog" ]; then printf "%s\n" "$$prog"; fi; done; } | cpio -o -H newc > ../initrd.img
 
 $(BUILD_DIR)/busybox: scripts/build_busybox.sh scripts/prepare_busybox.py
 	@mkdir -p $(BUILD_DIR)
@@ -151,6 +155,18 @@ $(BUILD_DIR)/gnu-coreutils.stamp: scripts/prepare_busybox.py
 		fi; \
 	done; \
 	if [ "$$found" -eq 1 ]; then touch $@; else rm -f $@; fi
+
+$(BUILD_DIR)/gnu-nano: scripts/prepare_busybox.py
+	@mkdir -p $(BUILD_DIR)
+	@if [ -n "$(GNU_NANO_BINARY)" ]; then \
+		python3 scripts/prepare_busybox.py "$(GNU_NANO_BINARY)" $@; \
+	elif [ -f "$(GNU_NANO_SRC)" ]; then \
+		python3 scripts/prepare_busybox.py "$(GNU_NANO_SRC)" $@; \
+	elif [ -f "$(GNU_NANO_ALT)" ]; then \
+		python3 scripts/prepare_busybox.py "$(GNU_NANO_ALT)" $@; \
+	else \
+		rm -f $@; \
+	fi
 
 $(BUILD_DIR)/fat32.img: hello.txt
 	@mkdir -p $(BUILD_DIR)/fat32_root

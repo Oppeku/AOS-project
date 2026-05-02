@@ -1,0 +1,15 @@
+libgnu_a-printf-frexp.o: printf-frexp.c ../config.h printf-frexp.h \
+ float.h /usr/include/x86_64-linux-musl/float.h \
+ /usr/include/x86_64-linux-musl/bits/float.h math.h \
+ /usr/include/x86_64-linux-musl/math.h \
+ /usr/include/x86_64-linux-musl/features.h \
+ /usr/include/x86_64-linux-musl/bits/alltypes.h
+../config.h:
+printf-frexp.h:
+float.h:
+/usr/include/x86_64-linux-musl/float.h:
+/usr/include/x86_64-linux-musl/bits/float.h:
+math.h:
+/usr/include/x86_64-linux-musl/math.h:
+/usr/include/x86_64-linux-musl/features.h:
+/usr/include/x86_64-linux-musl/bits/alltypes.h:
