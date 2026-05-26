@@ -3,6 +3,7 @@
  */
 
 #include <vfs.h>
+#include <aosfs.h>
 #include <cpio.h>
 #include <ext4.h>
 #include <fat32.h>
@@ -158,6 +159,9 @@ static int normalize_path(const char* path, char* out, size_t out_size) {
 
 static int path_starts_with_component(const char* path, const char* prefix) {
     size_t i = 0;
+    if (prefix[0] == '\0') {
+        return 1;
+    }
     while (prefix[i] != '\0') {
         if (path[i] != prefix[i]) {
             return 0;
@@ -165,16 +169,6 @@ static int path_starts_with_component(const char* path, const char* prefix) {
         i++;
     }
     return path[i] == '\0' || path[i] == '/';
-}
-
-static int contains_slash(const char* path) {
-    while (*path) {
-        if (*path == '/') {
-            return 1;
-        }
-        path++;
-    }
-    return 0;
 }
 
 static size_t local_strlen(const char* s) {
@@ -367,6 +361,11 @@ static int make_mount_backend_path(const char* normalized, const char* mount_pat
         return 0;
     }
 
+    if (backend_len == 0) {
+        copy_path_string(out, out_size, rest);
+        return 0;
+    }
+
     if (backend_len + 1 >= out_size) {
         return -1;
     }
@@ -412,7 +411,13 @@ static void fill_synthetic_dir(struct vfs_node* out, uint64_t inode, const char*
 
 void vfs_init_mounts(void) {
     local_memset(g_mounts, 0, sizeof(g_mounts));
+    aosfs_init();
+    (void)vfs_mount("/", VFS_BACKEND_AOSFS, "/");
+    (void)vfs_mount("commands", VFS_BACKEND_INITRD, "/");
+    (void)vfs_mount("main", VFS_BACKEND_AOSFS, "main");
+    (void)vfs_mount("etc", VFS_BACKEND_AOSFS, "etc");
     (void)vfs_mount("tmp", VFS_BACKEND_TMPFS, "tmp");
+    (void)vfs_mount("trash", VFS_BACKEND_FAT32, "");
     (void)vfs_mount("fat32", VFS_BACKEND_FAT32, "fat32");
     (void)vfs_mount("mnt/fat32", VFS_BACKEND_FAT32, "fat32");
     (void)vfs_mount("ext4", VFS_BACKEND_EXT4, "ext4");
@@ -424,8 +429,7 @@ int vfs_mount(const char* path, uint8_t backend, const char* backend_root) {
     char root_normalized[MAX_VFS_PATH];
 
     if (normalize_path(path, normalized, sizeof(normalized)) != 0 ||
-        normalize_path(backend_root, root_normalized, sizeof(root_normalized)) != 0 ||
-        normalized[0] == '\0' || root_normalized[0] == '\0') {
+        normalize_path(backend_root, root_normalized, sizeof(root_normalized)) != 0) {
         return -1;
     }
 
@@ -450,28 +454,28 @@ int vfs_mount(const char* path, uint8_t backend, const char* backend_root) {
     return -1;
 }
 
-static int lookup_initrd_node(const char* normalized, struct vfs_node* out) {
-    uint8_t* data = NULL;
-    uint32_t size = 0;
+int vfs_mount_info_at(size_t index, struct vfs_mount_info* out) {
+    size_t seen = 0;
 
-    if (!normalized || !out) {
-        return -1;
-    }
-    if (*normalized == '\0' || contains_slash(normalized)) {
-        return -1;
-    }
-    if (initrd_get_file(normalized, &data, &size) != 0) {
+    if (!out) {
         return -1;
     }
 
-    local_memset(out, 0, sizeof(*out));
-    out->type = VFS_NODE_TYPE_REGULAR;
-    out->backend = VFS_BACKEND_INITRD;
-    out->size = size;
-    out->inode = ((uint64_t)(uintptr_t)data >> 2);
-    out->u.data = data;
-    copy_path_string(out->path, sizeof(out->path), normalized);
-    return 0;
+    for (size_t i = 0; i < VFS_MAX_MOUNTS; i++) {
+        if (!g_mounts[i].in_use) {
+            continue;
+        }
+        if (seen == index) {
+            local_memset(out, 0, sizeof(*out));
+            out->backend = g_mounts[i].backend;
+            copy_path_string(out->path, sizeof(out->path), g_mounts[i].path);
+            copy_path_string(out->backend_root, sizeof(out->backend_root), g_mounts[i].backend_root);
+            return 0;
+        }
+        seen++;
+    }
+
+    return -1;
 }
 
 static int lookup_fat32_node(const char* normalized, struct vfs_node* out) {
@@ -518,6 +522,40 @@ static int lookup_tmpfs_node(const char* normalized, struct vfs_node* out) {
     return tmpfs_lookup_path(normalized, out);
 }
 
+static int lookup_initrd_node(const char* normalized, struct vfs_node* out) {
+    uint8_t* data = NULL;
+    uint32_t size = 0;
+
+    if (!normalized || !out) {
+        return -1;
+    }
+    if (*normalized == '\0') {
+        local_memset(out, 0, sizeof(*out));
+        out->type = VFS_NODE_TYPE_DIRECTORY;
+        out->backend = VFS_BACKEND_INITRD;
+        out->inode = 0x1A17D;
+        copy_path_string(out->path, sizeof(out->path), "");
+        return 0;
+    }
+    for (size_t i = 0; normalized[i]; i++) {
+        if (normalized[i] == '/') {
+            return -1;
+        }
+    }
+    if (initrd_get_file(normalized, &data, &size) != 0) {
+        return -1;
+    }
+
+    local_memset(out, 0, sizeof(*out));
+    out->type = VFS_NODE_TYPE_REGULAR;
+    out->backend = VFS_BACKEND_INITRD;
+    out->size = size;
+    out->inode = 0x1A000 + (uint64_t)(uintptr_t)data;
+    out->u.data = data;
+    copy_path_string(out->path, sizeof(out->path), normalized);
+    return 0;
+}
+
 int vfs_lookup(const char* path, struct vfs_node* out) {
     char normalized[MAX_VFS_PATH];
     char backend_path[MAX_VFS_PATH];
@@ -531,8 +569,7 @@ int vfs_lookup(const char* path, struct vfs_node* out) {
     }
 
     if (*normalized == '\0') {
-        fill_synthetic_dir(out, VFS_SYNTH_ROOT_INO, "");
-        return 0;
+        return aosfs_lookup_path("", out);
     }
 
     mount = find_mount_for_path(normalized, backend_path, sizeof(backend_path));
@@ -540,11 +577,17 @@ int vfs_lookup(const char* path, struct vfs_node* out) {
         if (mount->backend == VFS_BACKEND_TMPFS) {
             return lookup_tmpfs_node(backend_path, out);
         }
+        if (mount->backend == VFS_BACKEND_INITRD) {
+            return lookup_initrd_node(backend_path, out);
+        }
         if (mount->backend == VFS_BACKEND_FAT32) {
             return lookup_fat32_node(backend_path, out);
         }
         if (mount->backend == VFS_BACKEND_EXT4) {
             return lookup_ext4_node(backend_path, out);
+        }
+        if (mount->backend == VFS_BACKEND_AOSFS) {
+            return aosfs_lookup_path(backend_path, out);
         }
     }
 
@@ -553,7 +596,7 @@ int vfs_lookup(const char* path, struct vfs_node* out) {
         return 0;
     }
 
-    return lookup_initrd_node(normalized, out);
+    return aosfs_lookup_path(normalized, out);
 }
 
 int vfs_access_path(const char* path, uint64_t mode) {
@@ -569,7 +612,7 @@ int vfs_access_path(const char* path, uint64_t mode) {
         return -1;
     }
     if (mode & LINUX_W_OK) {
-        return (node.backend == VFS_BACKEND_TMPFS || node.backend == VFS_BACKEND_FAT32 || node.backend == VFS_BACKEND_EXT4) ? 0 : -1;
+        return (node.backend == VFS_BACKEND_AOSFS || node.backend == VFS_BACKEND_TMPFS || node.backend == VFS_BACKEND_FAT32 || node.backend == VFS_BACKEND_EXT4) ? 0 : -1;
     }
     return 0;
 }
@@ -584,6 +627,12 @@ int vfs_read_node(const struct vfs_node* node, uint64_t offset, uint8_t* buffer,
     }
     if (node->backend == VFS_BACKEND_EXT4) {
         return ext4_read_file((uint32_t)node->inode, node->size, offset, buffer, len);
+    }
+    if (node->backend == VFS_BACKEND_TMPFS) {
+        return tmpfs_read_path(node->path, offset, buffer, len);
+    }
+    if (node->backend != VFS_BACKEND_AOSFS && node->backend != VFS_BACKEND_INITRD) {
+        return -1;
     }
 
     local_memcpy(buffer, node->u.data + offset, (size_t)len);
@@ -603,6 +652,55 @@ int vfs_write_node(const struct vfs_node* node, uint64_t offset, const uint8_t* 
     if (node->backend == VFS_BACKEND_EXT4) {
         return ext4_write_path(node->path, offset, buffer, len, written, new_size);
     }
+    if (node->backend == VFS_BACKEND_AOSFS) {
+        return aosfs_write_path(node->path, offset, buffer, len, written, new_size);
+    }
+    return -1;
+}
+
+int vfs_unlink_path(const char* path) {
+    char normalized[MAX_VFS_PATH];
+    char backend_path[MAX_VFS_PATH];
+    const struct vfs_mount* mount;
+    struct vfs_node node;
+
+    if (normalize_path(path, normalized, sizeof(normalized)) != 0 || normalized[0] == '\0') {
+        return -1;
+    }
+    if (vfs_lookup(normalized, &node) != 0 || node.type != VFS_NODE_TYPE_REGULAR) {
+        return -1;
+    }
+
+    mount = find_mount_for_path(normalized, backend_path, sizeof(backend_path));
+    if (mount && mount->backend == VFS_BACKEND_AOSFS) {
+        return aosfs_unlink_path(backend_path);
+    }
+    if (!mount && node.backend == VFS_BACKEND_AOSFS) {
+        return aosfs_unlink_path(normalized);
+    }
+    return -1;
+}
+
+int vfs_rmdir_path(const char* path) {
+    char normalized[MAX_VFS_PATH];
+    char backend_path[MAX_VFS_PATH];
+    const struct vfs_mount* mount;
+    struct vfs_node node;
+
+    if (normalize_path(path, normalized, sizeof(normalized)) != 0 || normalized[0] == '\0') {
+        return -1;
+    }
+    if (vfs_lookup(normalized, &node) != 0 || node.type != VFS_NODE_TYPE_DIRECTORY) {
+        return -1;
+    }
+
+    mount = find_mount_for_path(normalized, backend_path, sizeof(backend_path));
+    if (mount && mount->backend == VFS_BACKEND_AOSFS) {
+        return aosfs_rmdir_path(backend_path);
+    }
+    if (!mount && node.backend == VFS_BACKEND_AOSFS) {
+        return aosfs_rmdir_path(normalized);
+    }
     return -1;
 }
 
@@ -616,6 +714,33 @@ int vfs_dirent_at(const struct vfs_node* node, uint64_t index, char* name_buf, s
     }
     if (node->backend == VFS_BACKEND_EXT4) {
         return ext4_dirent_at_index(node->path, index, name_buf, name_buf_size, size, d_type);
+    }
+    if (node->backend == VFS_BACKEND_AOSFS) {
+        return aosfs_dirent_at_index(node->path, index, name_buf, name_buf_size, size, d_type);
+    }
+    if (node->backend == VFS_BACKEND_INITRD) {
+        uint32_t entry_size = 0;
+        if (node->type != VFS_NODE_TYPE_DIRECTORY) {
+            return -1;
+        }
+        if (index == 0) {
+            copy_path_string(name_buf, name_buf_size, ".");
+            if (size) *size = 0;
+            if (d_type) *d_type = LINUX_DTYPE_DIR;
+            return 0;
+        }
+        if (index == 1) {
+            copy_path_string(name_buf, name_buf_size, "..");
+            if (size) *size = 0;
+            if (d_type) *d_type = LINUX_DTYPE_DIR;
+            return 0;
+        }
+        if (initrd_get_entry(index - 2, name_buf, name_buf_size, &entry_size) != 0) {
+            return -1;
+        }
+        if (size) *size = entry_size;
+        if (d_type) *d_type = LINUX_DTYPE_REG;
+        return 0;
     }
 
     if (node->backend == VFS_BACKEND_SYNTHETIC) {

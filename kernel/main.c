@@ -9,6 +9,8 @@
 #include <pmm.h>
 #include <vmm.h>
 #include <cpio.h>
+#include <aosfs.h>
+#include <ata.h>
 #include <ext4.h>
 #include <fat32.h>
 #include <tmpfs.h>
@@ -17,7 +19,12 @@
 #include <multiboot2.h>
 #include <panic.h>
 #include <partition.h>
+#include <blkdev.h>
+#include <pci.h>
+#include <driver.h>
+#include <e1000.h>
 #include <process.h>
+#include <timer.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -28,7 +35,13 @@
  */
 __attribute__((used))
 static const char aos_kernel_watermark[] =
-    "AOS-WATERMARK|owner=Abhigyan Narayan|project=AOS|component=kernel|issued=2026-04-28|uuid=5d9d6d7b-77b3-4d66-b38d-7b0d7d3d6a51";
+    "AOS-WATERMARK|owner=Abhigyan Narayan|project=AOS|component=kernel|issued=2026-04-28|uuid=";
+
+#ifndef AOS_BOOT_VERBOSE
+#define AOS_BOOT_VERBOSE 0
+#endif
+
+uint8_t aos_boot_verbose = AOS_BOOT_VERBOSE;
 
 void outb(uint16_t port, uint8_t val) {
     asm volatile ( "outb %0, %1" : : "a"(val), "Nd"(port) );
@@ -86,14 +99,17 @@ static void boot_log_status(const char* message, const char* tag, unsigned char 
 }
 
 static void boot_log_started(const char* message) {
+    if (!aos_boot_verbose) return;
     boot_log_status(message, "[ START ]", 0x0B);
 }
 
 static void boot_log_ok(const char* message) {
+    if (!aos_boot_verbose) return;
     boot_log_status(message, "[  OK   ]", 0x0A);
 }
 
 static void boot_log_warn(const char* message) {
+    if (!aos_boot_verbose) return;
     boot_log_status(message, "[ WARN  ]", 0x0E);
 }
 
@@ -111,6 +127,74 @@ static void serial_print_hex64(uint64_t value) {
     }
     buf[18] = '\0';
     serial_print(buf);
+}
+
+static void serial_print_u64(uint64_t value) {
+    char buf[21];
+    int pos = 20;
+
+    buf[pos] = '\0';
+    if (value == 0) {
+        serial_print("0");
+        return;
+    }
+
+    while (value > 0 && pos > 0) {
+        pos--;
+        buf[pos] = (char)('0' + (value % 10));
+        value /= 10;
+    }
+
+    serial_print(&buf[pos]);
+}
+
+static void serial_print_mib(uint64_t bytes) {
+    serial_print_u64((bytes + 1048575ULL) / 1048576ULL);
+    serial_print(" MiB");
+}
+
+static void boot_log_memory_snapshot(const char* label) {
+    if (!aos_boot_verbose) return;
+
+    serial_print(label);
+    serial_print(": total=");
+    serial_print_mib(pmm_total_memory());
+    serial_print(" used=");
+    serial_print_mib(pmm_used_memory());
+    serial_print(" free=");
+    serial_print_mib(pmm_free_memory());
+    serial_print("\n");
+}
+
+static void ensure_default_user_layout(void) {
+    const char* dirs[] = {
+        "root",
+    };
+
+    for (size_t i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++) {
+        (void)aosfs_mkdir_path(dirs[i]);
+    }
+}
+
+static void seed_file_if_missing(const char* path, const char* data) {
+    struct vfs_node node;
+    uint64_t written = 0;
+    uint32_t new_size = 0;
+
+    if (!path || !data || vfs_lookup(path, &node) == 0) {
+        return;
+    }
+    if (aosfs_create_path(path, &node) != 0) {
+        return;
+    }
+    (void)aosfs_write_path(path, 0, (const uint8_t*)data, local_strlen(data), &written, &new_size);
+}
+
+static void seed_default_user_database(void) {
+    seed_file_if_missing("etc/passwd", "root:x:0:0:AOS Live Root:/root:/commands/shell.elf\n");
+    seed_file_if_missing("etc/group", "root:x:0:root\n");
+    seed_file_if_missing("etc/shadow", "root::0:0:99999:7:::\n");
+    seed_file_if_missing("etc/sudoers", "root ALL=(ALL) NOPASSWD: ALL\n");
 }
 
 extern void jump_to_user(uint64_t code, uint64_t stack);
@@ -152,7 +236,9 @@ static void init_pic() {
 void kernel_main(uint64_t magic, uint64_t mb_info) {
     (void)magic;
     vga_clear(0x07);
-    serial_print("AOS: Kernel Main Started\n");
+    if (aos_boot_verbose) {
+        serial_print("AOS: Kernel Main Started\n");
+    }
     boot_log_started("Starting AOS kernel boot");
     pmm_init(mb_info);
     boot_log_ok("Starting physical memory manager");
@@ -164,11 +250,33 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
     boot_log_ok("Starting interrupt descriptor table");
     init_process();
     boot_log_ok("Starting process management");
+    pci_init();
+    boot_log_ok("Starting PCI discovery");
+    driver_init();
+    driver_import_pci_devices();
+    e1000_register_driver();
+    boot_log_ok("Starting driver model");
+    blkdev_init();
+    boot_log_ok("Starting block device layer");
+    uint32_t ata0_id = ata_init_primary_master();
+    if (ata0_id != BLKDEV_INVALID_ID) {
+        boot_log_ok("Starting ATA primary master");
+    } else {
+        boot_log_warn("Starting ATA primary master");
+    }
     partition_init();
+    if (ata0_id != BLKDEV_INVALID_ID) {
+        const struct blkdev* ata0 = blkdev_get(ata0_id);
+        if (partition_load_table(ata0_id) > 0) {
+            boot_log_ok("Loading AOS partition table from ata0");
+        } else if (ata0 && ata0->size > 512) {
+            (void)partition_register_blkdev(ata0_id, 512, ata0->size - 512, PARTITION_FS_AOSFS, "ata0p0");
+            boot_log_warn("Loading AOS partition table from ata0");
+        }
+    }
     boot_log_ok("Starting PartiotionMANAGAER");
     vfs_init_mounts();
     boot_log_ok("Starting VFS mount table");
-    extern void init_timer(uint32_t);
     init_timer(100);
     boot_log_ok("Starting system timer at 100 Hz");
     init_pic();
@@ -189,6 +297,10 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
          tag->type != MULTIBOOT_TAG_TYPE_END;
          tag = (struct multiboot_tag*)((uint8_t*)tag + ((tag->size + 7) & ~7))) 
     {
+        if (tag->size < sizeof(struct multiboot_tag)) {
+            boot_log_warn("Stopping boot module scan");
+            break;
+        }
         if (tag->type == MULTIBOOT_TAG_TYPE_MODULE) {
             struct multiboot_tag_module* mod = (struct multiboot_tag_module*)tag;
             if (module_index == 0) {
@@ -212,7 +324,45 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
         boot_log_fail("Starting initrd mount");
         aos_panic("Boot failure", "The initrd boot module is missing.");
     }
-    partition_print_table();
+    vga_init_framebuffer(mb_info);
+    if (aos_boot_verbose) {
+        boot_log_ok("Starting framebuffer console");
+    }
+    if (aos_boot_verbose) {
+        partition_print_table();
+    }
+
+    const struct blkdev* aosfs_disk = blkdev_find("ata0");
+    const struct partition* aosfs_part = partition_find_by_role(PARTITION_ROLE_ROOT);
+    if (!aosfs_part) {
+        aosfs_part = partition_find_by_fs(PARTITION_FS_AOSFS);
+    }
+    if (aosfs_disk && aosfs_part && aosfs_part->blkdev_id == aosfs_disk->id &&
+        aosfs_mount_at(aosfs_part->blkdev_id, aosfs_part->offset) == 0) {
+        boot_log_ok("Starting AOSFS mount at / from ata0");
+    } else if (aosfs_part) {
+        if (aosfs_mount(aosfs_part->blkdev_id) == 0) {
+            boot_log_ok("Starting AOSFS mount at /");
+        } else {
+            boot_log_warn("Starting AOSFS mount at /");
+        }
+    } else {
+        boot_log_warn("Starting AOSFS mount at /");
+    }
+
+    const struct partition* main_part = partition_find_by_role(PARTITION_ROLE_MAIN);
+    if (main_part && main_part->fs_type == PARTITION_FS_AOSFS &&
+        aosfs_mount_role(PARTITION_ROLE_MAIN, main_part->blkdev_id, main_part->offset) == 0) {
+        (void)vfs_mount("main", VFS_BACKEND_AOSFS, "@main");
+        boot_log_ok("Starting AOSFS mount at /main");
+    }
+
+    const struct partition* etc_part = partition_find_by_role(PARTITION_ROLE_ETC);
+    if (etc_part && etc_part->fs_type == PARTITION_FS_AOSFS &&
+        aosfs_mount_role(PARTITION_ROLE_ETC, etc_part->blkdev_id, etc_part->offset) == 0) {
+        (void)vfs_mount("etc", VFS_BACKEND_AOSFS, "@etc");
+        boot_log_ok("Starting AOSFS mount at /etc");
+    }
 
     const struct partition* fat32_part = partition_find_by_fs(PARTITION_FS_FAT32);
     if (fat32_part) {
@@ -242,6 +392,20 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
     if (!ext4_ready && !ext4_seen) {
         boot_log_warn("Starting EXT4 mount at /mnt/ext4");
     }
+
+    const struct partition* main_storage_part = partition_find_by_role(PARTITION_ROLE_MAIN);
+    if (main_storage_part && main_storage_part->fs_type == PARTITION_FS_EXT4) {
+        boot_log_ok("AOS layout: /main is ext4 user storage");
+    }
+    const struct partition* trash_part = partition_find_by_role(PARTITION_ROLE_TRASH);
+    if (trash_part && trash_part->fs_type == PARTITION_FS_FAT32) {
+        boot_log_ok("AOS layout: /trash is FAT32 recovery storage");
+    }
+
+    ensure_default_user_layout();
+    boot_log_ok("Starting default user home layout");
+    seed_default_user_database();
+    boot_log_ok("Starting default user database");
 
     tmpfs_init();
     boot_log_ok("Starting tmpfs mount at /tmp");
@@ -274,15 +438,12 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
         aos_panic("Boot failure", "ELF loader rejected shell.elf.");
     }
     boot_log_ok("Starting shell.elf load");
-    serial_print("AOS: user entry @ ");
-    serial_print_hex64(user_entry);
-    serial_print("\n");
-
-    void* ustack_phys = pmm_alloc_block();
-    if (!ustack_phys) {
-        boot_log_fail("Starting userspace stack allocation");
-        aos_panic("Boot failure", "Failed to allocate the first userspace stack page.");
+    if (aos_boot_verbose) {
+        serial_print("AOS: user entry @ ");
+        serial_print_hex64(user_entry);
+        serial_print("\n");
     }
+
     uint64_t ustack_base = 0x70000080000ULL;
     // Map 2 pages for stack
     void* ustack_page0 = pmm_alloc_block();
@@ -295,6 +456,7 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
     vmm_map_page(p4_table, ustack_base + 0x1000, (uint64_t)ustack_page1, 0x7);
     uint64_t ustack_top = ustack_base + 0x2000;
     boot_log_ok("Starting userspace stack mapping");
+    boot_log_memory_snapshot("AOS memory before shell");
     boot_log_ok("Starting shell.elf");
 
     jump_to_user(user_entry, ustack_top);

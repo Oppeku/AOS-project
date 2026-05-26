@@ -12,19 +12,27 @@ BUILD_BUSYBOX = scripts/build_busybox.sh
 COREUTILS_BINARY ?=
 GNU_C_DIR ?= GNU_C
 GNU_COREUTILS_SRC ?= $(GNU_C_DIR)/coreutils-9.5/src
-GNU_PROGRAMS ?= ls cat echo pwd uname head tail true false whoami mkdir
+GNU_PROGRAMS ?= ls cat echo pwd head tail true false
 GNU_NANO_BINARY ?=
 GNU_NANO_SRC ?= $(GNU_C_DIR)/nano/src/nano
 GNU_NANO_ALT ?= $(GNU_C_DIR)/nano/nano
 PARTITION_ALIASES ?= partition PartiotionMANAGAER PartiotionMANAGER PartitionMANAGER PartitionsMANAGER
 GRUB_I386_DIR ?= /usr/lib/grub/i386-pc
+GRUB_EFI_DIR ?= /usr/lib/grub/x86_64-efi
+AOSFS_IMAGE_SIZE_MB ?= 16
+ESP_IMAGE_SIZE_MB ?= 64
+AOS_BOOT_VERBOSE ?= 1
+AOS_LIVE_PERMISSIVE ?= 1
+AOSFS_DRIVE_ARGS = -drive file=$(BUILD_DIR)/aosfs.img,format=raw,if=ide,index=0,media=disk
 
 # --- Flags ---
 # -mno-sse/sse2: Prevents 'movaps' alignment crashes
 # -mno-red-zone: Required for x86_64 kernels to prevent stack corruption
 CFLAGS = -Iinclude -ffreestanding -O2 -Wall -Wextra \
          -fno-stack-protector -fno-pie -m64 \
-         -mno-sse -mno-sse2 -mno-red-zone
+         -mno-sse -mno-sse2 -mno-red-zone \
+         -DAOS_BOOT_VERBOSE=$(AOS_BOOT_VERBOSE) \
+         -DAOS_LIVE_PERMISSIVE=$(AOS_LIVE_PERMISSIVE)
 
 ASFLAGS = -f elf64
 LDFLAGS = -n -T scripts/linker.ld
@@ -53,6 +61,7 @@ OBJ = $(BUILD_DIR)/boot.o \
 OBJECTS = $(BUILD_DIR)/boot.o \
           $(BUILD_DIR)/main.o \
           $(BUILD_DIR)/vga.o \
+          $(BUILD_DIR)/gfx.o \
           $(BUILD_DIR)/gdt.o \
           $(BUILD_DIR)/idt.o \
           $(BUILD_DIR)/pmm.o \
@@ -64,6 +73,12 @@ OBJECTS = $(BUILD_DIR)/boot.o \
           $(BUILD_DIR)/paging.o \
           $(BUILD_DIR)/syscall_c.o \
           $(BUILD_DIR)/vfs.o \
+          $(BUILD_DIR)/blkdev.o \
+          $(BUILD_DIR)/pci.o \
+          $(BUILD_DIR)/driver.o \
+          $(BUILD_DIR)/ata.o \
+          $(BUILD_DIR)/e1000.o \
+          $(BUILD_DIR)/aosfs.o \
           $(BUILD_DIR)/tmpfs.o \
           $(BUILD_DIR)/fat32.o \
           $(BUILD_DIR)/ext4.o \
@@ -73,24 +88,45 @@ OBJECTS = $(BUILD_DIR)/boot.o \
           $(BUILD_DIR)/initrd.o \
           $(BUILD_DIR)/elf64_loader.o \
           $(BUILD_DIR)/process_c.o \
-          $(BUILD_DIR)/timer.o
+          $(BUILD_DIR)/timer.o \
+          $(BUILD_DIR)/rtc.o
 
 # --- Build Targets ---
 
 all: $(BUILD_DIR)/aos.iso
 
-$(BUILD_DIR)/aos.iso: $(BUILD_DIR)/kernel.bin $(BUILD_DIR)/initrd.img $(BUILD_DIR)/fat32.img $(BUILD_DIR)/ext4.img
+uefi: $(BUILD_DIR)/esp.img
+
+$(BUILD_DIR)/aos.iso: $(BUILD_DIR)/kernel.bin $(BUILD_DIR)/initrd.img $(BUILD_DIR)/fat32.img $(BUILD_DIR)/ext4.img $(BUILD_DIR)/aosfs.img
 	@mkdir -p $(ISO_DIR)/boot/grub/i386-pc
 	cp $(BUILD_DIR)/kernel.bin $(ISO_DIR)/boot/kernel.bin
 	cp $(BUILD_DIR)/initrd.img $(ISO_DIR)/boot/initrd.img
 	cp $(BUILD_DIR)/fat32.img $(ISO_DIR)/boot/fat32.img
 	cp $(BUILD_DIR)/ext4.img $(ISO_DIR)/boot/ext4.img
+	cp $(BUILD_DIR)/aosfs.img $(ISO_DIR)/boot/aosfs.img
 	cp scripts/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
 	cp -r $(GRUB_I386_DIR)/. $(ISO_DIR)/boot/grub/i386-pc/
 	grub-mkimage -O i386-pc -o $(ISO_DIR)/boot/grub/i386-pc/core.img -p /boot/grub iso9660 biosdisk multiboot2 normal configfile
 	xorriso -as mkisofs -R -b boot/grub/i386-pc/eltorito.img -no-emul-boot -boot-load-size 4 -boot-info-table -o $(BUILD_DIR)/aos.iso $(ISO_DIR)
 
-$(BUILD_DIR)/initrd.img: hello.txt $(BUILD_DIR)/user.elf $(BUILD_DIR)/user2.elf $(BUILD_DIR)/shell.elf $(BUILD_DIR)/filetest.elf $(BUILD_DIR)/accesstest.elf $(BUILD_DIR)/openflagstest.elf $(BUILD_DIR)/duptest.elf $(BUILD_DIR)/pipetest.elf $(BUILD_DIR)/wait4test.elf $(BUILD_DIR)/stdincat.elf $(BUILD_DIR)/argvtest.elf $(BUILD_DIR)/pathtest.elf $(BUILD_DIR)/partitions.elf $(BUILD_DIR)/nano.elf $(BUILD_DIR)/gnu-nano $(BUILD_DIR)/busybox $(BUILD_DIR)/coreutils $(BUILD_DIR)/gnu-coreutils.stamp
+$(BUILD_DIR)/BOOTX64.EFI: scripts/grub-uefi-embed.cfg
+	@mkdir -p $(BUILD_DIR)
+	grub-mkimage -O x86_64-efi -o $@ -p /EFI/BOOT -c scripts/grub-uefi-embed.cfg fat iso9660 part_gpt search search_fs_file normal configfile multiboot2 efi_gop all_video
+
+$(BUILD_DIR)/esp.img: $(BUILD_DIR)/BOOTX64.EFI $(BUILD_DIR)/kernel.bin $(BUILD_DIR)/initrd.img $(BUILD_DIR)/fat32.img $(BUILD_DIR)/ext4.img $(BUILD_DIR)/aosfs.img
+	@mkdir -p $(BUILD_DIR)
+	dd if=/dev/zero of=$@ bs=1M count=$(ESP_IMAGE_SIZE_MB) status=none
+	mkfs.fat -F 32 -n AOS_UEFI $@
+	mmd -i $@ ::/EFI ::/EFI/BOOT ::/boot
+	mcopy -i $@ $(BUILD_DIR)/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
+	mcopy -i $@ scripts/grub-uefi.cfg ::/EFI/BOOT/grub.cfg
+	mcopy -i $@ $(BUILD_DIR)/kernel.bin ::/boot/kernel.bin
+	mcopy -i $@ $(BUILD_DIR)/initrd.img ::/boot/initrd.img
+	mcopy -i $@ $(BUILD_DIR)/fat32.img ::/boot/fat32.img
+	mcopy -i $@ $(BUILD_DIR)/ext4.img ::/boot/ext4.img
+	mcopy -i $@ $(BUILD_DIR)/aosfs.img ::/boot/aosfs.img
+
+$(BUILD_DIR)/initrd.img: hello.txt $(BUILD_DIR)/user.elf $(BUILD_DIR)/user2.elf $(BUILD_DIR)/shell.elf $(BUILD_DIR)/filetest.elf $(BUILD_DIR)/accesstest.elf $(BUILD_DIR)/openflagstest.elf $(BUILD_DIR)/duptest.elf $(BUILD_DIR)/pipetest.elf $(BUILD_DIR)/wait4test.elf $(BUILD_DIR)/stdincat.elf $(BUILD_DIR)/argvtest.elf $(BUILD_DIR)/pathtest.elf $(BUILD_DIR)/partitions.elf $(BUILD_DIR)/mounts.elf $(BUILD_DIR)/lspci.elf $(BUILD_DIR)/drivers.elf $(BUILD_DIR)/mem.elf $(BUILD_DIR)/uptime.elf $(BUILD_DIR)/uname.elf $(BUILD_DIR)/whoami.elf $(BUILD_DIR)/id.elf $(BUILD_DIR)/aossetup.elf $(BUILD_DIR)/display.elf $(BUILD_DIR)/settings.elf $(BUILD_DIR)/shutdown.elf $(BUILD_DIR)/restart.elf $(BUILD_DIR)/date.elf $(BUILD_DIR)/touch.elf $(BUILD_DIR)/rm.elf $(BUILD_DIR)/mkdir.elf $(BUILD_DIR)/sudo.elf $(BUILD_DIR)/nano.elf $(BUILD_DIR)/gnu-nano $(BUILD_DIR)/busybox $(BUILD_DIR)/coreutils $(BUILD_DIR)/gnu-coreutils.stamp
 	rm -rf $(BUILD_DIR)/initrd_root
 	@mkdir -p $(BUILD_DIR)/initrd_root
 	cp hello.txt $(BUILD_DIR)/initrd_root/hello.txt
@@ -108,14 +144,52 @@ $(BUILD_DIR)/initrd.img: hello.txt $(BUILD_DIR)/user.elf $(BUILD_DIR)/user2.elf 
 	cp $(BUILD_DIR)/pathtest.elf $(BUILD_DIR)/initrd_root/pathtest.elf
 	cp $(BUILD_DIR)/partitions.elf $(BUILD_DIR)/initrd_root/partitions.elf
 	cp $(BUILD_DIR)/partitions.elf $(BUILD_DIR)/initrd_root/partitions
+	cp $(BUILD_DIR)/mounts.elf $(BUILD_DIR)/initrd_root/mounts.elf
+	cp $(BUILD_DIR)/mounts.elf $(BUILD_DIR)/initrd_root/mounts
+	cp $(BUILD_DIR)/lspci.elf $(BUILD_DIR)/initrd_root/lspci.elf
+	cp $(BUILD_DIR)/lspci.elf $(BUILD_DIR)/initrd_root/lspci
+	cp $(BUILD_DIR)/drivers.elf $(BUILD_DIR)/initrd_root/drivers.elf
+	cp $(BUILD_DIR)/drivers.elf $(BUILD_DIR)/initrd_root/drivers
+	cp $(BUILD_DIR)/mem.elf $(BUILD_DIR)/initrd_root/mem.elf
+	cp $(BUILD_DIR)/mem.elf $(BUILD_DIR)/initrd_root/mem
+	cp $(BUILD_DIR)/uptime.elf $(BUILD_DIR)/initrd_root/uptime.elf
+	cp $(BUILD_DIR)/uptime.elf $(BUILD_DIR)/initrd_root/uptime
+	cp $(BUILD_DIR)/uname.elf $(BUILD_DIR)/initrd_root/uname.elf
+	cp $(BUILD_DIR)/uname.elf $(BUILD_DIR)/initrd_root/uname
+	cp $(BUILD_DIR)/whoami.elf $(BUILD_DIR)/initrd_root/whoami.elf
+	cp $(BUILD_DIR)/whoami.elf $(BUILD_DIR)/initrd_root/whoami
+	cp $(BUILD_DIR)/id.elf $(BUILD_DIR)/initrd_root/id.elf
+	cp $(BUILD_DIR)/id.elf $(BUILD_DIR)/initrd_root/id
+	cp $(BUILD_DIR)/aossetup.elf $(BUILD_DIR)/initrd_root/aossetup.elf
+	cp $(BUILD_DIR)/aossetup.elf $(BUILD_DIR)/initrd_root/aossetup
+	cp $(BUILD_DIR)/display.elf $(BUILD_DIR)/initrd_root/display.elf
+	cp $(BUILD_DIR)/display.elf $(BUILD_DIR)/initrd_root/display
+	cp $(BUILD_DIR)/settings.elf $(BUILD_DIR)/initrd_root/settings.elf
+	cp $(BUILD_DIR)/settings.elf $(BUILD_DIR)/initrd_root/settings
+	cp $(BUILD_DIR)/shutdown.elf $(BUILD_DIR)/initrd_root/shutdown.elf
+	cp $(BUILD_DIR)/shutdown.elf $(BUILD_DIR)/initrd_root/shutdown
+	cp $(BUILD_DIR)/restart.elf $(BUILD_DIR)/initrd_root/restart.elf
+	cp $(BUILD_DIR)/restart.elf $(BUILD_DIR)/initrd_root/restart
+	cp $(BUILD_DIR)/restart.elf $(BUILD_DIR)/initrd_root/reboot
+	cp $(BUILD_DIR)/date.elf $(BUILD_DIR)/initrd_root/date.elf
+	cp $(BUILD_DIR)/date.elf $(BUILD_DIR)/initrd_root/date
+	cp $(BUILD_DIR)/touch.elf $(BUILD_DIR)/initrd_root/touch.elf
+	cp $(BUILD_DIR)/touch.elf $(BUILD_DIR)/initrd_root/touch
+	cp $(BUILD_DIR)/rm.elf $(BUILD_DIR)/initrd_root/rm.elf
+	cp $(BUILD_DIR)/rm.elf $(BUILD_DIR)/initrd_root/rm
+	cp $(BUILD_DIR)/mkdir.elf $(BUILD_DIR)/initrd_root/mkdir.elf
+	cp $(BUILD_DIR)/mkdir.elf $(BUILD_DIR)/initrd_root/mkdir
+	cp $(BUILD_DIR)/sudo.elf $(BUILD_DIR)/initrd_root/sudo.elf
+	cp $(BUILD_DIR)/sudo.elf $(BUILD_DIR)/initrd_root/sudo
 	for alias in $(PARTITION_ALIASES); do cp $(BUILD_DIR)/partitions.elf "$(BUILD_DIR)/initrd_root/$$alias"; done
 	cp $(BUILD_DIR)/nano.elf $(BUILD_DIR)/initrd_root/aosnano.elf
 	cp $(BUILD_DIR)/nano.elf $(BUILD_DIR)/initrd_root/aosnano
-	if [ -f $(BUILD_DIR)/gnu-nano ]; then cp $(BUILD_DIR)/gnu-nano $(BUILD_DIR)/initrd_root/nano; else echo "GNU nano not found; /nano not installed. Put it at $(GNU_NANO_SRC) or set GNU_NANO_BINARY=..."; fi
+	cp $(BUILD_DIR)/nano.elf $(BUILD_DIR)/initrd_root/nano
+	if [ -f $(BUILD_DIR)/gnu-nano ]; then cp $(BUILD_DIR)/gnu-nano $(BUILD_DIR)/initrd_root/gnunano; fi
 	cp $(BUILD_DIR)/busybox $(BUILD_DIR)/initrd_root/busybox
 	if [ -f $(BUILD_DIR)/coreutils ]; then cp $(BUILD_DIR)/coreutils $(BUILD_DIR)/initrd_root/coreutils; fi
 	for prog in $(GNU_PROGRAMS); do if [ -f "$(BUILD_DIR)/gnu-coreutils/$$prog" ]; then cp "$(BUILD_DIR)/gnu-coreutils/$$prog" "$(BUILD_DIR)/initrd_root/$$prog"; fi; done
-	cd $(BUILD_DIR)/initrd_root && { printf "hello.txt\nuser.elf\nuser2.elf\nshell.elf\nfiletest.elf\naccesstest.elf\nopenflagstest.elf\nduptest.elf\npipetest.elf\nwait4test.elf\nstdincat.elf\nargvtest.elf\npathtest.elf\npartitions.elf\npartitions\n"; for alias in $(PARTITION_ALIASES); do printf "%s\n" "$$alias"; done; printf "aosnano.elf\naosnano\nbusybox\n"; if [ -f nano ]; then printf "nano\n"; fi; if [ -f coreutils ]; then printf "coreutils\n"; fi; for prog in $(GNU_PROGRAMS); do if [ -f "$$prog" ]; then printf "%s\n" "$$prog"; fi; done; } | cpio -o -H newc > ../initrd.img
+	cd $(BUILD_DIR)/initrd_root && { printf "hello.txt\nuser.elf\nuser2.elf\nshell.elf\nfiletest.elf\naccesstest.elf\nopenflagstest.elf\nduptest.elf\npipetest.elf\nwait4test.elf\nstdincat.elf\nargvtest.elf\npathtest.elf\npartitions.elf\npartitions\nmounts.elf\nmounts\nlspci.elf\nlspci\ndrivers.elf\ndrivers\nmem.elf\nmem\nuptime.elf\nuptime\nuname.elf\nuname\nwhoami.elf\nwhoami\nid.elf\nid\naossetup.elf\naossetup\ndisplay.elf\ndisplay\nsettings.elf\nsettings\nshutdown.elf\nshutdown\nrestart.elf\nrestart\nreboot\ndate.elf\ndate\ntouch.elf\ntouch\nrm.elf\nrm\nmkdir.elf\nmkdir\nsudo.elf\nsudo\n"; for alias in $(PARTITION_ALIASES); do printf "%s\n" "$$alias"; done; printf "aosnano.elf\naosnano\nnano\nbusybox\n"; if [ -f gnunano ]; then printf "gnunano\n"; fi; if [ -f coreutils ]; then printf "coreutils\n"; fi; for prog in $(GNU_PROGRAMS); do if [ -f "$$prog" ]; then printf "%s\n" "$$prog"; fi; done; } | cpio -o -H newc > ../initrd.img
 
 $(BUILD_DIR)/busybox: scripts/build_busybox.sh scripts/prepare_busybox.py
 	@mkdir -p $(BUILD_DIR)
@@ -183,6 +257,11 @@ $(BUILD_DIR)/ext4.img: hello.txt
 	printf "AOS EXT4 test image\n" > $(BUILD_DIR)/ext4_root/readme.txt
 	dd if=/dev/zero of=$@ bs=1M count=16 status=none
 	mkfs.ext4 -q -F -L AOSEXT4 -O ^has_journal,^metadata_csum,^64bit,^dir_index -d $(BUILD_DIR)/ext4_root $@
+
+$(BUILD_DIR)/aosfs.img:
+	@mkdir -p $(BUILD_DIR)
+	dd if=/dev/zero of=$@ bs=1M count=$(AOSFS_IMAGE_SIZE_MB) status=none
+	printf 'AOSFS1' | dd of=$@ bs=1 seek=0 conv=notrunc status=none
 
 $(BUILD_DIR)/user.o: userspace/user.asm
 	@mkdir -p $(BUILD_DIR)
@@ -275,6 +354,132 @@ $(BUILD_DIR)/partitions.o: userspace/partitions.asm
 $(BUILD_DIR)/partitions.elf: $(BUILD_DIR)/partitions.o userspace/user.ld
 	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/partitions.o
 
+$(BUILD_DIR)/mounts.o: userspace/mounts.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/mounts.elf: $(BUILD_DIR)/mounts.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/mounts.o
+
+$(BUILD_DIR)/lspci.o: userspace/lspci.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/lspci.elf: $(BUILD_DIR)/lspci.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/lspci.o
+
+$(BUILD_DIR)/drivers.o: userspace/drivers.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/drivers.elf: $(BUILD_DIR)/drivers.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/drivers.o
+
+$(BUILD_DIR)/mem.o: userspace/mem.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/mem.elf: $(BUILD_DIR)/mem.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/mem.o
+
+$(BUILD_DIR)/uptime.o: userspace/uptime.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/uptime.elf: $(BUILD_DIR)/uptime.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/uptime.o
+
+$(BUILD_DIR)/uname.o: userspace/uname.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/uname.elf: $(BUILD_DIR)/uname.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/uname.o
+
+$(BUILD_DIR)/whoami.o: userspace/whoami.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/whoami.elf: $(BUILD_DIR)/whoami.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/whoami.o
+
+$(BUILD_DIR)/id.o: userspace/id.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/id.elf: $(BUILD_DIR)/id.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/id.o
+
+$(BUILD_DIR)/sudo.o: userspace/sudo.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/sudo.elf: $(BUILD_DIR)/sudo.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/sudo.o
+
+$(BUILD_DIR)/aossetup.o: userspace/aossetup.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/aossetup.elf: $(BUILD_DIR)/aossetup.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/aossetup.o
+
+$(BUILD_DIR)/display.o: userspace/display.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/display.elf: $(BUILD_DIR)/display.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/display.o
+
+$(BUILD_DIR)/settings.o: userspace/settings.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/settings.elf: $(BUILD_DIR)/settings.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/settings.o
+
+$(BUILD_DIR)/shutdown.o: userspace/shutdown.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/shutdown.elf: $(BUILD_DIR)/shutdown.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/shutdown.o
+
+$(BUILD_DIR)/restart.o: userspace/restart.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/restart.elf: $(BUILD_DIR)/restart.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/restart.o
+
+$(BUILD_DIR)/date.o: userspace/date.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/date.elf: $(BUILD_DIR)/date.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/date.o
+
+$(BUILD_DIR)/touch.o: userspace/touch.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/touch.elf: $(BUILD_DIR)/touch.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/touch.o
+
+$(BUILD_DIR)/rm.o: userspace/rm.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/rm.elf: $(BUILD_DIR)/rm.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/rm.o
+
+$(BUILD_DIR)/mkdir.o: userspace/mkdir.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/mkdir.elf: $(BUILD_DIR)/mkdir.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/mkdir.o
+
 $(BUILD_DIR)/nano.o: userspace/nano.asm
 	@mkdir -p $(BUILD_DIR)
 	$(AS) -f elf64 $< -o $@
@@ -314,6 +519,9 @@ $(BUILD_DIR)/main.o: kernel/main.c
 $(BUILD_DIR)/vga.o: drivers/video/vga.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/gfx.o: drivers/video/gfx.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/gdt.o: kernel/gdt.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -333,6 +541,24 @@ $(BUILD_DIR)/syscall_c.o: kernel/syscall.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/vfs.o: kernel/vfs.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/blkdev.o: kernel/blkdev.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/pci.o: kernel/pci.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/driver.o: kernel/driver.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/ata.o: kernel/ata.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/e1000.o: drivers/net/e1000.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/aosfs.o: kernel/aosfs.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/tmpfs.o: kernel/tmpfs.c
@@ -362,18 +588,33 @@ $(BUILD_DIR)/process_c.o: kernel/process.c
 $(BUILD_DIR)/timer.o: kernel/timer.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/rtc.o: kernel/rtc.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
 # --- Utility ---
 
 clean:
 	rm -rf $(BUILD_DIR)
 
 run: all
-	qemu-system-x86_64 -cdrom $(BUILD_DIR)/aos.iso -display gtk -serial stdio -d int -D qemu.log
+	qemu-system-x86_64 -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) -display gtk -serial stdio -d int -D qemu.log; stty sane; printf '\033[0m\033[?25h\n'
+
+run-uefi: uefi
+	qemu-system-x86_64 -m 512M -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd -drive file=$(BUILD_DIR)/esp.img,format=raw,if=ide,index=1,media=disk $(AOSFS_DRIVE_ARGS) -display gtk -serial stdio -d int -D qemu-uefi.log; stty sane; printf '\033[0m\033[?25h\n'
 
 run-headless: all
-	qemu-system-x86_64 -cdrom $(BUILD_DIR)/aos.iso -serial stdio -display none -d int -D qemu.log
+	qemu-system-x86_64 -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) -serial stdio -display none -d int -D qemu.log; stty sane; printf '\033[0m\033[?25h\n'
+
+run-64m: all
+	qemu-system-x86_64 -m 64M -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) -serial stdio -display none -d int -D qemu-64m.log; stty sane; printf '\033[0m\033[?25h\n'
+
+run-32m: all
+	qemu-system-x86_64 -m 32M -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) -serial stdio -display none -d int -D qemu-32m.log; stty sane; printf '\033[0m\033[?25h\n'
+
+run-16m: all
+	qemu-system-x86_64 -m 16M -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) -serial stdio -display none -d int -D qemu-16m.log; stty sane; printf '\033[0m\033[?25h\n'
 
 run-curses: all
-	qemu-system-x86_64 -cdrom $(BUILD_DIR)/aos.iso -display curses -serial none -d int -D qemu.log
+	qemu-system-x86_64 -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) -display curses -serial none -d int -D qemu.log
 
-.PHONY: all clean run run-headless run-curses
+.PHONY: all uefi clean run run-uefi run-headless run-64m run-32m run-16m run-curses

@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <cpio.h>
+#include <aosfs.h>
 #include <ext4.h>
 #include <fat32.h>
 #include <vfs.h>
@@ -16,6 +17,11 @@
 #include <vga.h>
 #include <tmpfs.h>
 #include <partition.h>
+#include <blkdev.h>
+#include <pci.h>
+#include <driver.h>
+#include <timer.h>
+#include <rtc.h>
 
 extern void outb(uint16_t port, uint8_t val);
 extern void serial_print(const char* s);
@@ -23,10 +29,23 @@ extern uint64_t p4_table[];
 extern void jump_to_user(uint64_t code, uint64_t stack);
 extern void switch_to_process(process_t* proc);
 
+static inline void outw_local(uint16_t port, uint16_t value) {
+    asm volatile("outw %0, %1" : : "a"(value), "Nd"(port));
+}
+
+static inline void io_wait(void) {
+    outb(0x80, 0);
+}
+
 #define USER_STACK_BASE 0x70000080000ULL
 #define USER_STACK_SIZE 65536ULL
 #define USER_STACK_PAGES (USER_STACK_SIZE / 4096ULL)
 #define USER_MMAP_BASE 0x0000710000000000ULL
+
+#ifndef AOS_LIVE_PERMISSIVE
+#define AOS_LIVE_PERMISSIVE 1
+#endif
+
 #define MAX_EXEC_ARGS 16
 #define MAX_EXEC_ENVP 16
 #define MAX_EXEC_STRING 256
@@ -34,6 +53,7 @@ extern void switch_to_process(process_t* proc);
 #define MAX_PIPE_OBJECTS 8
 #define LINUX_AT_FDCWD (-100)
 #define LINUX_AT_EMPTY_PATH 0x1000
+#define LINUX_AT_REMOVEDIR 0x200
 #define LINUX_O_ACCMODE 3
 #define LINUX_O_WRONLY 1
 #define LINUX_O_RDWR 2
@@ -133,7 +153,10 @@ struct aos_partition_user {
     uint32_t end;
     uint16_t index;
     uint8_t fs_type;
+    uint8_t role;
     uint8_t flags;
+    uint8_t reserved;
+    uint32_t blkdev_id;
     char name[16];
     char fs_name[16];
 };
@@ -203,6 +226,18 @@ struct linux_timespec {
     int64_t tv_nsec;
 };
 
+struct linux_pollfd {
+    int32_t fd;
+    int16_t events;
+    int16_t revents;
+};
+
+#define LINUX_POLLIN 0x0001
+#define LINUX_POLLOUT 0x0004
+#define LINUX_POLLERR 0x0008
+#define LINUX_POLLHUP 0x0010
+#define LINUX_POLLNVAL 0x0020
+
 static struct file_handle g_file_handles[MAX_FILE_HANDLES];
 static struct pipe_object g_pipe_objects[MAX_PIPE_OBJECTS];
 static void halt_forever(void);
@@ -243,35 +278,45 @@ static void serial_write_bytes(const char* buf, uint64_t len) {
 }
 
 static void vga_write_bytes(const char* buf, uint64_t len) {
-    char out[2];
-    out[1] = '\0';
+    char out[128];
+    uint64_t i = 0;
 
-    for (uint64_t i = 0; i < len; i++) {
-        char c = buf[i];
-        if (c == '\0') {
-            break;
-        }
-        if (c == CONSOLE_ESC && i + 1 < len) {
-            char cmd = buf[++i];
-            if (cmd == CONSOLE_CMD_COLOR) {
-                if (i + 1 < len) {
-                    g_vga_stream_color = (unsigned char)buf[++i];
+    while (i < len) {
+        uint64_t out_len = 0;
+
+        while (i < len && out_len + 1 < sizeof(out)) {
+            char c = buf[i++];
+            if (c == '\0') {
+                break;
+            }
+            if (c == CONSOLE_ESC && i < len) {
+                char cmd = buf[i++];
+                if (cmd == CONSOLE_CMD_COLOR) {
+                    if (i < len) {
+                        g_vga_stream_color = (unsigned char)buf[i++];
+                    }
+                    continue;
                 }
+                if (cmd == CONSOLE_CMD_RESET) {
+                    g_vga_stream_color = 0x0F;
+                    continue;
+                }
+                if (cmd == CONSOLE_CMD_CLEAR) {
+                    vga_clear(g_vga_stream_color);
+                    g_vga_stream_color = 0x0F;
+                    continue;
+                }
+                out[out_len++] = c;
+                out[out_len++] = cmd;
                 continue;
             }
-            if (cmd == CONSOLE_CMD_RESET) {
-                g_vga_stream_color = 0x0F;
-                continue;
-            }
-            if (cmd == CONSOLE_CMD_CLEAR) {
-                vga_clear(0x07);
-                g_vga_stream_color = 0x0F;
-                continue;
-            }
+            out[out_len++] = c;
         }
 
-        out[0] = c;
-        vga_write(out, g_vga_stream_color);
+        if (out_len > 0) {
+            out[out_len] = '\0';
+            vga_write(out, g_vga_stream_color);
+        }
     }
 }
 
@@ -331,6 +376,37 @@ static const char* normalize_path(const char* path) {
         path++;
     }
     return path;
+}
+
+#if !AOS_LIVE_PERMISSIVE
+static int path_starts_with_component(const char* path, const char* prefix) {
+    size_t i = 0;
+
+    if (!path || !prefix) return 0;
+    while (path[0] == '/') path++;
+    while (prefix[0] == '/') prefix++;
+
+    while (prefix[i] != '\0') {
+        if (path[i] != prefix[i]) return 0;
+        i++;
+    }
+
+    return path[i] == '\0' || path[i] == '/';
+}
+#endif
+
+static int user_can_mutate_path(const char* path) {
+#if AOS_LIVE_PERMISSIVE
+    (void)path;
+    return 1;
+#else
+    if (process_is_root()) return 1;
+    if (!path || *path == '\0') return 0;
+
+    return path_starts_with_component(path, process_get_home()) ||
+           path_starts_with_component(path, "tmp") ||
+           path_starts_with_component(path, "trash");
+#endif
 }
 
 static int component_is_dot(const char* s, size_t len) {
@@ -607,6 +683,62 @@ static int64_t sys_pipe(struct syscall_regs* regs) {
     return 0;
 }
 
+static int64_t sys_poll(struct syscall_regs* regs) {
+    struct linux_pollfd* fds = (struct linux_pollfd*)(uintptr_t)regs->rdi;
+    uint64_t nfds = regs->rsi;
+    int64_t ready = 0;
+
+    (void)regs->rdx;
+
+    if (!fds && nfds > 0) return -(int64_t)LINUX_EFAULT;
+    if (nfds > 1024) return -(int64_t)LINUX_EINVAL;
+
+    for (uint64_t i = 0; i < nfds; i++) {
+        struct linux_pollfd* pfd = &fds[i];
+        struct fd_entry* entry = NULL;
+        int16_t revents = 0;
+
+        if (pfd->fd < 0) {
+            pfd->revents = 0;
+            continue;
+        }
+
+        entry = get_fd_entry((uint64_t)pfd->fd);
+        if (!entry) {
+            pfd->revents = LINUX_POLLNVAL;
+            ready++;
+            continue;
+        }
+
+        if (entry->kind == FD_KIND_STDIN) {
+            if (pfd->events & LINUX_POLLIN) revents |= LINUX_POLLIN;
+        } else if (entry->kind == FD_KIND_STDOUT || entry->kind == FD_KIND_STDERR || entry->kind == FD_KIND_VNODE) {
+            if (pfd->events & LINUX_POLLOUT) revents |= LINUX_POLLOUT;
+            if (pfd->events & LINUX_POLLIN) revents |= LINUX_POLLIN;
+        } else if (entry->kind == FD_KIND_PIPE_READER) {
+            struct pipe_object* pipe = get_pipe_object_by_index(entry->handle_index);
+            if (!pipe) {
+                revents |= LINUX_POLLERR;
+            } else {
+                if ((pfd->events & LINUX_POLLIN) && pipe->size > 0) revents |= LINUX_POLLIN;
+                if (pipe->write_refs == 0) revents |= LINUX_POLLHUP;
+            }
+        } else if (entry->kind == FD_KIND_PIPE_WRITER) {
+            struct pipe_object* pipe = get_pipe_object_by_index(entry->handle_index);
+            if (!pipe || pipe->read_refs == 0) {
+                revents |= LINUX_POLLERR;
+            } else if ((pfd->events & LINUX_POLLOUT) && pipe->size < sizeof(pipe->buffer)) {
+                revents |= LINUX_POLLOUT;
+            }
+        }
+
+        pfd->revents = revents;
+        if (revents) ready++;
+    }
+
+    return ready;
+}
+
 static int wait_pid_matches(int64_t requested_pid, uint32_t child_pid) {
     return requested_pid == -1 || requested_pid == (int64_t)child_pid;
 }
@@ -682,6 +814,16 @@ static int64_t sys_wait4(struct syscall_regs* regs) {
     return -(int64_t)LINUX_EINTR;
 }
 
+static void release_process_memory(process_t* proc) {
+    if (!proc || !proc->p4_table) return;
+
+    vmm_free_user_space(proc->p4_table);
+    if (proc->p4_table != p4_table) {
+        pmm_free_block(proc->p4_table);
+    }
+    proc->p4_table = NULL;
+}
+
 static void process_exit_and_wake_parent(int exit_code) {
     process_t* child = current_process;
     process_t* parent = NULL;
@@ -710,6 +852,8 @@ static void process_exit_and_wake_parent(int exit_code) {
             switch_page_table(parent->p4_table);
             *parent->wait_status_ptr = raw_status;
         }
+        switch_page_table(parent->p4_table);
+        release_process_memory(child);
         parent->regs.rax = child_pid;
         parent->status = PROCESS_STATUS_RUNNING;
         parent->wait_target_pid = -1;
@@ -725,6 +869,8 @@ static void process_exit_and_wake_parent(int exit_code) {
 
     if (parent && parent->status != PROCESS_STATUS_DEAD && parent->status != PROCESS_STATUS_ZOMBIE) {
         current_process = parent;
+        switch_page_table(parent->p4_table);
+        release_process_memory(child);
         if (parent->status == PROCESS_STATUS_READY || parent->status == PROCESS_STATUS_WAITING) {
             parent->status = PROCESS_STATUS_RUNNING;
             parent->wait_target_pid = -1;
@@ -806,8 +952,14 @@ static int64_t resolve_path_from_dirfd(int64_t dirfd, const char* path, char* ou
 static int64_t open_path_with_flags(const char* path, uint64_t flags) {
     struct vfs_node node;
     int lookup_rc = 0;
+    uint64_t access_mode = flags & LINUX_O_ACCMODE;
+    int mutates = (access_mode == LINUX_O_WRONLY || access_mode == LINUX_O_RDWR ||
+                   (flags & (LINUX_O_CREAT | LINUX_O_TRUNC)) != 0);
 
     if (!path) return -(int64_t)LINUX_EFAULT;
+    if (mutates && !user_can_mutate_path(path)) {
+        return -(int64_t)LINUX_EACCES;
+    }
 
     lookup_rc = vfs_lookup(path, &node);
     if (lookup_rc != 0) {
@@ -837,7 +989,9 @@ static int64_t open_path_with_flags(const char* path, uint64_t flags) {
             if (vfs_lookup(path, &node) != 0) {
                 return -(int64_t)LINUX_EIO;
             }
-        } else if (tmpfs_create_path(path, &node) != 0) {
+        } else if (tmpfs_create_path(path, &node) == 0) {
+            /* tmpfs filled the vnode. */
+        } else if (aosfs_create_path(path, &node) != 0) {
             return -(int64_t)LINUX_EACCES;
         }
         return install_vnode_fd(&node, flags);
@@ -851,7 +1005,7 @@ static int64_t open_path_with_flags(const char* path, uint64_t flags) {
         return -(int64_t)LINUX_EISDIR;
     }
 
-    if (node.backend != VFS_BACKEND_TMPFS && node.backend != VFS_BACKEND_FAT32 && node.backend != VFS_BACKEND_EXT4) {
+    if (node.backend != VFS_BACKEND_AOSFS && node.backend != VFS_BACKEND_TMPFS && node.backend != VFS_BACKEND_FAT32 && node.backend != VFS_BACKEND_EXT4) {
         if ((flags & LINUX_O_ACCMODE) == LINUX_O_WRONLY || (flags & LINUX_O_ACCMODE) == LINUX_O_RDWR) {
             return -(int64_t)LINUX_EACCES;
         }
@@ -863,6 +1017,13 @@ static int64_t open_path_with_flags(const char* path, uint64_t flags) {
             return -(int64_t)LINUX_EACCES;
         }
         if ((flags & LINUX_O_TRUNC) && tmpfs_truncate_path(path) == 0) {
+            node.size = 0;
+        }
+    } else if (node.backend == VFS_BACKEND_AOSFS) {
+        if ((flags & LINUX_O_EXCL) && (flags & LINUX_O_CREAT)) {
+            return -(int64_t)LINUX_EACCES;
+        }
+        if ((flags & LINUX_O_TRUNC) && aosfs_truncate_path(path) == 0) {
             node.size = 0;
         }
     } else if (node.backend == VFS_BACKEND_FAT32) {
@@ -1180,13 +1341,22 @@ static int64_t exec_initrd_program(
     rc = snapshot_user_string_array(envp_user, envp_storage, envp_kernel, MAX_EXEC_ENVP, &envc);
     if (rc < 0) return rc;
 
-    uint8_t* elf_data = NULL;
+    const uint8_t* elf_data = NULL;
     uint32_t elf_size = 0;
+    struct vfs_node program_node;
     uint64_t phdr_va = 0;
     uint64_t load_bias = 0;
-    if (initrd_get_file(normalized, &elf_data, &elf_size) != 0) {
+    if (vfs_lookup(normalized, &program_node) != 0) {
         return -(int64_t)LINUX_ENOENT;
     }
+    if (program_node.type != VFS_NODE_TYPE_REGULAR) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    if (program_node.backend != VFS_BACKEND_AOSFS && program_node.backend != VFS_BACKEND_INITRD) {
+        return -(int64_t)LINUX_EACCES;
+    }
+    elf_data = program_node.u.data;
+    elf_size = program_node.size;
 
     if (elf_size < sizeof(struct exec_elf64_ehdr)) {
         return -(int64_t)LINUX_EINVAL;
@@ -1222,6 +1392,8 @@ static int64_t exec_initrd_program(
     }
     rc = compute_phdr_user_va(ehdr, phdrs, load_bias, &phdr_va);
     if (rc < 0) return rc;
+
+    vmm_free_user_space(user_p4);
 
     uint64_t entry = 0;
     if (elf64_load_image(user_p4, elf_data, elf_size, &entry) != 0) {
@@ -1316,6 +1488,14 @@ static int64_t sys_brk(struct syscall_regs* regs) {
             return (int64_t)proc->brk_current;
         }
         proc->brk_mapped_end = target;
+    } else if (target < proc->brk_mapped_end) {
+        for (uint64_t va = target; va < proc->brk_mapped_end; va += 4096ULL) {
+            uint64_t phys = vmm_unmap_page(proc->p4_table, va);
+            if (phys) {
+                pmm_free_block((void*)phys);
+            }
+        }
+        proc->brk_mapped_end = target;
     }
 
     proc->brk_current = requested;
@@ -1373,7 +1553,22 @@ static int64_t sys_mprotect(struct syscall_regs* regs) {
 }
 
 static int64_t sys_munmap(struct syscall_regs* regs) {
-    (void)regs;
+    process_t* proc = get_current_process();
+    uint64_t addr = regs->rdi;
+    uint64_t len = regs->rsi;
+    uint64_t start = addr & ~0xFFFULL;
+    uint64_t end = align_up_page(addr + len);
+
+    if (!proc || !proc->p4_table || len == 0 || end < start) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+
+    for (uint64_t va = start; va < end; va += 4096ULL) {
+        uint64_t phys = vmm_unmap_page(proc->p4_table, va);
+        if (phys) {
+            pmm_free_block((void*)phys);
+        }
+    }
     return 0;
 }
 
@@ -1412,7 +1607,8 @@ static int64_t sys_write(struct syscall_regs* regs) {
 
         if (!file) return -(int64_t)LINUX_EBADF;
         if (file->node.type != VFS_NODE_TYPE_REGULAR) return -(int64_t)LINUX_EISDIR;
-        if (file->node.backend != VFS_BACKEND_TMPFS && file->node.backend != VFS_BACKEND_FAT32 && file->node.backend != VFS_BACKEND_EXT4) return -(int64_t)LINUX_EACCES;
+        if (file->node.backend != VFS_BACKEND_AOSFS && file->node.backend != VFS_BACKEND_TMPFS && file->node.backend != VFS_BACKEND_FAT32 && file->node.backend != VFS_BACKEND_EXT4) return -(int64_t)LINUX_EACCES;
+        if (!user_can_mutate_path(file->node.path)) return -(int64_t)LINUX_EACCES;
         if (vfs_write_node(&file->node, file->offset, (const uint8_t*)buf, len, &bytes_written, &new_size) != 0) {
             return -(int64_t)LINUX_EIO;
         }
@@ -1564,7 +1760,7 @@ static int64_t sys_access(struct syscall_regs* regs) {
         if (vfs_lookup(resolved_path, &node) != 0) {
             return -(int64_t)LINUX_ENOENT;
         }
-        if ((regs->rsi & LINUX_W_OK) && node.backend != VFS_BACKEND_TMPFS && node.backend != VFS_BACKEND_FAT32 && node.backend != VFS_BACKEND_EXT4) {
+        if ((regs->rsi & LINUX_W_OK) && node.backend != VFS_BACKEND_AOSFS && node.backend != VFS_BACKEND_TMPFS && node.backend != VFS_BACKEND_FAT32 && node.backend != VFS_BACKEND_EXT4) {
             return -(int64_t)LINUX_EACCES;
         }
     }
@@ -1582,6 +1778,69 @@ static int64_t sys_openat(struct syscall_regs* regs) {
     if (rc < 0) return rc;
 
     return open_path_with_flags(resolved_path, regs->rdx);
+}
+
+static int64_t sys_mkdirat(struct syscall_regs* regs) {
+    int64_t dirfd = (int64_t)regs->rdi;
+    char path_buf[MAX_EXEC_STRING];
+    char resolved_path[MAX_EXEC_STRING];
+    struct vfs_node existing;
+    int64_t rc = copy_user_cstr((const char*)(uintptr_t)regs->rsi, path_buf, sizeof(path_buf));
+    (void)regs->rdx;
+    if (rc < 0) return rc;
+
+    rc = resolve_path_from_dirfd(dirfd, path_buf, resolved_path, sizeof(resolved_path));
+    if (rc < 0) return rc;
+
+    if (vfs_lookup(resolved_path, &existing) == 0) {
+        return -(int64_t)LINUX_EEXIST;
+    }
+    if (!user_can_mutate_path(resolved_path)) {
+        return -(int64_t)LINUX_EACCES;
+    }
+    if (aosfs_mkdir_path(resolved_path) != 0) {
+        return -(int64_t)LINUX_EACCES;
+    }
+    return 0;
+}
+
+static int64_t sys_mkdir(struct syscall_regs* regs) {
+    struct syscall_regs mkdirat_regs = *regs;
+    mkdirat_regs.rdi = (uint64_t)LINUX_AT_FDCWD;
+    mkdirat_regs.rsi = regs->rdi;
+    mkdirat_regs.rdx = regs->rsi;
+    return sys_mkdirat(&mkdirat_regs);
+}
+
+static int64_t sys_unlinkat(struct syscall_regs* regs) {
+    int64_t dirfd = (int64_t)regs->rdi;
+    char path_buf[MAX_EXEC_STRING];
+    char resolved_path[MAX_EXEC_STRING];
+    int64_t rc;
+
+    if (regs->rdx != 0 && regs->rdx != LINUX_AT_REMOVEDIR) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+
+    rc = copy_user_cstr((const char*)(uintptr_t)regs->rsi, path_buf, sizeof(path_buf));
+    if (rc < 0) return rc;
+
+    rc = resolve_path_from_dirfd(dirfd, path_buf, resolved_path, sizeof(resolved_path));
+    if (rc < 0) return rc;
+
+    if (!user_can_mutate_path(resolved_path)) {
+        return -(int64_t)LINUX_EACCES;
+    }
+    if (regs->rdx == LINUX_AT_REMOVEDIR) {
+        if (vfs_rmdir_path(resolved_path) != 0) {
+            return -(int64_t)LINUX_EACCES;
+        }
+        return 0;
+    }
+    if (vfs_unlink_path(resolved_path) != 0) {
+        return -(int64_t)LINUX_EACCES;
+    }
+    return 0;
 }
 
 static int64_t sys_faccessat(struct syscall_regs* regs) {
@@ -1602,7 +1861,7 @@ static int64_t sys_faccessat(struct syscall_regs* regs) {
         if (vfs_lookup(resolved_path, &node) != 0) {
             return -(int64_t)LINUX_ENOENT;
         }
-        if ((regs->rdx & LINUX_W_OK) && node.backend != VFS_BACKEND_TMPFS && node.backend != VFS_BACKEND_FAT32 && node.backend != VFS_BACKEND_EXT4) {
+        if ((regs->rdx & LINUX_W_OK) && node.backend != VFS_BACKEND_AOSFS && node.backend != VFS_BACKEND_TMPFS && node.backend != VFS_BACKEND_FAT32 && node.backend != VFS_BACKEND_EXT4) {
             return -(int64_t)LINUX_EACCES;
         }
     }
@@ -2108,6 +2367,8 @@ static int64_t sys_partition_info(struct syscall_regs* regs) {
     out->end = part->end;
     out->index = part->index;
     out->fs_type = part->fs_type;
+    out->role = part->role;
+    out->blkdev_id = part->blkdev_id;
     if (!part->start && !part->end) {
         out->flags = 1;
     }
@@ -2123,10 +2384,415 @@ static int64_t sys_partition_info(struct syscall_regs* regs) {
     return 0;
 }
 
+struct aos_blkdev_user {
+    uint32_t id;
+    uint32_t block_size;
+    uint64_t size;
+    uint8_t read_only;
+    uint8_t has_ops;
+    uint8_t reserved[6];
+    char name[16];
+};
+
+struct aos_mem_info_user {
+    uint64_t total;
+    uint64_t free;
+    uint64_t used;
+};
+
+struct aos_uptime_info_user {
+    uint64_t ticks;
+    uint64_t seconds;
+    uint32_t frequency;
+    uint32_t reserved;
+};
+
+struct aos_display_info_user {
+    uint32_t cols;
+    uint32_t rows;
+    uint32_t detected_cols;
+    uint32_t detected_rows;
+    uint32_t max_cols;
+    uint32_t max_rows;
+};
+
+struct aos_time_info_user {
+    uint16_t year;
+    uint8_t month;
+    uint8_t day;
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+    uint8_t weekday;
+    uint8_t reserved;
+};
+
+struct aos_user_info_user {
+    uint32_t uid;
+    uint32_t gid;
+    uint32_t euid;
+    uint32_t egid;
+    char username[32];
+    char home[256];
+};
+
+struct aos_pci_info_user {
+    uint16_t vendor_id;
+    uint16_t device_id;
+    uint8_t bus;
+    uint8_t slot;
+    uint8_t function;
+    uint8_t class_code;
+    uint8_t subclass;
+    uint8_t prog_if;
+    uint8_t revision;
+    uint8_t header_type;
+    uint8_t irq_line;
+    uint8_t reserved[3];
+    uint32_t bar[6];
+} __attribute__((packed));
+
+struct aos_driver_info_user {
+    uint8_t type;
+    uint8_t claimed;
+    uint8_t bus;
+    uint8_t slot;
+    uint8_t function;
+    uint8_t class_code;
+    uint8_t subclass;
+    uint8_t prog_if;
+    uint8_t irq_line;
+    uint8_t reserved[7];
+    uint16_t vendor_id;
+    uint16_t device_id;
+    uint32_t bar[6];
+    char driver[32];
+    char status[64];
+} __attribute__((packed));
+
+static void copy_cstr_bounded(char* dst, size_t dst_size, const char* src) {
+    size_t i = 0;
+
+    if (!dst || dst_size == 0) {
+        return;
+    }
+    if (!src) {
+        dst[0] = '\0';
+        return;
+    }
+
+    while (src[i] != '\0' && i + 1 < dst_size) {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
+}
+
+static int64_t sys_blkdev_info(struct syscall_regs* regs) {
+    uint64_t index = regs->rdi;
+    struct aos_blkdev_user* out = (struct aos_blkdev_user*)(uintptr_t)regs->rsi;
+    const struct blkdev* dev;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+
+    dev = blkdev_get_index((size_t)index);
+    if (!dev) return -(int64_t)LINUX_ENOENT;
+
+    local_memset(out, 0, sizeof(*out));
+    out->id = dev->id;
+    out->block_size = dev->block_size;
+    out->size = dev->size;
+    out->read_only = dev->read_only;
+    out->has_ops = dev->has_ops;
+    for (size_t i = 0; i + 1 < sizeof(out->name) && dev->name[i]; i++) {
+        out->name[i] = dev->name[i];
+    }
+    return 0;
+}
+
+static int64_t sys_mem_info(struct syscall_regs* regs) {
+    struct aos_mem_info_user* out = (struct aos_mem_info_user*)(uintptr_t)regs->rdi;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+
+    out->total = pmm_total_memory();
+    out->free = pmm_free_memory();
+    out->used = pmm_used_memory();
+    return 0;
+}
+
+static int64_t sys_uptime_info(struct syscall_regs* regs) {
+    struct aos_uptime_info_user* out = (struct aos_uptime_info_user*)(uintptr_t)regs->rdi;
+    uint32_t frequency = timer_get_frequency();
+    uint64_t ticks = timer_get_ticks();
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+    if (frequency == 0) frequency = 100;
+
+    out->ticks = ticks;
+    out->seconds = ticks / frequency;
+    out->frequency = frequency;
+    out->reserved = 0;
+    return 0;
+}
+
+static int64_t sys_display_info(struct syscall_regs* regs) {
+    struct aos_display_info_user* out = (struct aos_display_info_user*)(uintptr_t)regs->rdi;
+    unsigned int cols = 0;
+    unsigned int rows = 0;
+    unsigned int detected_cols = 0;
+    unsigned int detected_rows = 0;
+    unsigned int max_cols = 0;
+    unsigned int max_rows = 0;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+
+    vga_get_display_mode(&cols, &rows, &detected_cols, &detected_rows, &max_cols, &max_rows);
+    out->cols = cols;
+    out->rows = rows;
+    out->detected_cols = detected_cols;
+    out->detected_rows = detected_rows;
+    out->max_cols = max_cols;
+    out->max_rows = max_rows;
+    return 0;
+}
+
+static int64_t sys_display_set(struct syscall_regs* regs) {
+    uint32_t cols = (uint32_t)regs->rdi;
+    uint32_t rows = (uint32_t)regs->rsi;
+
+    if (cols == 0 && rows == 0) {
+        vga_auto_display_mode();
+        return 0;
+    }
+
+    if (vga_set_display_mode(cols, rows) != 0) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    return 0;
+}
+
+static int64_t sys_time_info(struct syscall_regs* regs) {
+    struct aos_time_info_user* out = (struct aos_time_info_user*)(uintptr_t)regs->rdi;
+    struct rtc_time time;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+    if (rtc_read_time(&time) != 0) return -(int64_t)LINUX_EIO;
+
+    out->year = time.year;
+    out->month = time.month;
+    out->day = time.day;
+    out->hour = time.hour;
+    out->minute = time.minute;
+    out->second = time.second;
+    out->weekday = time.weekday;
+    out->reserved = 0;
+    return 0;
+}
+
+static int64_t sys_user_info(struct syscall_regs* regs) {
+    struct aos_user_info_user* out = (struct aos_user_info_user*)(uintptr_t)regs->rdi;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+
+    local_memset(out, 0, sizeof(*out));
+    out->uid = process_get_uid();
+    out->gid = process_get_gid();
+    out->euid = process_get_euid();
+    out->egid = process_get_egid();
+    copy_cstr_bounded(out->username, sizeof(out->username), process_get_username());
+    copy_cstr_bounded(out->home, sizeof(out->home), process_get_home());
+    return 0;
+}
+
+static int cstr_equals_n(const char* a, const char* b, size_t b_len) {
+    size_t i = 0;
+
+    if (!a || !b) return 0;
+    while (i < b_len) {
+        if (a[i] == '\0' || a[i] != b[i]) {
+            return 0;
+        }
+        i++;
+    }
+    return a[i] == '\0';
+}
+
+static int shadow_password_matches(const char* username, const char* password) {
+    struct vfs_node node;
+    char shadow[1024];
+    uint64_t size;
+    uint64_t pos = 0;
+
+    if (!username || !password) {
+        return 0;
+    }
+    if (vfs_lookup("etc/shadow", &node) != 0 || node.type != VFS_NODE_TYPE_REGULAR) {
+        return 0;
+    }
+
+    size = node.size;
+    if (size >= sizeof(shadow)) {
+        size = sizeof(shadow) - 1;
+    }
+    if (vfs_read_node(&node, 0, (uint8_t*)shadow, size) != 0) {
+        return 0;
+    }
+    shadow[size] = '\0';
+
+    while (pos < size) {
+        uint64_t line_start = pos;
+        uint64_t name_start = pos;
+        uint64_t name_len = 0;
+        uint64_t pass_start = 0;
+        uint64_t pass_len = 0;
+
+        while (pos < size && shadow[pos] != ':' && shadow[pos] != '\n') {
+            pos++;
+        }
+        name_len = pos - name_start;
+        if (pos >= size || shadow[pos] != ':') {
+            while (pos < size && shadow[pos] != '\n') pos++;
+            if (pos < size) pos++;
+            continue;
+        }
+        pos++;
+        pass_start = pos;
+        while (pos < size && shadow[pos] != ':' && shadow[pos] != '\n') {
+            pos++;
+        }
+        pass_len = pos - pass_start;
+
+        if (cstr_equals_n(username, &shadow[name_start], (size_t)name_len)) {
+            if (pass_len == 0) {
+                return 1;
+            }
+            return cstr_equals_n(password, &shadow[pass_start], (size_t)pass_len);
+        }
+
+        (void)line_start;
+        while (pos < size && shadow[pos] != '\n') pos++;
+        if (pos < size) pos++;
+    }
+
+    return 0;
+}
+
+static int64_t sys_sudo_auth(struct syscall_regs* regs) {
+    char password[128];
+    int64_t rc;
+
+    if (process_is_root()) {
+        process_become_root();
+        return 0;
+    }
+
+    rc = copy_user_cstr((const char*)(uintptr_t)regs->rdi, password, sizeof(password));
+    if (rc < 0) return rc;
+
+    if (!shadow_password_matches(process_get_username(), password)) {
+        return -(int64_t)LINUX_EACCES;
+    }
+
+    process_become_root();
+    return 0;
+}
+
+static int64_t sys_pci_info(struct syscall_regs* regs) {
+    uint64_t index = regs->rdi;
+    struct aos_pci_info_user* out = (struct aos_pci_info_user*)(uintptr_t)regs->rsi;
+    const struct pci_device* dev;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+    dev = pci_get((size_t)index);
+    if (!dev) return -(int64_t)LINUX_ENOENT;
+
+    local_memset(out, 0, sizeof(*out));
+    out->vendor_id = dev->vendor_id;
+    out->device_id = dev->device_id;
+    out->bus = dev->bus;
+    out->slot = dev->slot;
+    out->function = dev->function;
+    out->class_code = dev->class_code;
+    out->subclass = dev->subclass;
+    out->prog_if = dev->prog_if;
+    out->revision = dev->revision;
+    out->header_type = dev->header_type;
+    out->irq_line = dev->irq_line;
+    for (size_t i = 0; i < 6; i++) {
+        out->bar[i] = dev->bar[i];
+    }
+    return 0;
+}
+
+static int64_t sys_driver_info(struct syscall_regs* regs) {
+    uint64_t index = regs->rdi;
+    struct aos_driver_info_user* out = (struct aos_driver_info_user*)(uintptr_t)regs->rsi;
+    const struct driver_device* dev;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+    dev = driver_get((size_t)index);
+    if (!dev) return -(int64_t)LINUX_ENOENT;
+
+    local_memset(out, 0, sizeof(*out));
+    out->type = dev->type;
+    out->claimed = dev->claimed;
+    out->bus = dev->bus;
+    out->slot = dev->slot;
+    out->function = dev->function;
+    out->class_code = dev->class_code;
+    out->subclass = dev->subclass;
+    out->prog_if = dev->prog_if;
+    out->irq_line = dev->irq_line;
+    out->vendor_id = dev->vendor_id;
+    out->device_id = dev->device_id;
+    for (size_t i = 0; i < 6; i++) {
+        out->bar[i] = dev->bar[i];
+    }
+    copy_cstr_bounded(out->driver, sizeof(out->driver), dev->driver);
+    copy_cstr_bounded(out->status, sizeof(out->status), dev->status);
+    return 0;
+}
+
+static int64_t sys_shutdown(struct syscall_regs* regs) {
+    (void)regs;
+
+    serial_print("AOS: shutdown requested\n");
+
+    /* QEMU/modern ACPI PM1a control block. */
+    outw_local(0x604, 0x2000);
+    io_wait();
+
+    /* Bochs/QEMU legacy poweroff ports. */
+    outw_local(0xB004, 0x2000);
+    io_wait();
+    outw_local(0x4004, 0x3400);
+    io_wait();
+
+    return -(int64_t)LINUX_EIO;
+}
+
+static int64_t sys_restart(struct syscall_regs* regs) {
+    (void)regs;
+
+    serial_print("AOS: restart requested\n");
+
+    /* PCI reset control, then classic keyboard controller reset. */
+    outb(0xCF9, 0x02);
+    io_wait();
+    outb(0xCF9, 0x06);
+    io_wait();
+    outb(0x64, 0xFE);
+    io_wait();
+
+    return -(int64_t)LINUX_EIO;
+}
+
 static int64_t sys_partition_create(struct syscall_regs* regs) {
     uint8_t fs_type = (uint8_t)regs->rdi;
     uint64_t size = regs->rsi;
-    int rc = partition_create_planned(fs_type, size);
+    uint8_t role = (uint8_t)regs->rdx;
+    int rc = partition_create_planned(fs_type, size, role);
     if (rc < 0) return -(int64_t)LINUX_EINVAL;
     return rc;
 }
@@ -2138,6 +2804,53 @@ static int64_t sys_partition_delete(struct syscall_regs* regs) {
 
 static int64_t sys_partition_type(struct syscall_regs* regs) {
     if (partition_cycle_planned_type((size_t)regs->rdi) != 0) return -(int64_t)LINUX_EINVAL;
+    return 0;
+}
+
+static int64_t sys_partition_write(struct syscall_regs* regs) {
+    uint32_t blkdev_id = (uint32_t)regs->rdi;
+    if (partition_write_table(blkdev_id) != 0) return -(int64_t)LINUX_EIO;
+    return 0;
+}
+
+static int64_t sys_mount_info(struct syscall_regs* regs) {
+    struct vfs_mount_info* out = (struct vfs_mount_info*)(uintptr_t)regs->rsi;
+    if (!out) return -(int64_t)LINUX_EFAULT;
+    if (vfs_mount_info_at((size_t)regs->rdi, out) != 0) return -(int64_t)LINUX_ENOENT;
+    return 0;
+}
+
+static int64_t sys_partition_role(struct syscall_regs* regs) {
+    if (partition_cycle_planned_role((size_t)regs->rdi) != 0) return -(int64_t)LINUX_EINVAL;
+    return 0;
+}
+
+static int64_t sys_partition_layout(struct syscall_regs* regs) {
+    uint32_t blkdev_id = (uint32_t)regs->rdi;
+    const struct partition* part;
+
+    if (partition_create_default_layout(blkdev_id) != 0) return -(int64_t)LINUX_EIO;
+    if (partition_write_table(blkdev_id) != 0) return -(int64_t)LINUX_EIO;
+
+    part = partition_find_by_role(PARTITION_ROLE_ROOT);
+    if (part && part->fs_type == PARTITION_FS_AOSFS) {
+        (void)aosfs_mount_role(PARTITION_ROLE_ROOT, part->blkdev_id, part->offset);
+    }
+    part = partition_find_by_role(PARTITION_ROLE_MAIN);
+    if (part && part->fs_type == PARTITION_FS_AOSFS &&
+        aosfs_mount_role(PARTITION_ROLE_MAIN, part->blkdev_id, part->offset) == 0) {
+        (void)vfs_mount("main", VFS_BACKEND_AOSFS, "@main");
+    }
+    part = partition_find_by_role(PARTITION_ROLE_ETC);
+    if (part && part->fs_type == PARTITION_FS_AOSFS &&
+        aosfs_mount_role(PARTITION_ROLE_ETC, part->blkdev_id, part->offset) == 0) {
+        (void)vfs_mount("etc", VFS_BACKEND_AOSFS, "@etc");
+    }
+    part = partition_find_by_role(PARTITION_ROLE_COMMANDS);
+    if (part && part->fs_type == PARTITION_FS_AOSFS) {
+        (void)aosfs_mount_role(PARTITION_ROLE_COMMANDS, part->blkdev_id, part->offset);
+    }
+
     return 0;
 }
 
@@ -2171,6 +2884,9 @@ void syscall_handler(struct syscall_regs* regs) {
         case LINUX_SYS_WRITE:
             regs->rax = (uint64_t)sys_write(regs);
             return;
+        case LINUX_SYS_POLL:
+            regs->rax = (uint64_t)sys_poll(regs);
+            return;
         case LINUX_SYS_IOCTL:
             regs->rax = (uint64_t)sys_ioctl(regs);
             return;
@@ -2200,6 +2916,15 @@ void syscall_handler(struct syscall_regs* regs) {
             return;
         case LINUX_SYS_OPENAT:
             regs->rax = (uint64_t)sys_openat(regs);
+            return;
+        case LINUX_SYS_MKDIR:
+            regs->rax = (uint64_t)sys_mkdir(regs);
+            return;
+        case LINUX_SYS_MKDIRAT:
+            regs->rax = (uint64_t)sys_mkdirat(regs);
+            return;
+        case LINUX_SYS_UNLINKAT:
+            regs->rax = (uint64_t)sys_unlinkat(regs);
             return;
         case LINUX_SYS_CLOSE:
             regs->rax = (uint64_t)sys_close(regs);
@@ -2240,6 +2965,9 @@ void syscall_handler(struct syscall_regs* regs) {
         case LINUX_SYS_SET_TID_ADDRESS:
             regs->rax = (uint64_t)sys_set_tid_address(regs);
             return;
+        case LINUX_SYS_FADVISE64:
+            regs->rax = 0;
+            return;
         case LINUX_SYS_CLOCK_GETTIME:
             regs->rax = (uint64_t)sys_clock_gettime(regs);
             return;
@@ -2256,6 +2984,9 @@ void syscall_handler(struct syscall_regs* regs) {
         case LINUX_SYS_GETRANDOM:
             regs->rax = (uint64_t)sys_getrandom(regs);
             return;
+        case LINUX_SYS_STATX:
+            regs->rax = (uint64_t)(-(int64_t)LINUX_ENOSYS);
+            return;
         case AOS_SYS_PARTITION_INFO:
             regs->rax = (uint64_t)sys_partition_info(regs);
             return;
@@ -2268,6 +2999,54 @@ void syscall_handler(struct syscall_regs* regs) {
         case AOS_SYS_PARTITION_TYPE:
             regs->rax = (uint64_t)sys_partition_type(regs);
             return;
+        case AOS_SYS_BLKDEV_INFO:
+            regs->rax = (uint64_t)sys_blkdev_info(regs);
+            return;
+        case AOS_SYS_PARTITION_WRITE:
+            regs->rax = (uint64_t)sys_partition_write(regs);
+            return;
+        case AOS_SYS_MOUNT_INFO:
+            regs->rax = (uint64_t)sys_mount_info(regs);
+            return;
+        case AOS_SYS_PARTITION_ROLE:
+            regs->rax = (uint64_t)sys_partition_role(regs);
+            return;
+        case AOS_SYS_PARTITION_LAYOUT:
+            regs->rax = (uint64_t)sys_partition_layout(regs);
+            return;
+        case AOS_SYS_MEM_INFO:
+            regs->rax = (uint64_t)sys_mem_info(regs);
+            return;
+        case AOS_SYS_UPTIME_INFO:
+            regs->rax = (uint64_t)sys_uptime_info(regs);
+            return;
+        case AOS_SYS_DISPLAY_INFO:
+            regs->rax = (uint64_t)sys_display_info(regs);
+            return;
+        case AOS_SYS_DISPLAY_SET:
+            regs->rax = (uint64_t)sys_display_set(regs);
+            return;
+        case AOS_SYS_SHUTDOWN:
+            regs->rax = (uint64_t)sys_shutdown(regs);
+            return;
+        case AOS_SYS_RESTART:
+            regs->rax = (uint64_t)sys_restart(regs);
+            return;
+        case AOS_SYS_TIME_INFO:
+            regs->rax = (uint64_t)sys_time_info(regs);
+            return;
+        case AOS_SYS_USER_INFO:
+            regs->rax = (uint64_t)sys_user_info(regs);
+            return;
+        case AOS_SYS_SUDO_AUTH:
+            regs->rax = (uint64_t)sys_sudo_auth(regs);
+            return;
+        case AOS_SYS_PCI_INFO:
+            regs->rax = (uint64_t)sys_pci_info(regs);
+            return;
+        case AOS_SYS_DRIVER_INFO:
+            regs->rax = (uint64_t)sys_driver_info(regs);
+            return;
         case LINUX_SYS_FACCESSAT:
             regs->rax = (uint64_t)sys_faccessat(regs);
             return;
@@ -2278,11 +3057,21 @@ void syscall_handler(struct syscall_regs* regs) {
             regs->rax = (uint64_t)sys_getppid(regs);
             return;
         case LINUX_SYS_GETUID:
+            regs->rax = process_get_uid();
+            return;
         case LINUX_SYS_GETGID:
+            regs->rax = process_get_gid();
+            return;
+        case LINUX_SYS_GETEUID:
+            regs->rax = process_get_euid();
+            return;
+        case LINUX_SYS_GETEGID:
+            regs->rax = process_get_egid();
+            return;
         case LINUX_SYS_SETUID:
         case LINUX_SYS_SETGID:
-        case LINUX_SYS_GETEUID:
-        case LINUX_SYS_GETEGID:
+            regs->rax = (uint64_t)(-(int64_t)LINUX_EPERM);
+            return;
         case LINUX_SYS_PRCTL:
             regs->rax = 0;
             return;

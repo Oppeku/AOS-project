@@ -19,6 +19,8 @@ global _start
 %define SYS_WAIT4 61
 %define SYS_GETCWD 79
 %define SYS_CHDIR 80
+%define SYS_MKDIRAT 258
+%define SYS_UNLINKAT 263
 %define SYS_GETDENTS64 217
 %define SYS_OPENAT 257
 
@@ -33,6 +35,7 @@ global _start
 %define MAX_ARGS 8
 %define MAX_PIPE_CMDS 8
 %define HISTORY_SIZE 8
+%define HOME_EXPANSION_SIZE (MAX_PIPE_CMDS * MAX_ARGS * CMD_BUF_SIZE)
 %define KEY_HISTORY_PREV 0x11
 %define KEY_HISTORY_NEXT 0x12
 %define ARGV_STRIDE ((MAX_ARGS + 1) * 8)
@@ -41,7 +44,7 @@ global _start
 %define VGA_COLOR_OUTPUT 0x07
 %define COMPLETION_MODE_COLLECT 0
 %define COMPLETION_MODE_PRINT 1
-%define BUILTIN_CMD_COUNT 9
+%define BUILTIN_CMD_COUNT 14
 
 _start:
     xor r12, r12
@@ -155,6 +158,8 @@ shell_no_input:
     jmp shell_read_char
 
 execute_line:
+    lea rax, [rel home_expansion_buffer]
+    mov [rel home_expansion_next], rax
     lea rbx, [rel line_buffer]
     call split_pipeline_commands
     mov [rel command_count], r14
@@ -171,6 +176,7 @@ execute_parse_loop:
     lea r11, [rel command_starts]
     mov rbx, [r11 + r12 * 8]
     call parse_args
+    call expand_argv_home
     mov rdi, r12
     call extract_redirections
     lea r11, [rel argc_table]
@@ -1299,16 +1305,34 @@ exec_external_current:
     mov rsi, r15
     xor rdx, rdx
     syscall
-    cmp rax, -2
-    jne exec_external_failed
+    test rax, rax
+    jns exec_external_failed
+
+    call build_root_command_path
+    mov rax, SYS_EXECVE
+    lea rdi, [rel io_buffer]
+    mov rsi, r15
+    xor rdx, rdx
+    syscall
+    test rax, rax
+    jns exec_external_failed
+
+    call build_commands_command_path
+    mov rax, SYS_EXECVE
+    lea rdi, [rel io_buffer]
+    mov rsi, r15
+    xor rdx, rdx
+    syscall
+    test rax, rax
+    jns exec_external_failed
 
     mov rax, SYS_EXECVE
     lea rdi, [rel coreutils_path]
     mov rsi, r15
     xor rdx, rdx
     syscall
-    cmp rax, -2
-    jne exec_external_failed
+    test rax, rax
+    jns exec_external_failed
 
     mov rax, SYS_EXECVE
     lea rdi, [rel busybox_path]
@@ -1322,6 +1346,45 @@ exec_external_failed:
     mov rdx, command_exec_failed_msg_end - command_exec_failed_msg
     call write_stdout
     mov eax, 127
+    ret
+
+build_root_command_path:
+    lea rdi, [rel io_buffer]
+    mov byte [rdi], '/'
+    inc rdi
+    mov rsi, [r15]
+
+build_root_command_copy:
+    mov al, [rsi]
+    mov [rdi], al
+    inc rdi
+    inc rsi
+    test al, al
+    jnz build_root_command_copy
+    ret
+
+build_commands_command_path:
+    lea rdi, [rel io_buffer]
+    lea rsi, [rel commands_prefix]
+
+build_commands_prefix_copy:
+    mov al, [rsi]
+    mov [rdi], al
+    inc rdi
+    inc rsi
+    test al, al
+    jnz build_commands_prefix_copy
+
+    dec rdi
+    mov rsi, [r15]
+
+build_commands_command_copy:
+    mov al, [rsi]
+    mov [rdi], al
+    inc rdi
+    inc rsi
+    test al, al
+    jnz build_commands_command_copy
     ret
 
 command_prefers_external:
@@ -1341,7 +1404,7 @@ command_prefers_external:
     lea rsi, [rel pwd_cmd]
     call strcmp
     test eax, eax
-    jz command_prefers_external_yes
+    jz command_prefers_external_no
 
     mov rdi, [r15]
     lea rsi, [rel echo_cmd]
@@ -1354,6 +1417,10 @@ command_prefers_external:
 
 command_prefers_external_yes:
     mov eax, 1
+    ret
+
+command_prefers_external_no:
+    xor eax, eax
     ret
 
 dispatch_command:
@@ -1380,6 +1447,12 @@ dispatch_command:
     call strcmp
     test eax, eax
     jz cmd_cd
+
+    mov rdi, [r15]
+    lea rsi, [rel home_cmd]
+    call strcmp
+    test eax, eax
+    jz cmd_home
 
     mov rdi, [r15]
     lea rsi, [rel pwd_cmd]
@@ -1410,6 +1483,30 @@ dispatch_command:
     call strcmp
     test eax, eax
     jz cmd_echo
+
+    mov rdi, [r15]
+    lea rsi, [rel mkdir_cmd]
+    call strcmp
+    test eax, eax
+    jz cmd_mkdir
+
+    mov rdi, [r15]
+    lea rsi, [rel touch_cmd]
+    call strcmp
+    test eax, eax
+    jz cmd_touch
+
+    mov rdi, [r15]
+    lea rsi, [rel rm_cmd]
+    call strcmp
+    test eax, eax
+    jz cmd_rm
+
+    mov rdi, [r15]
+    lea rsi, [rel rmdir_cmd]
+    call strcmp
+    test eax, eax
+    jz cmd_rmdir
 
     mov eax, 127
     ret
@@ -1549,12 +1646,85 @@ cmd_ls_read_failed:
 
 cmd_cd:
     cmp r13, 2
-    jb cmd_cd_root
-    mov rdi, [r15 + 8]
+    jb cmd_cd_home
+    mov rbx, [r15 + 8]
+    mov rdi, rbx
+    lea rsi, [rel tilde_path]
+    call strcmp
+    test eax, eax
+    jz cmd_cd_home
+    cmp byte [rbx], '~'
+    jne cmd_cd_regular
+    cmp byte [rbx + 1], '/'
+    je cmd_cd_expand_home
+
+cmd_cd_regular:
+    mov rdi, rbx
     jmp cmd_cd_do
 
-cmd_cd_root:
+cmd_cd_home:
+    call chdir_home
+    test eax, eax
+    js cmd_cd_failed
+    xor eax, eax
+    ret
+
+cmd_home:
+    call chdir_home
+    test eax, eax
+    js cmd_cd_failed
+    xor eax, eax
+    ret
+
+cmd_cd_expand_home:
+    lea rdi, [rel io_buffer]
+    lea rsi, [rel default_home_path]
+
+cmd_cd_expand_copy_home:
+    mov al, [rsi]
+    test al, al
+    jz cmd_cd_expand_append_tail
+    mov [rdi], al
+    inc rdi
+    inc rsi
+    jmp cmd_cd_expand_copy_home
+
+cmd_cd_expand_append_tail:
+    mov rsi, rbx
+    inc rsi
+
+cmd_cd_expand_copy_tail:
+    mov al, [rsi]
+    mov [rdi], al
+    inc rdi
+    inc rsi
+    test al, al
+    jnz cmd_cd_expand_copy_tail
+    lea rdi, [rel io_buffer]
+    jmp cmd_cd_do
+
+chdir_home:
+    lea rdi, [rel default_home_path]
+    mov rax, SYS_CHDIR
+    syscall
+    test rax, rax
+    jns chdir_home_ok
+    lea rdi, [rel main_home_path]
+    mov rax, SYS_CHDIR
+    syscall
+    test rax, rax
+    jns chdir_home_ok
     lea rdi, [rel slash_path]
+    mov rax, SYS_CHDIR
+    syscall
+    test rax, rax
+    jns chdir_home_ok
+    mov eax, -1
+    ret
+
+chdir_home_ok:
+    xor eax, eax
+    ret
 
 cmd_cd_do:
     mov rax, SYS_CHDIR
@@ -1709,6 +1879,178 @@ cmd_echo_newline:
     xor eax, eax
     ret
 
+cmd_mkdir:
+    cmp r13, 2
+    jb cmd_path_usage_failed
+    mov rdi, [r15 + 8]
+    lea rsi, [rel io_buffer]
+    call expand_home_path
+    mov rax, SYS_MKDIRAT
+    mov rdi, AT_FDCWD
+    lea rsi, [rel io_buffer]
+    mov rdx, 0755o
+    xor r10, r10
+    syscall
+    test rax, rax
+    js cmd_path_failed
+    xor eax, eax
+    ret
+
+cmd_touch:
+    cmp r13, 2
+    jb cmd_path_usage_failed
+    mov rdi, [r15 + 8]
+    lea rsi, [rel io_buffer]
+    call expand_home_path
+    mov rax, SYS_OPENAT
+    mov rdi, AT_FDCWD
+    lea rsi, [rel io_buffer]
+    mov rdx, O_WRONLY | O_CREAT
+    xor r10, r10
+    syscall
+    test rax, rax
+    js cmd_path_failed
+    mov r14, rax
+    mov rax, SYS_CLOSE
+    mov rdi, r14
+    syscall
+    xor eax, eax
+    ret
+
+cmd_rm:
+    cmp r13, 2
+    jb cmd_path_usage_failed
+    mov rdi, [r15 + 8]
+    lea rsi, [rel io_buffer]
+    call expand_home_path
+    mov rax, SYS_UNLINKAT
+    mov rdi, AT_FDCWD
+    lea rsi, [rel io_buffer]
+    xor rdx, rdx
+    syscall
+    test rax, rax
+    js cmd_path_failed
+    xor eax, eax
+    ret
+
+cmd_rmdir:
+    cmp r13, 2
+    jb cmd_path_usage_failed
+    mov rdi, [r15 + 8]
+    lea rsi, [rel io_buffer]
+    call expand_home_path
+    mov rax, SYS_UNLINKAT
+    mov rdi, AT_FDCWD
+    lea rsi, [rel io_buffer]
+    mov rdx, 0x200
+    syscall
+    test rax, rax
+    js cmd_path_failed
+    xor eax, eax
+    ret
+
+cmd_path_usage_failed:
+    lea rsi, [rel path_usage_msg]
+    mov rdx, path_usage_msg_end - path_usage_msg
+    call write_stdout
+    mov eax, 1
+    ret
+
+cmd_path_failed:
+    lea rsi, [rel path_failed_msg]
+    mov rdx, path_failed_msg_end - path_failed_msg
+    call write_stdout
+    mov eax, 1
+    ret
+
+expand_home_path:
+    cmp byte [rdi], '~'
+    jne expand_home_copy_direct
+    cmp byte [rdi + 1], 0
+    je expand_home_copy_home_only
+    cmp byte [rdi + 1], '/'
+    jne expand_home_copy_direct
+
+    lea r8, [rel main_home_path]
+expand_home_copy_home_prefix:
+    mov al, [r8]
+    mov [rsi], al
+    inc rsi
+    inc r8
+    test al, al
+    jnz expand_home_copy_home_prefix
+    dec rsi
+    inc rdi
+    jmp expand_home_copy_tail
+
+expand_home_copy_home_only:
+    lea r8, [rel main_home_path]
+expand_home_copy_home_only_loop:
+    mov al, [r8]
+    mov [rsi], al
+    inc rsi
+    inc r8
+    test al, al
+    jnz expand_home_copy_home_only_loop
+    ret
+
+expand_home_copy_direct:
+expand_home_copy_tail:
+    mov al, [rdi]
+    mov [rsi], al
+    inc rsi
+    inc rdi
+    test al, al
+    jnz expand_home_copy_tail
+    ret
+
+expand_argv_home:
+    xor r10, r10
+
+expand_argv_home_loop:
+    cmp r10, r13
+    jae expand_argv_home_done
+    mov r9, [r15 + r10 * 8]
+    test r9, r9
+    jz expand_argv_home_next
+    cmp byte [r9], '~'
+    jne expand_argv_home_next
+    mov al, [r9 + 1]
+    test al, al
+    jz expand_argv_home_copy
+    cmp al, '/'
+    jne expand_argv_home_next
+
+expand_argv_home_copy:
+    mov r11, [rel home_expansion_next]
+    mov [r15 + r10 * 8], r11
+    lea r8, [rel main_home_path]
+
+expand_argv_home_copy_prefix:
+    mov al, [r8]
+    test al, al
+    jz expand_argv_home_copy_tail
+    mov [r11], al
+    inc r11
+    inc r8
+    jmp expand_argv_home_copy_prefix
+
+expand_argv_home_copy_tail:
+    mov al, [r9 + 1]
+    mov [r11], al
+    inc r11
+    inc r9
+    test al, al
+    jnz expand_argv_home_copy_tail
+    mov [rel home_expansion_next], r11
+
+expand_argv_home_next:
+    inc r10
+    jmp expand_argv_home_loop
+
+expand_argv_home_done:
+    ret
+
 clear_vga_console:
     lea rsi, [rel console_clear_seq]
     mov rdx, console_clear_seq_end - console_clear_seq
@@ -1847,6 +2189,10 @@ left_argc:
     resq 1
 right_argc:
     resq 1
+home_expansion_next:
+    resq 1
+home_expansion_buffer:
+    resb HOME_EXPANSION_SIZE
 
 section .rodata
 welcome_msg:
@@ -1899,40 +2245,64 @@ pwd_cmd:
     db "pwd", 0
 clear_cmd:
     db "clear", 0
+home_cmd:
+    db "home", 0
 write_cmd:
     db "write", 0
 exec_cmd:
     db "exec", 0
 echo_cmd:
     db "echo", 0
+mkdir_cmd:
+    db "mkdir", 0
+touch_cmd:
+    db "touch", 0
+rm_cmd:
+    db "rm", 0
+rmdir_cmd:
+    db "rmdir", 0
 builtin_cmd_table:
     dq help_cmd
     dq cat_cmd
     dq ls_cmd
     dq cd_cmd
+    dq home_cmd
     dq pwd_cmd
     dq clear_cmd
     dq write_cmd
     dq exec_cmd
     dq echo_cmd
+    dq mkdir_cmd
+    dq touch_cmd
+    dq rm_cmd
+    dq rmdir_cmd
 root_dir_path:
     db ".", 0
 slash_path:
     db "/", 0
+tilde_path:
+    db "~", 0
+default_home_path:
+    db "/root", 0
+main_home_path:
+    db "/root", 0
 busybox_path:
     db "busybox", 0
 coreutils_path:
     db "coreutils", 0
+commands_prefix:
+    db "/commands/", 0
 
 help_msg:
     db "AOS shell help", 10
-    db "Builtins: help cd clear write exec", 10
+    db "Builtins: help cd home pwd clear write exec mkdir touch rm rmdir", 10
     db "PartiotionMANAGAER: run partitions or PartiotionMANAGER", 10
     db "BusyBox applets: sh ash test [ env printf true false head tail uname", 10
     db "BusyBox fallback: commands not found as GNU or initrd programs retry through BusyBox", 10
-    db "GNU coreutils: ls cat echo pwd uname head tail true false whoami mkdir", 10
-    db "GNU priority: ls cat echo pwd run GNU first, then BusyBox if missing", 10
+    db "GNU coreutils: ls cat echo head tail true false", 10
+    db "GNU priority: ls cat echo run GNU first, then BusyBox if missing", 10
     db "Per-command help: run ls --help, cat --help, echo --help, pwd --help", 10
+    db "AOS tools: lspci drivers mem uptime date uname whoami id sudo aossetup settings display mounts partitions nano aosnano touch rm mkdir rmdir shutdown restart reboot", 10
     db "Redirection: < > and >> are supported", 10
     db "Pipes: cmd1 | cmd2 | cmd3", 10
     db "Quotes: 'one two' and ", 34, "one two", 34, 10
@@ -1979,6 +2349,14 @@ exec_usage_msg_end:
 exec_failed_msg:
     db "exec: failed", 10
 exec_failed_msg_end:
+
+path_usage_msg:
+    db "usage: mkdir/touch/rm/rmdir PATH", 10
+path_usage_msg_end:
+
+path_failed_msg:
+    db "path command failed", 10
+path_failed_msg_end:
 
 pipeline_usage_msg:
     db "usage: cmd1 | cmd2 [| cmd3 ...]", 10

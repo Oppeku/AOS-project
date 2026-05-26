@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 extern void serial_print(const char* s);
+extern uint8_t aos_boot_verbose;
 static uint64_t g_initrd_start;
 static uint64_t g_initrd_end;
 
@@ -119,7 +120,9 @@ int init_initrd(uint32_t mod_start, uint32_t mod_end) {
     g_initrd_start = mod_start;
     g_initrd_end = mod_end;
 
-    serial_print("Initrd: Parsing CPIO...\n");
+    if (aos_boot_verbose) {
+        serial_print("Initrd: Parsing CPIO...\n");
+    }
     struct cpio_new_header* header = (struct cpio_new_header*)g_initrd_start;
 
     if ((uint64_t)header >= g_initrd_end ||
@@ -137,13 +140,17 @@ int init_initrd(uint32_t mod_start, uint32_t mod_end) {
         char* name = (char*)(header + 1);
         
         if (strcmp(name, "TRAILER!!!") == 0) {
-            serial_print("Initrd: Found TRAILER!!!\n");
+            if (aos_boot_verbose) {
+                serial_print("Initrd: Found TRAILER!!!\n");
+            }
             break;
         }
 
-        serial_print("Initrd: Found file: ");
-        serial_print(name);
-        serial_print("\n");
+        if (aos_boot_verbose) {
+            serial_print("Initrd: Found file: ");
+            serial_print(name);
+            serial_print("\n");
+        }
 
         uint64_t next = (uint64_t)header + sizeof(struct cpio_new_header) + namesize;
         next = (next + 3) & ~3ULL; 
@@ -152,6 +159,8 @@ int init_initrd(uint32_t mod_start, uint32_t mod_end) {
         
         header = (struct cpio_new_header*)next;
     }
-    serial_print("Initrd: Parsing Done.\n");
+    if (aos_boot_verbose) {
+        serial_print("Initrd: Parsing Done.\n");
+    }
     return 0;
 }

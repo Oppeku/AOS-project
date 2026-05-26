@@ -9,8 +9,10 @@
 // 32KB bitmap can manage 1GB of memory (32768 bytes * 8 bits/byte * 4096 bytes/page)
 uint8_t pmm_bitmap[32768]; 
 uint64_t total_blocks = 262144; // 1GB in 4KB blocks
+static uint64_t free_blocks;
 
 extern void serial_print(const char* s);
+extern uint8_t aos_boot_verbose;
 extern uint8_t __kernel_start[];
 extern uint8_t __kernel_end[];
 
@@ -26,13 +28,22 @@ static void mark_used_range(uint64_t start, uint64_t end) {
 
     for (uint64_t addr = range_start; addr < range_end; addr += 4096) {
         uint64_t block = addr / 4096;
-        pmm_bitmap[block / 8] |= (1 << (block % 8));
+        uint8_t mask = (uint8_t)(1 << (block % 8));
+        if ((pmm_bitmap[block / 8] & mask) == 0 && free_blocks > 0) {
+            free_blocks--;
+        }
+        pmm_bitmap[block / 8] |= mask;
     }
 }
 
 void pmm_init(uint64_t mb_info) {
-    serial_print("PMM: Initializing...\n");
-    vga_print("PMM: Initializing...", 0x0F, 0, 10);
+    if (aos_boot_verbose) {
+        serial_print("PMM: Initializing...\n");
+        vga_print("PMM: Initializing...", 0x0F, 0, 10);
+    }
+    total_blocks = 0;
+    free_blocks = 0;
+
     // 1. Mark everything as used by default (1)
     for(int i = 0; i < 32768; i++) pmm_bitmap[i] = 0xFF;
     
@@ -54,10 +65,22 @@ void pmm_init(uint64_t mb_info) {
                  entry = (struct multiboot_mmap_entry*)((uint8_t*)entry + mmap->entry_size)) 
             {
                 if (entry->type == MULTIBOOT_MEMORY_AVAILABLE) {
+                    uint64_t entry_end = entry->addr + entry->len;
+                    uint64_t capped_end = entry_end;
+                    if (capped_end > 1024ULL * 1024ULL * 1024ULL) {
+                        capped_end = 1024ULL * 1024ULL * 1024ULL;
+                    }
+                    if (capped_end > total_blocks * 4096ULL) {
+                        total_blocks = (capped_end + 4095ULL) / 4096ULL;
+                    }
                     for (uint64_t addr = entry->addr; addr < entry->addr + entry->len; addr += 4096) {
                         if (addr >= 1024 * 1024 * 1024) break;
                         uint64_t block = addr / 4096;
-                        pmm_bitmap[block / 8] &= ~(1 << (block % 8));
+                        uint8_t mask = (uint8_t)(1 << (block % 8));
+                        if (pmm_bitmap[block / 8] & mask) {
+                            pmm_bitmap[block / 8] &= (uint8_t)~mask;
+                            free_blocks++;
+                        }
                     }
                 }
             }
@@ -67,15 +90,31 @@ void pmm_init(uint64_t mb_info) {
     if (!found_mmap) {
         serial_print("PMM ERROR: No Memory Map found!\n");
         vga_print("PMM ERROR: No Memory Map found! Falling back to 128MB.", 0x0C, 0, 11);
-        for(int i = 0; i < 4096; i++) pmm_bitmap[i] = 0; // Free first 128MB
+        total_blocks = 32768;
+        for(uint64_t i = 0; i < total_blocks; i++) {
+            uint8_t mask = (uint8_t)(1 << (i % 8));
+            if (pmm_bitmap[i / 8] & mask) {
+                pmm_bitmap[i / 8] &= (uint8_t)~mask;
+                free_blocks++;
+            }
+        }
     } else {
-        serial_print("PMM: Memory Map parsed.\n");
-        vga_print("PMM: Memory Map parsed successfully.", 0x0A, 0, 11);
+        if (total_blocks == 0) {
+            total_blocks = 262144;
+        }
+        if (aos_boot_verbose) {
+            serial_print("PMM: Memory Map parsed.\n");
+            vga_print("PMM: Memory Map parsed successfully.", 0x0A, 0, 11);
+        }
     }
 
     // 2. Mark the first 1MB as used (kernel and BIOS area)
     for(int i = 0; i < 256; i++) {
-        pmm_bitmap[i / 8] |= (1 << (i % 8));
+        uint8_t mask = (uint8_t)(1 << (i % 8));
+        if ((pmm_bitmap[i / 8] & mask) == 0 && free_blocks > 0) {
+            free_blocks--;
+        }
+        pmm_bitmap[i / 8] |= mask;
     }
 
     // 3. Mark kernel image pages as used so allocator cannot overwrite it.
@@ -95,8 +134,10 @@ void pmm_init(uint64_t mb_info) {
 
 void* pmm_alloc_block() {
     for (uint64_t i = 0; i < total_blocks; i++) {
-        if (!(pmm_bitmap[i / 8] & (1 << (i % 8)))) {
-            pmm_bitmap[i / 8] |= (1 << (i % 8)); // Mark as used
+        uint8_t mask = (uint8_t)(1 << (i % 8));
+        if (!(pmm_bitmap[i / 8] & mask)) {
+            pmm_bitmap[i / 8] |= mask; // Mark as used
+            if (free_blocks > 0) free_blocks--;
             return (void*)(i * 4096);
         }
     }
@@ -106,5 +147,22 @@ void* pmm_alloc_block() {
 
 void pmm_free_block(void* addr) {
     uint64_t block = (uint64_t)addr / 4096;
-    pmm_bitmap[block / 8] &= ~(1 << (block % 8));
+    uint8_t mask = (uint8_t)(1 << (block % 8));
+    if (block >= total_blocks) return;
+    if (pmm_bitmap[block / 8] & mask) {
+        pmm_bitmap[block / 8] &= (uint8_t)~mask;
+        free_blocks++;
+    }
+}
+
+uint64_t pmm_total_memory(void) {
+    return total_blocks * 4096ULL;
+}
+
+uint64_t pmm_free_memory(void) {
+    return free_blocks * 4096ULL;
+}
+
+uint64_t pmm_used_memory(void) {
+    return pmm_total_memory() - pmm_free_memory();
 }

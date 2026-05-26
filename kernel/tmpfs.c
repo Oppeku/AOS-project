@@ -223,6 +223,27 @@ int tmpfs_truncate_path(const char* path) {
     return 0;
 }
 
+int tmpfs_read_path(const char* path, uint64_t offset, uint8_t* buffer, uint64_t len) {
+    char leaf[TMPFS_NAME_MAX];
+    struct tmpfs_entry* entry = NULL;
+
+    if (!path || !buffer) {
+        return -1;
+    }
+    if (extract_tmpfs_leaf(path, leaf, sizeof(leaf)) != 0 || leaf[0] == '\0') {
+        return -1;
+    }
+    entry = find_entry(leaf);
+    if (!entry) {
+        return -1;
+    }
+    if (offset > entry->size || len > entry->size - offset) {
+        return -1;
+    }
+    local_memcpy(buffer, entry->data + offset, (size_t)len);
+    return 0;
+}
+
 int tmpfs_write_path(const char* path, uint64_t offset, const uint8_t* buffer, uint64_t len, uint64_t* written, uint32_t* new_size) {
     char leaf[TMPFS_NAME_MAX];
     struct tmpfs_entry* entry = NULL;

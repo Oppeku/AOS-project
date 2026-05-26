@@ -1,6 +1,7 @@
 #include <process.h>
 #include <pmm.h>
 #include <vmm.h>
+#include <timer.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -13,6 +14,24 @@ extern void process_load_fs_base(uint64_t fs_base);
 process_t process_list[MAX_PROCESSES];
 process_t* current_process = NULL;
 static uint32_t next_pid = 1;
+
+static void local_strcpy_bounded(char* dst, size_t dst_size, const char* src) {
+    size_t i = 0;
+
+    if (!dst || dst_size == 0) {
+        return;
+    }
+    if (!src) {
+        dst[0] = '\0';
+        return;
+    }
+
+    while (src[i] != '\0' && i + 1 < dst_size) {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
+}
 
 static void* local_memcpy(void* dest, const void* src, size_t n) {
     uint8_t* d = dest;
@@ -73,6 +92,7 @@ void schedule(struct syscall_regs* regs) {
 
 void timer_handler(struct syscall_regs* regs) {
     (void)regs;
+    timer_tick();
     /*
      * The timer IRQ currently arrives through an interrupt gate, not the
      * SYSCALL entry path, so we do not have a syscall_regs frame here.
@@ -106,6 +126,16 @@ void init_process() {
     process_list[0].brk_mapped_end = 0;
     process_list[0].mmap_next = 0;
     process_list[0].clear_child_tid = 0;
+    /*
+     * Live ISO mode starts as root until the installer creates the real user.
+     * AOS_LIVE_PERMISSIVE keeps the live environment writable without sudo.
+     */
+    process_list[0].uid = 0;
+    process_list[0].gid = 0;
+    process_list[0].euid = 0;
+    process_list[0].egid = 0;
+    local_strcpy_bounded(process_list[0].username, sizeof(process_list[0].username), "root");
+    local_strcpy_bounded(process_list[0].home, sizeof(process_list[0].home), "root");
     current_process = &process_list[0];
 }
 
@@ -146,6 +176,12 @@ int64_t sys_fork(struct syscall_regs* regs) {
     child->brk_mapped_end = current_process->brk_mapped_end;
     child->mmap_next = current_process->mmap_next;
     child->clear_child_tid = current_process->clear_child_tid;
+    child->uid = current_process->uid;
+    child->gid = current_process->gid;
+    child->euid = current_process->euid;
+    child->egid = current_process->egid;
+    local_memcpy(child->username, current_process->username, sizeof(child->username));
+    local_memcpy(child->home, current_process->home, sizeof(child->home));
 
     // Child returns 0
     child->regs.rax = 0;
@@ -196,4 +232,46 @@ struct fd_entry* process_get_fd_table(void) {
         return NULL;
     }
     return current_process->fd_table;
+}
+
+uint32_t process_get_uid(void) {
+    return current_process ? current_process->uid : 0;
+}
+
+uint32_t process_get_gid(void) {
+    return current_process ? current_process->gid : 0;
+}
+
+uint32_t process_get_euid(void) {
+    return current_process ? current_process->euid : 0;
+}
+
+uint32_t process_get_egid(void) {
+    return current_process ? current_process->egid : 0;
+}
+
+const char* process_get_username(void) {
+    if (!current_process || current_process->username[0] == '\0') {
+        return "root";
+    }
+    return current_process->username;
+}
+
+const char* process_get_home(void) {
+    if (!current_process || current_process->home[0] == '\0') {
+        return "root";
+    }
+    return current_process->home;
+}
+
+int process_is_root(void) {
+    return process_get_euid() == 0;
+}
+
+void process_become_root(void) {
+    if (!current_process) {
+        return;
+    }
+    current_process->euid = 0;
+    current_process->egid = 0;
 }

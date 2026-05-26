@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 extern void serial_print(const char* s);
+extern uint8_t aos_boot_verbose;
 
 struct fat32_boot_sector {
     uint8_t jump[3];
@@ -702,7 +703,9 @@ int fat32_init(uint32_t mod_start, uint32_t mod_end) {
     g_volume.data_start = (g_volume.reserved_sectors + g_volume.fat_count * g_volume.fat_size_sectors) * g_volume.bytes_per_sector;
     g_volume.mounted = 1;
 
-    serial_print("FAT32: mounted image\n");
+    if (aos_boot_verbose) {
+        serial_print("FAT32: mounted image\n");
+    }
     return 0;
 }
 

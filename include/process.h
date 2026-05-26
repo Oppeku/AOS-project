@@ -8,6 +8,7 @@
 #define MAX_PROCESSES 64
 #define PROCESS_CWD_MAX 256
 #define PROCESS_FD_MAX 32
+#define PROCESS_USERNAME_MAX 32
 
 struct fd_entry {
     uint8_t kind;
@@ -41,6 +42,12 @@ typedef struct {
     uint64_t brk_mapped_end;
     uint64_t mmap_next;
     uint64_t clear_child_tid;
+    uint32_t uid;
+    uint32_t gid;
+    uint32_t euid;
+    uint32_t egid;
+    char username[PROCESS_USERNAME_MAX];
+    char home[PROCESS_CWD_MAX];
 } process_t;
 
 extern process_t process_list[MAX_PROCESSES];
@@ -55,5 +62,13 @@ process_t* get_current_process(void);
 const char* process_get_cwd(void);
 void process_set_cwd(const char* path);
 struct fd_entry* process_get_fd_table(void);
+uint32_t process_get_uid(void);
+uint32_t process_get_gid(void);
+uint32_t process_get_euid(void);
+uint32_t process_get_egid(void);
+const char* process_get_username(void);
+const char* process_get_home(void);
+int process_is_root(void);
+void process_become_root(void);
 
 #endif

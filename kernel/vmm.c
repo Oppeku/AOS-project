@@ -98,6 +98,87 @@ void vmm_map_page(uint64_t* pml4, uint64_t virt, uint64_t phys, uint64_t flags) 
     asm volatile("invlpg (%0)" :: "r"(virt) : "memory");
 }
 
+uint64_t vmm_unmap_page(uint64_t* pml4, uint64_t virt) {
+    uint64_t pml4_idx = (virt >> 39) & 0x1FF;
+    uint64_t pdpt_idx = (virt >> 30) & 0x1FF;
+    uint64_t pd_idx   = (virt >> 21) & 0x1FF;
+    uint64_t pt_idx   = (virt >> 12) & 0x1FF;
+
+    if (!pml4 || virt < AOS_USER_SPACE_START || !(pml4[pml4_idx] & PAGE_PRESENT)) return 0;
+
+    uint64_t* pdpt = (uint64_t*)(pml4[pml4_idx] & ~0xFFF);
+    if (!(pdpt[pdpt_idx] & PAGE_PRESENT)) return 0;
+
+    uint64_t* pd = (uint64_t*)(pdpt[pdpt_idx] & ~0xFFF);
+    if (!(pd[pd_idx] & PAGE_PRESENT)) return 0;
+    if (pd[pd_idx] & (1ULL << 7)) return 0;
+
+    uint64_t* pt = (uint64_t*)(pd[pd_idx] & ~0xFFF);
+    if (!(pt[pt_idx] & PAGE_PRESENT)) return 0;
+
+    uint64_t phys = pt[pt_idx] & ~0xFFFULL;
+    pt[pt_idx] = 0;
+    asm volatile("invlpg (%0)" :: "r"(virt) : "memory");
+    return phys;
+}
+
+static int table_has_present_entries(uint64_t* table) {
+    for (int i = 0; i < 512; i++) {
+        if (table[i] & PAGE_PRESENT) return 1;
+    }
+    return 0;
+}
+
+void vmm_free_user_space(uint64_t* pml4) {
+    if (!pml4) return;
+
+    for (int i = 0; i < 512; i++) {
+        uint64_t pml4_base = (uint64_t)i << 39;
+        if (pml4_base < AOS_USER_SPACE_START) continue;
+        if (!(pml4[i] & PAGE_PRESENT) || !(pml4[i] & PAGE_USER)) continue;
+        uint64_t* pdpt = (uint64_t*)(pml4[i] & ~0xFFFULL);
+
+        for (int j = 0; j < 512; j++) {
+            if (!(pdpt[j] & PAGE_PRESENT) || !(pdpt[j] & PAGE_USER)) continue;
+            uint64_t* pd = (uint64_t*)(pdpt[j] & ~0xFFFULL);
+
+            for (int k = 0; k < 512; k++) {
+                if (!(pd[k] & PAGE_PRESENT) || !(pd[k] & PAGE_USER)) continue;
+                if (pd[k] & (1ULL << 7)) {
+                    pmm_free_block((void*)(pd[k] & ~0x1FFFFFULL));
+                    pd[k] = 0;
+                    continue;
+                }
+
+                uint64_t* pt = (uint64_t*)(pd[k] & ~0xFFFULL);
+                for (int l = 0; l < 512; l++) {
+                    if ((pt[l] & PAGE_PRESENT) && (pt[l] & PAGE_USER)) {
+                        pmm_free_block((void*)(pt[l] & ~0xFFFULL));
+                        pt[l] = 0;
+                    }
+                }
+
+                if (!table_has_present_entries(pt)) {
+                    pmm_free_block(pt);
+                    pd[k] = 0;
+                }
+            }
+
+            if (!table_has_present_entries(pd)) {
+                pmm_free_block(pd);
+                pdpt[j] = 0;
+            }
+        }
+
+        if (!table_has_present_entries(pdpt)) {
+            pmm_free_block(pdpt);
+            pml4[i] = 0;
+        }
+    }
+
+    asm volatile("mov %%cr3, %%rax; mov %%rax, %%cr3" ::: "rax", "memory");
+}
+
 uint64_t* vmm_copy_p4(uint64_t* src_p4) {
     uint64_t* dst_p4 = (uint64_t*)pmm_alloc_block();
     if (!dst_p4) return NULL;
@@ -105,6 +186,11 @@ uint64_t* vmm_copy_p4(uint64_t* src_p4) {
 
     for (int i = 0; i < 512; i++) {
         if (!(src_p4[i] & PAGE_PRESENT)) continue;
+
+        if (((uint64_t)i << 39) < AOS_USER_SPACE_START) {
+            dst_p4[i] = src_p4[i];
+            continue;
+        }
 
         uint64_t* src_pdpt = (uint64_t*)(src_p4[i] & ~0xFFF);
         uint64_t* dst_pdpt = (uint64_t*)pmm_alloc_block();

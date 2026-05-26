@@ -10,5 +10,8 @@
 void pmm_init(uint64_t mem_size);
 void* pmm_alloc_block();
 void pmm_free_block(void* addr);
+uint64_t pmm_total_memory(void);
+uint64_t pmm_free_memory(void);
+uint64_t pmm_used_memory(void);
 
 #endif
