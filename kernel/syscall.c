@@ -15,13 +15,18 @@
 #include <syscall.h>
 #include <process.h>
 #include <vga.h>
+#include <tty.h>
 #include <tmpfs.h>
 #include <partition.h>
 #include <blkdev.h>
 #include <pci.h>
 #include <driver.h>
+#include <firmware.h>
+#include <netdev.h>
 #include <timer.h>
 #include <rtc.h>
+#include <gfx.h>
+#include <input.h>
 
 extern void outb(uint16_t port, uint8_t val);
 extern void serial_print(const char* s);
@@ -81,10 +86,6 @@ static inline void io_wait(void) {
 #define SEEK_SET 0
 #define SEEK_CUR 1
 #define SEEK_END 2
-#define CONSOLE_ESC 0x1B
-#define CONSOLE_CMD_COLOR 'C'
-#define CONSOLE_CMD_RESET 'R'
-#define CONSOLE_CMD_CLEAR 'L'
 #define IA32_FS_BASE_MSR 0xC0000100
 #define LINUX_ARCH_SET_GS 0x1001
 #define LINUX_ARCH_SET_FS 0x1002
@@ -114,8 +115,6 @@ static inline void io_wait(void) {
 #define LINUX_TERMIOS_ECHOE 0000020U
 #define LINUX_TERMIOS_ECHOK 0000040U
 #define LINUX_TERMIOS_IEXTEN 0100000U
-static unsigned char g_vga_stream_color = 0x0F;
-
 struct linux_utsname {
     char sysname[65];
     char nodename[65];
@@ -169,6 +168,8 @@ enum fd_kind {
     FD_KIND_VNODE = 4,
     FD_KIND_PIPE_READER = 5,
     FD_KIND_PIPE_WRITER = 6,
+    FD_KIND_TTY = 7,
+    FD_KIND_NULL = 8,
 };
 
 struct file_handle {
@@ -253,71 +254,6 @@ static void write_msr_u64(uint32_t msr, uint64_t value) {
 
 void process_load_fs_base(uint64_t fs_base) {
     write_msr_u64(IA32_FS_BASE_MSR, fs_base);
-}
-
-static void serial_write_bytes(const char* buf, uint64_t len) {
-    for (uint64_t i = 0; i < len; i++) {
-        char c = buf[i];
-        if (c == '\0') {
-            break;
-        }
-        if (c == CONSOLE_ESC && i + 1 < len) {
-            char cmd = buf[++i];
-            if (cmd == CONSOLE_CMD_COLOR) {
-                if (i + 1 < len) {
-                    i++;
-                }
-                continue;
-            }
-            if (cmd == CONSOLE_CMD_RESET || cmd == CONSOLE_CMD_CLEAR) {
-                continue;
-            }
-        }
-        outb(0x3F8, (uint8_t)c);
-    }
-}
-
-static void vga_write_bytes(const char* buf, uint64_t len) {
-    char out[128];
-    uint64_t i = 0;
-
-    while (i < len) {
-        uint64_t out_len = 0;
-
-        while (i < len && out_len + 1 < sizeof(out)) {
-            char c = buf[i++];
-            if (c == '\0') {
-                break;
-            }
-            if (c == CONSOLE_ESC && i < len) {
-                char cmd = buf[i++];
-                if (cmd == CONSOLE_CMD_COLOR) {
-                    if (i < len) {
-                        g_vga_stream_color = (unsigned char)buf[i++];
-                    }
-                    continue;
-                }
-                if (cmd == CONSOLE_CMD_RESET) {
-                    g_vga_stream_color = 0x0F;
-                    continue;
-                }
-                if (cmd == CONSOLE_CMD_CLEAR) {
-                    vga_clear(g_vga_stream_color);
-                    g_vga_stream_color = 0x0F;
-                    continue;
-                }
-                out[out_len++] = c;
-                out[out_len++] = cmd;
-                continue;
-            }
-            out[out_len++] = c;
-        }
-
-        if (out_len > 0) {
-            out[out_len] = '\0';
-            vga_write(out, g_vga_stream_color);
-        }
-    }
 }
 
 static void* local_memset(void* dst, int value, size_t n) {
@@ -645,6 +581,18 @@ static int64_t install_vnode_fd(const struct vfs_node* node, uint64_t open_flags
     return fd;
 }
 
+static int64_t install_device_fd(uint8_t kind, int32_t device_id) {
+    int fd = allocate_fd_slot(3);
+
+    if (fd < 0) {
+        return -(int64_t)LINUX_EMFILE;
+    }
+
+    current_fd_table()[fd].kind = kind;
+    current_fd_table()[fd].handle_index = device_id;
+    return fd;
+}
+
 static int64_t sys_pipe(struct syscall_regs* regs) {
     int32_t* user_pipefd = (int32_t*)(uintptr_t)regs->rdi;
     int pipe_index = -1;
@@ -710,9 +658,10 @@ static int64_t sys_poll(struct syscall_regs* regs) {
             continue;
         }
 
-        if (entry->kind == FD_KIND_STDIN) {
+        if (entry->kind == FD_KIND_STDIN || entry->kind == FD_KIND_TTY) {
             if (pfd->events & LINUX_POLLIN) revents |= LINUX_POLLIN;
-        } else if (entry->kind == FD_KIND_STDOUT || entry->kind == FD_KIND_STDERR || entry->kind == FD_KIND_VNODE) {
+            if (pfd->events & LINUX_POLLOUT) revents |= LINUX_POLLOUT;
+        } else if (entry->kind == FD_KIND_STDOUT || entry->kind == FD_KIND_STDERR || entry->kind == FD_KIND_VNODE || entry->kind == FD_KIND_NULL) {
             if (pfd->events & LINUX_POLLOUT) revents |= LINUX_POLLOUT;
             if (pfd->events & LINUX_POLLIN) revents |= LINUX_POLLIN;
         } else if (entry->kind == FD_KIND_PIPE_READER) {
@@ -957,12 +906,12 @@ static int64_t open_path_with_flags(const char* path, uint64_t flags) {
                    (flags & (LINUX_O_CREAT | LINUX_O_TRUNC)) != 0);
 
     if (!path) return -(int64_t)LINUX_EFAULT;
-    if (mutates && !user_can_mutate_path(path)) {
-        return -(int64_t)LINUX_EACCES;
-    }
 
     lookup_rc = vfs_lookup(path, &node);
     if (lookup_rc != 0) {
+        if (mutates && !user_can_mutate_path(path)) {
+            return -(int64_t)LINUX_EACCES;
+        }
         if ((flags & LINUX_O_CREAT) == 0) {
             return -(int64_t)LINUX_ENOENT;
         }
@@ -1001,8 +950,24 @@ static int64_t open_path_with_flags(const char* path, uint64_t flags) {
         if (node.type != VFS_NODE_TYPE_DIRECTORY) return -(int64_t)LINUX_ENOTDIR;
         return install_vnode_fd(&node, flags);
     }
+    if (node.type == VFS_NODE_TYPE_CHAR_DEVICE) {
+        if (flags & (LINUX_O_CREAT | LINUX_O_EXCL | LINUX_O_TRUNC)) {
+            return -(int64_t)LINUX_EACCES;
+        }
+        if (node.u.first_cluster == VFS_DEV_NULL) {
+            return install_device_fd(FD_KIND_NULL, (int32_t)node.u.first_cluster);
+        }
+        if (node.u.first_cluster == VFS_DEV_CONSOLE || node.u.first_cluster == VFS_DEV_TTY0) {
+            return install_device_fd(FD_KIND_TTY, (int32_t)node.u.first_cluster);
+        }
+        return -(int64_t)LINUX_ENOENT;
+    }
     if (node.type == VFS_NODE_TYPE_DIRECTORY) {
         return -(int64_t)LINUX_EISDIR;
+    }
+
+    if (mutates && !user_can_mutate_path(path)) {
+        return -(int64_t)LINUX_EACCES;
     }
 
     if (node.backend != VFS_BACKEND_AOSFS && node.backend != VFS_BACKEND_TMPFS && node.backend != VFS_BACKEND_FAT32 && node.backend != VFS_BACKEND_EXT4) {
@@ -1443,6 +1408,7 @@ static int64_t exec_initrd_program(
     serial_print(normalized);
     serial_print("\n");
 
+    input_clear_events();
     asm volatile("swapgs");
     jump_to_user(entry, new_rsp);
     return 0;
@@ -1616,18 +1582,18 @@ static int64_t sys_write(struct syscall_regs* regs) {
         file->node.size = new_size;
         return (int64_t)bytes_written;
     }
-    if (entry->kind != FD_KIND_STDOUT && entry->kind != FD_KIND_STDERR) {
+    if (entry->kind == FD_KIND_NULL) {
+        return (int64_t)len;
+    }
+    if (entry->kind != FD_KIND_STDOUT && entry->kind != FD_KIND_STDERR && entry->kind != FD_KIND_TTY) {
         return -(int64_t)LINUX_EBADF;
     }
 
-    if (len > 4096) len = 4096;
-    serial_write_bytes(buf, len);
-    vga_write_bytes(buf, len);
-    return (int64_t)len;
+    return (int64_t)tty_write(buf, len);
 }
 
 static int is_tty_fd_kind(uint8_t kind) {
-    return kind == FD_KIND_STDIN || kind == FD_KIND_STDOUT || kind == FD_KIND_STDERR;
+    return kind == FD_KIND_STDIN || kind == FD_KIND_STDOUT || kind == FD_KIND_STDERR || kind == FD_KIND_TTY;
 }
 
 static void fill_default_termios(struct linux_termios* term) {
@@ -1672,8 +1638,8 @@ static int64_t sys_ioctl(struct syscall_regs* regs) {
         case LINUX_TIOCGWINSZ:
             if (!is_tty_fd_kind(entry->kind)) return -(int64_t)LINUX_ENOTTY;
             if (!arg) return -(int64_t)LINUX_EFAULT;
-            ((struct linux_winsize*)arg)->ws_row = 25;
-            ((struct linux_winsize*)arg)->ws_col = 80;
+            tty_get_winsize(&((struct linux_winsize*)arg)->ws_row,
+                            &((struct linux_winsize*)arg)->ws_col);
             ((struct linux_winsize*)arg)->ws_xpixel = 0;
             ((struct linux_winsize*)arg)->ws_ypixel = 0;
             return 0;
@@ -1683,7 +1649,7 @@ static int64_t sys_ioctl(struct syscall_regs* regs) {
             return 0;
         case LINUX_FIONREAD:
             if (!arg) return -(int64_t)LINUX_EFAULT;
-            *(int*)(uintptr_t)arg = 0;
+            *(int*)(uintptr_t)arg = (int)tty_pending();
             return 0;
         case LINUX_TIOCGPGRP:
             if (!is_tty_fd_kind(entry->kind)) return -(int64_t)LINUX_ENOTTY;
@@ -1729,7 +1695,6 @@ static int64_t sys_writev(struct syscall_regs* regs) {
 
 static int64_t sys_readv(struct syscall_regs* regs);
 
-extern char keyboard_pop();
 extern void keyboard_handler_main();
 
 static int64_t sys_open(struct syscall_regs* regs) {
@@ -1908,24 +1873,11 @@ static int64_t sys_read(struct syscall_regs* regs) {
         }
         return (int64_t)bytes_read;
     }
-    if (entry->kind != FD_KIND_STDIN) return -(int64_t)LINUX_EBADF;
+    if (entry->kind == FD_KIND_NULL) return 0;
+    if (entry->kind != FD_KIND_STDIN && entry->kind != FD_KIND_TTY) return -(int64_t)LINUX_EBADF;
     if (len == 0) return 0;
 
-    uint64_t bytes_read = 0;
-    while (bytes_read < len) {
-        char c = keyboard_pop();
-        if (c == 0) {
-            if (bytes_read == 0) {
-                keyboard_handler_main();
-                continue;
-            }
-            break;
-        }
-        buf[bytes_read++] = c;
-        if (c == '\n' || c == '\r') break;
-    }
-
-    return (int64_t)bytes_read;
+    return (int64_t)tty_read(buf, len);
 }
 
 static int64_t sys_readv(struct syscall_regs* regs) {
@@ -2071,6 +2023,8 @@ static int64_t sys_newfstatat(struct syscall_regs* regs) {
         }
         if (node.type == VFS_NODE_TYPE_DIRECTORY) {
             fill_linux_stat(st, node.inode, 0, LINUX_S_IFDIR | LINUX_S_IRUSR | LINUX_S_IWUSR | LINUX_S_IRGRP | LINUX_S_IROTH);
+        } else if (node.type == VFS_NODE_TYPE_CHAR_DEVICE) {
+            fill_linux_stat(st, node.inode, 0, LINUX_S_IFCHR | LINUX_S_IRUSR | LINUX_S_IWUSR | LINUX_S_IRGRP | LINUX_S_IROTH);
         } else {
             fill_linux_stat(st, node.inode, node.size, LINUX_S_IFREG | LINUX_S_IRUSR | LINUX_S_IWUSR | LINUX_S_IRGRP | LINUX_S_IROTH);
         }
@@ -2416,6 +2370,20 @@ struct aos_display_info_user {
     uint32_t max_rows;
 };
 
+struct aos_gfx_info_user {
+    uint32_t width;
+    uint32_t height;
+    uint32_t bpp;
+    uint32_t ready;
+};
+
+struct aos_input_event_user {
+    uint32_t key;
+    uint32_t flags;
+    uint32_t ascii;
+    uint32_t source;
+};
+
 struct aos_time_info_user {
     uint16_t year;
     uint8_t month;
@@ -2468,6 +2436,31 @@ struct aos_driver_info_user {
     uint32_t bar[6];
     char driver[32];
     char status[64];
+} __attribute__((packed));
+
+struct aos_netdev_info_user {
+    uint8_t type;
+    uint8_t link_up;
+    uint8_t mac[6];
+    uint8_t bus;
+    uint8_t slot;
+    uint8_t function;
+    uint8_t reserved[5];
+    char name[16];
+    char driver[32];
+    char status[64];
+    uint8_t ipv4_addr[4];
+    uint8_t ipv4_gateway[4];
+    uint8_t ipv4_dns[4];
+    uint8_t ipv4_prefix;
+    uint8_t ipv4_configured;
+    uint8_t reserved2[14];
+} __attribute__((packed));
+
+struct aos_firmware_info_user {
+    char name[96];
+    uint32_t size;
+    uint32_t reserved;
 } __attribute__((packed));
 
 static void copy_cstr_bounded(char* dst, size_t dst_size, const char* src) {
@@ -2570,6 +2563,66 @@ static int64_t sys_display_set(struct syscall_regs* regs) {
         return -(int64_t)LINUX_EINVAL;
     }
     return 0;
+}
+
+static int64_t sys_gfx_info(struct syscall_regs* regs) {
+    struct aos_gfx_info_user* out = (struct aos_gfx_info_user*)(uintptr_t)regs->rdi;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+
+    out->width = gfx_width();
+    out->height = gfx_height();
+    out->bpp = gfx_bpp();
+    out->ready = gfx_is_ready() ? 1U : 0U;
+    return 0;
+}
+
+static int64_t sys_gfx_clear(struct syscall_regs* regs) {
+    if (!gfx_is_ready()) return -(int64_t)LINUX_ENODEV;
+    gfx_clear((uint32_t)regs->rdi);
+    return 0;
+}
+
+static int64_t sys_gfx_pixel(struct syscall_regs* regs) {
+    if (!gfx_is_ready()) return -(int64_t)LINUX_ENODEV;
+    gfx_putpixel((uint32_t)regs->rdi, (uint32_t)regs->rsi, (uint32_t)regs->rdx);
+    return 0;
+}
+
+static int64_t sys_gfx_rect(struct syscall_regs* regs) {
+    if (!gfx_is_ready()) return -(int64_t)LINUX_ENODEV;
+    gfx_fill_rect((uint32_t)regs->rdi, (uint32_t)regs->rsi, (uint32_t)regs->rdx,
+                  (uint32_t)regs->r10, (uint32_t)regs->r8);
+    return 0;
+}
+
+static int64_t sys_gfx_present(struct syscall_regs* regs) {
+    (void)regs;
+    if (!gfx_is_ready()) return -(int64_t)LINUX_ENODEV;
+    gfx_present();
+    return 0;
+}
+
+static int64_t sys_input_poll(struct syscall_regs* regs) {
+    struct aos_input_event_user* out = (struct aos_input_event_user*)(uintptr_t)regs->rdi;
+    struct aos_input_event event;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+
+    keyboard_handler_main();
+    if (!input_pop_event(&event)) {
+        out->key = 0;
+        out->flags = 0;
+        out->ascii = 0;
+        out->source = 0;
+        return 0;
+    }
+
+    out->key = event.key;
+    out->flags = ((uint32_t)event.pressed) | ((uint32_t)event.modifiers << 8);
+    out->ascii = (uint8_t)event.ascii;
+    out->source = event.source;
+    return 1;
 }
 
 static int64_t sys_time_info(struct syscall_regs* regs) {
@@ -2751,6 +2804,95 @@ static int64_t sys_driver_info(struct syscall_regs* regs) {
     }
     copy_cstr_bounded(out->driver, sizeof(out->driver), dev->driver);
     copy_cstr_bounded(out->status, sizeof(out->status), dev->status);
+    return 0;
+}
+
+static int64_t sys_netdev_info(struct syscall_regs* regs) {
+    uint64_t index = regs->rdi;
+    struct aos_netdev_info_user* out = (struct aos_netdev_info_user*)(uintptr_t)regs->rsi;
+    const struct netdev* dev;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+    dev = netdev_get((size_t)index);
+    if (!dev) return -(int64_t)LINUX_ENOENT;
+
+    local_memset(out, 0, sizeof(*out));
+    out->type = dev->type;
+    out->link_up = dev->link_up;
+    for (size_t i = 0; i < 6; i++) {
+        out->mac[i] = dev->mac[i];
+    }
+    out->bus = dev->bus;
+    out->slot = dev->slot;
+    out->function = dev->function;
+    for (size_t i = 0; i < 4; i++) {
+        out->ipv4_addr[i] = dev->ipv4_addr[i];
+        out->ipv4_gateway[i] = dev->ipv4_gateway[i];
+        out->ipv4_dns[i] = dev->ipv4_dns[i];
+    }
+    out->ipv4_prefix = dev->ipv4_prefix;
+    out->ipv4_configured = dev->ipv4_configured;
+    copy_cstr_bounded(out->name, sizeof(out->name), dev->name);
+    copy_cstr_bounded(out->driver, sizeof(out->driver), dev->driver);
+    copy_cstr_bounded(out->status, sizeof(out->status), dev->status);
+    return 0;
+}
+
+static int64_t sys_netdev_send(struct syscall_regs* regs) {
+    uint64_t index = regs->rdi;
+    const uint8_t* frame = (const uint8_t*)(uintptr_t)regs->rsi;
+    uint64_t length = regs->rdx;
+    uint8_t local_frame[1518];
+    int rc;
+
+    if (!frame || length < 14 || length > sizeof(local_frame)) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+
+    local_memcpy(local_frame, frame, (size_t)length);
+    rc = netdev_send((size_t)index, local_frame, (uint16_t)length);
+    if (rc < 0) {
+        return -(int64_t)LINUX_EIO;
+    }
+    return rc;
+}
+
+static int64_t sys_netdev_recv(struct syscall_regs* regs) {
+    uint64_t index = regs->rdi;
+    uint8_t* frame = (uint8_t*)(uintptr_t)regs->rsi;
+    uint64_t max_length = regs->rdx;
+    uint8_t local_frame[1518];
+    int rc;
+
+    if (!frame || max_length < 14) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    if (max_length > sizeof(local_frame)) {
+        max_length = sizeof(local_frame);
+    }
+
+    rc = netdev_recv((size_t)index, local_frame, (uint16_t)max_length);
+    if (rc < 0) {
+        return -(int64_t)LINUX_EIO;
+    }
+    if (rc > 0) {
+        local_memcpy(frame, local_frame, (size_t)rc);
+    }
+    return rc;
+}
+
+static int64_t sys_firmware_info(struct syscall_regs* regs) {
+    uint64_t index = regs->rdi;
+    struct aos_firmware_info_user* out = (struct aos_firmware_info_user*)(uintptr_t)regs->rsi;
+    const struct firmware_blob* blob;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+    blob = firmware_get((size_t)index);
+    if (!blob) return -(int64_t)LINUX_ENOENT;
+
+    local_memset(out, 0, sizeof(*out));
+    copy_cstr_bounded(out->name, sizeof(out->name), blob->name);
+    out->size = blob->size;
     return 0;
 }
 
@@ -3046,6 +3188,36 @@ void syscall_handler(struct syscall_regs* regs) {
             return;
         case AOS_SYS_DRIVER_INFO:
             regs->rax = (uint64_t)sys_driver_info(regs);
+            return;
+        case AOS_SYS_GFX_INFO:
+            regs->rax = (uint64_t)sys_gfx_info(regs);
+            return;
+        case AOS_SYS_GFX_CLEAR:
+            regs->rax = (uint64_t)sys_gfx_clear(regs);
+            return;
+        case AOS_SYS_GFX_PIXEL:
+            regs->rax = (uint64_t)sys_gfx_pixel(regs);
+            return;
+        case AOS_SYS_GFX_RECT:
+            regs->rax = (uint64_t)sys_gfx_rect(regs);
+            return;
+        case AOS_SYS_GFX_PRESENT:
+            regs->rax = (uint64_t)sys_gfx_present(regs);
+            return;
+        case AOS_SYS_INPUT_POLL:
+            regs->rax = (uint64_t)sys_input_poll(regs);
+            return;
+        case AOS_SYS_NETDEV_INFO:
+            regs->rax = (uint64_t)sys_netdev_info(regs);
+            return;
+        case AOS_SYS_NETDEV_SEND:
+            regs->rax = (uint64_t)sys_netdev_send(regs);
+            return;
+        case AOS_SYS_NETDEV_RECV:
+            regs->rax = (uint64_t)sys_netdev_recv(regs);
+            return;
+        case AOS_SYS_FIRMWARE_INFO:
+            regs->rax = (uint64_t)sys_firmware_info(regs);
             return;
         case LINUX_SYS_FACCESSAT:
             regs->rax = (uint64_t)sys_faccessat(regs);

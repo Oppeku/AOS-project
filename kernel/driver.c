@@ -59,6 +59,23 @@ void driver_import_pci_devices(void) {
     }
 }
 
+int driver_register_system(uint8_t class_code, const char* driver, const char* status) {
+    struct driver_device* dev;
+
+    if (g_driver_count >= DRIVER_MAX_DEVICES) {
+        return -1;
+    }
+
+    dev = &g_driver_devices[g_driver_count++];
+    local_memset(dev, 0, sizeof(*dev));
+    dev->type = DRIVER_DEVICE_SYSTEM;
+    dev->claimed = 1;
+    dev->class_code = class_code;
+    copy_string(dev->driver, sizeof(dev->driver), driver);
+    copy_string(dev->status, sizeof(dev->status), status);
+    return 0;
+}
+
 int driver_claim_pci(uint16_t vendor_id, uint16_t device_id, const char* driver, const char* status) {
     int claimed = 0;
 
@@ -66,6 +83,24 @@ int driver_claim_pci(uint16_t vendor_id, uint16_t device_id, const char* driver,
         struct driver_device* dev = &g_driver_devices[i];
         if (dev->type != DRIVER_DEVICE_PCI) continue;
         if (dev->vendor_id != vendor_id || dev->device_id != device_id) continue;
+
+        dev->claimed = 1;
+        copy_string(dev->driver, sizeof(dev->driver), driver);
+        copy_string(dev->status, sizeof(dev->status), status);
+        claimed++;
+    }
+
+    return claimed;
+}
+
+int driver_claim_pci_class(uint8_t class_code, uint8_t subclass, const char* driver, const char* status) {
+    int claimed = 0;
+
+    for (size_t i = 0; i < g_driver_count; i++) {
+        struct driver_device* dev = &g_driver_devices[i];
+        if (dev->type != DRIVER_DEVICE_PCI) continue;
+        if (dev->class_code != class_code || dev->subclass != subclass) continue;
+        if (dev->claimed) continue;
 
         dev->claimed = 1;
         copy_string(dev->driver, sizeof(dev->driver), driver);

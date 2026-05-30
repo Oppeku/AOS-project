@@ -1,0 +1,38 @@
+================================================================================
+|   [ HOME ]  [ ABOUT ]  [ KERNEL ]  [ DRIVERS ]  [ STORAGE ]  [[ DOWNLOAD ]] |
+================================================================================
+
+GETTING AOS
+-----------
+Ready to take control of your hardware? Follow the steps below 
+to download and run AOS.
+
+DOWNLOAD LINKS:
+---------------
+AOS is currently distributed as an ISO image or a raw disk image.
+
+[ DOWNLOAD AOS v1.0 ISO ]  <-- (Link to aos_v1.0.iso)
+[ DOWNLOAD AOS v1.0 IMG ]  <-- (Link to aos_v1.0.img)
+
+HOW TO RUN:
+-----------
+
+1. Virtual Machine (Recommended):
+   You can run AOS using QEMU with the following command:
+   `qemu-system-x86_64 -cdrom aos_v1.0.iso -m 512M -serial stdio`
+
+2. Real Hardware:
+   - Burn the ISO to a USB drive using `dd` or a tool like Rufus.
+   - Ensure your hardware supports x86_64.
+   - Disable Secure Boot in your BIOS/UEFI settings.
+
+CONTRIBUTING:
+-------------
+AOS is open-source! You can find the source code at our 
+official repository. Feel free to submit PRs or report bugs.
+
+"The journey is hard, but together we make it happen."
+
+--------------------------------------------------------------------------------
+Back to [ HOME ]
+================================================================================

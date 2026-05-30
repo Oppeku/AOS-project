@@ -3,6 +3,8 @@
  */
 
 #include <stdint.h>
+#include <input.h>
+#include <tty.h>
 #include <vga.h>
 
 // Basic US QWERTY Scancode Map
@@ -26,32 +28,28 @@ static inline uint8_t inb(uint16_t port) {
     return ret;
 }
 
-#define KEYBOARD_BUFFER_SIZE 1024
-#define KEY_HISTORY_PREV 0x11
-#define KEY_HISTORY_NEXT 0x12
-#define KEY_LEFT 0x13
-#define KEY_RIGHT 0x14
-static char keyboard_buffer[KEYBOARD_BUFFER_SIZE];
-static uint32_t buffer_head = 0;
-static uint32_t buffer_tail = 0;
 static uint8_t key_down[128] = {0};
 static uint8_t shift_down = 0;
 static uint8_t ctrl_down = 0;
 static uint8_t extended_prefix = 0;
 
-static void keyboard_push(char c) {
-    uint32_t next = (buffer_head + 1) % KEYBOARD_BUFFER_SIZE;
-    if (next != buffer_tail) {
-        keyboard_buffer[buffer_head] = c;
-        buffer_head = next;
+static uint8_t keyboard_modifiers(void) {
+    uint8_t modifiers = 0;
+    if (ctrl_down) {
+        modifiers |= AOS_INPUT_MOD_CTRL;
     }
+    if (shift_down) {
+        modifiers |= AOS_INPUT_MOD_SHIFT;
+    }
+    return modifiers;
+}
+
+static void keyboard_push_key(uint16_t key, char ascii) {
+    input_push_key(AOS_INPUT_SOURCE_PS2, key, ascii, 1, keyboard_modifiers());
 }
 
 char keyboard_pop() {
-    if (buffer_head == buffer_tail) return 0;
-    char c = keyboard_buffer[buffer_tail];
-    buffer_tail = (buffer_tail + 1) % KEYBOARD_BUFFER_SIZE;
-    return c;
+    return tty_read_byte();
 }
 
 void keyboard_handler_main() {
@@ -74,16 +72,16 @@ void keyboard_handler_main() {
 
         switch (scancode) {
             case 0x48:
-                keyboard_push(KEY_HISTORY_PREV);
+                keyboard_push_key(AOS_KEY_HISTORY_PREV, (char)AOS_KEY_HISTORY_PREV);
                 return;
             case 0x50:
-                keyboard_push(KEY_HISTORY_NEXT);
+                keyboard_push_key(AOS_KEY_HISTORY_NEXT, (char)AOS_KEY_HISTORY_NEXT);
                 return;
             case 0x4B:
-                keyboard_push(KEY_LEFT);
+                keyboard_push_key(AOS_KEY_LEFT, (char)AOS_KEY_LEFT);
                 return;
             case 0x4D:
-                keyboard_push(KEY_RIGHT);
+                keyboard_push_key(AOS_KEY_RIGHT, (char)AOS_KEY_RIGHT);
                 return;
             case 0x49:
                 vga_scrollback_up();
@@ -134,6 +132,6 @@ void keyboard_handler_main() {
         } else if (ctrl_down && c >= 'A' && c <= 'Z') {
             c = (unsigned char)(c - 'A' + 1);
         }
-        keyboard_push((char)c);
+        keyboard_push_key(keycode, (char)c);
     }
 }

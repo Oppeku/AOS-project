@@ -23,7 +23,10 @@ AOSFS_IMAGE_SIZE_MB ?= 16
 ESP_IMAGE_SIZE_MB ?= 64
 AOS_BOOT_VERBOSE ?= 1
 AOS_LIVE_PERMISSIVE ?= 1
+AOS_ENABLE_MUI_FRAMEBUFFER ?= 0
 AOSFS_DRIVE_ARGS = -drive file=$(BUILD_DIR)/aosfs.img,format=raw,if=ide,index=0,media=disk
+AOS_NET_ARGS ?= -netdev user,id=aosnet -device e1000,netdev=aosnet
+AOS_USB_ARGS ?= -device qemu-xhci,id=aosxhci
 
 # --- Flags ---
 # -mno-sse/sse2: Prevents 'movaps' alignment crashes
@@ -32,7 +35,8 @@ CFLAGS = -Iinclude -ffreestanding -O2 -Wall -Wextra \
          -fno-stack-protector -fno-pie -m64 \
          -mno-sse -mno-sse2 -mno-red-zone \
          -DAOS_BOOT_VERBOSE=$(AOS_BOOT_VERBOSE) \
-         -DAOS_LIVE_PERMISSIVE=$(AOS_LIVE_PERMISSIVE)
+         -DAOS_LIVE_PERMISSIVE=$(AOS_LIVE_PERMISSIVE) \
+         -DAOS_ENABLE_MUI_FRAMEBUFFER=$(AOS_ENABLE_MUI_FRAMEBUFFER)
 
 ASFLAGS = -f elf64
 LDFLAGS = -n -T scripts/linker.ld
@@ -76,8 +80,13 @@ OBJECTS = $(BUILD_DIR)/boot.o \
           $(BUILD_DIR)/blkdev.o \
           $(BUILD_DIR)/pci.o \
           $(BUILD_DIR)/driver.o \
+          $(BUILD_DIR)/input.o \
+          $(BUILD_DIR)/firmware.o \
+          $(BUILD_DIR)/netdev.o \
           $(BUILD_DIR)/ata.o \
           $(BUILD_DIR)/e1000.o \
+          $(BUILD_DIR)/wifi_driver.o \
+          $(BUILD_DIR)/xhci.o \
           $(BUILD_DIR)/aosfs.o \
           $(BUILD_DIR)/tmpfs.o \
           $(BUILD_DIR)/fat32.o \
@@ -89,6 +98,7 @@ OBJECTS = $(BUILD_DIR)/boot.o \
           $(BUILD_DIR)/elf64_loader.o \
           $(BUILD_DIR)/process_c.o \
           $(BUILD_DIR)/timer.o \
+          $(BUILD_DIR)/tty.o \
           $(BUILD_DIR)/rtc.o
 
 # --- Build Targets ---
@@ -126,10 +136,12 @@ $(BUILD_DIR)/esp.img: $(BUILD_DIR)/BOOTX64.EFI $(BUILD_DIR)/kernel.bin $(BUILD_D
 	mcopy -i $@ $(BUILD_DIR)/ext4.img ::/boot/ext4.img
 	mcopy -i $@ $(BUILD_DIR)/aosfs.img ::/boot/aosfs.img
 
-$(BUILD_DIR)/initrd.img: hello.txt $(BUILD_DIR)/user.elf $(BUILD_DIR)/user2.elf $(BUILD_DIR)/shell.elf $(BUILD_DIR)/filetest.elf $(BUILD_DIR)/accesstest.elf $(BUILD_DIR)/openflagstest.elf $(BUILD_DIR)/duptest.elf $(BUILD_DIR)/pipetest.elf $(BUILD_DIR)/wait4test.elf $(BUILD_DIR)/stdincat.elf $(BUILD_DIR)/argvtest.elf $(BUILD_DIR)/pathtest.elf $(BUILD_DIR)/partitions.elf $(BUILD_DIR)/mounts.elf $(BUILD_DIR)/lspci.elf $(BUILD_DIR)/drivers.elf $(BUILD_DIR)/mem.elf $(BUILD_DIR)/uptime.elf $(BUILD_DIR)/uname.elf $(BUILD_DIR)/whoami.elf $(BUILD_DIR)/id.elf $(BUILD_DIR)/aossetup.elf $(BUILD_DIR)/display.elf $(BUILD_DIR)/settings.elf $(BUILD_DIR)/shutdown.elf $(BUILD_DIR)/restart.elf $(BUILD_DIR)/date.elf $(BUILD_DIR)/touch.elf $(BUILD_DIR)/rm.elf $(BUILD_DIR)/mkdir.elf $(BUILD_DIR)/sudo.elf $(BUILD_DIR)/nano.elf $(BUILD_DIR)/gnu-nano $(BUILD_DIR)/busybox $(BUILD_DIR)/coreutils $(BUILD_DIR)/gnu-coreutils.stamp
+$(BUILD_DIR)/initrd.img: hello.txt firmware/aos-wifi-placeholder.fw $(BUILD_DIR)/user.elf $(BUILD_DIR)/user2.elf $(BUILD_DIR)/shell.elf $(BUILD_DIR)/filetest.elf $(BUILD_DIR)/accesstest.elf $(BUILD_DIR)/openflagstest.elf $(BUILD_DIR)/duptest.elf $(BUILD_DIR)/pipetest.elf $(BUILD_DIR)/wait4test.elf $(BUILD_DIR)/stdincat.elf $(BUILD_DIR)/argvtest.elf $(BUILD_DIR)/pathtest.elf $(BUILD_DIR)/partitions.elf $(BUILD_DIR)/mounts.elf $(BUILD_DIR)/lspci.elf $(BUILD_DIR)/drivers.elf $(BUILD_DIR)/net.elf $(BUILD_DIR)/wifi.elf $(BUILD_DIR)/firmware.elf $(BUILD_DIR)/usb.elf $(BUILD_DIR)/ping.elf $(BUILD_DIR)/netrawtest.elf $(BUILD_DIR)/mem.elf $(BUILD_DIR)/uptime.elf $(BUILD_DIR)/uname.elf $(BUILD_DIR)/whoami.elf $(BUILD_DIR)/id.elf $(BUILD_DIR)/aossetup.elf $(BUILD_DIR)/display.elf $(BUILD_DIR)/settings.elf $(BUILD_DIR)/shutdown.elf $(BUILD_DIR)/restart.elf $(BUILD_DIR)/date.elf $(BUILD_DIR)/touch.elf $(BUILD_DIR)/rm.elf $(BUILD_DIR)/mkdir.elf $(BUILD_DIR)/sudo.elf $(BUILD_DIR)/devtest.elf $(BUILD_DIR)/gfxdemo.elf $(BUILD_DIR)/inputtest.elf $(BUILD_DIR)/nano.elf $(BUILD_DIR)/gnu-nano $(BUILD_DIR)/busybox $(BUILD_DIR)/coreutils $(BUILD_DIR)/gnu-coreutils.stamp
 	rm -rf $(BUILD_DIR)/initrd_root
 	@mkdir -p $(BUILD_DIR)/initrd_root
+	@mkdir -p $(BUILD_DIR)/initrd_root/firmware
 	cp hello.txt $(BUILD_DIR)/initrd_root/hello.txt
+	cp firmware/aos-wifi-placeholder.fw $(BUILD_DIR)/initrd_root/firmware/aos-wifi-placeholder.fw
 	cp $(BUILD_DIR)/user.elf $(BUILD_DIR)/initrd_root/user.elf
 	cp $(BUILD_DIR)/user2.elf $(BUILD_DIR)/initrd_root/user2.elf
 	cp $(BUILD_DIR)/shell.elf $(BUILD_DIR)/initrd_root/shell.elf
@@ -150,6 +162,21 @@ $(BUILD_DIR)/initrd.img: hello.txt $(BUILD_DIR)/user.elf $(BUILD_DIR)/user2.elf 
 	cp $(BUILD_DIR)/lspci.elf $(BUILD_DIR)/initrd_root/lspci
 	cp $(BUILD_DIR)/drivers.elf $(BUILD_DIR)/initrd_root/drivers.elf
 	cp $(BUILD_DIR)/drivers.elf $(BUILD_DIR)/initrd_root/drivers
+	cp $(BUILD_DIR)/drivers.elf $(BUILD_DIR)/initrd_root/driver
+	cp $(BUILD_DIR)/net.elf $(BUILD_DIR)/initrd_root/net.elf
+	cp $(BUILD_DIR)/net.elf $(BUILD_DIR)/initrd_root/net
+	cp $(BUILD_DIR)/wifi.elf $(BUILD_DIR)/initrd_root/wifi.elf
+	cp $(BUILD_DIR)/wifi.elf $(BUILD_DIR)/initrd_root/wifi
+	cp $(BUILD_DIR)/firmware.elf $(BUILD_DIR)/initrd_root/firmware.elf
+	cp $(BUILD_DIR)/firmware.elf $(BUILD_DIR)/initrd_root/fw
+	cp $(BUILD_DIR)/usb.elf $(BUILD_DIR)/initrd_root/usb.elf
+	cp $(BUILD_DIR)/usb.elf $(BUILD_DIR)/initrd_root/usb
+	cp $(BUILD_DIR)/ping.elf $(BUILD_DIR)/initrd_root/ping.elf
+	cp $(BUILD_DIR)/ping.elf $(BUILD_DIR)/initrd_root/ping
+	cp $(BUILD_DIR)/ping.elf $(BUILD_DIR)/initrd_root/dns
+	cp $(BUILD_DIR)/ping.elf $(BUILD_DIR)/initrd_root/nslookup
+	cp $(BUILD_DIR)/netrawtest.elf $(BUILD_DIR)/initrd_root/netrawtest.elf
+	cp $(BUILD_DIR)/netrawtest.elf $(BUILD_DIR)/initrd_root/netrawtest
 	cp $(BUILD_DIR)/mem.elf $(BUILD_DIR)/initrd_root/mem.elf
 	cp $(BUILD_DIR)/mem.elf $(BUILD_DIR)/initrd_root/mem
 	cp $(BUILD_DIR)/uptime.elf $(BUILD_DIR)/initrd_root/uptime.elf
@@ -181,6 +208,12 @@ $(BUILD_DIR)/initrd.img: hello.txt $(BUILD_DIR)/user.elf $(BUILD_DIR)/user2.elf 
 	cp $(BUILD_DIR)/mkdir.elf $(BUILD_DIR)/initrd_root/mkdir
 	cp $(BUILD_DIR)/sudo.elf $(BUILD_DIR)/initrd_root/sudo.elf
 	cp $(BUILD_DIR)/sudo.elf $(BUILD_DIR)/initrd_root/sudo
+	cp $(BUILD_DIR)/devtest.elf $(BUILD_DIR)/initrd_root/devtest.elf
+	cp $(BUILD_DIR)/devtest.elf $(BUILD_DIR)/initrd_root/devtest
+	cp $(BUILD_DIR)/gfxdemo.elf $(BUILD_DIR)/initrd_root/gfxdemo.elf
+	cp $(BUILD_DIR)/gfxdemo.elf $(BUILD_DIR)/initrd_root/gfxdemo
+	cp $(BUILD_DIR)/inputtest.elf $(BUILD_DIR)/initrd_root/inputtest.elf
+	cp $(BUILD_DIR)/inputtest.elf $(BUILD_DIR)/initrd_root/inputtest
 	for alias in $(PARTITION_ALIASES); do cp $(BUILD_DIR)/partitions.elf "$(BUILD_DIR)/initrd_root/$$alias"; done
 	cp $(BUILD_DIR)/nano.elf $(BUILD_DIR)/initrd_root/aosnano.elf
 	cp $(BUILD_DIR)/nano.elf $(BUILD_DIR)/initrd_root/aosnano
@@ -189,7 +222,7 @@ $(BUILD_DIR)/initrd.img: hello.txt $(BUILD_DIR)/user.elf $(BUILD_DIR)/user2.elf 
 	cp $(BUILD_DIR)/busybox $(BUILD_DIR)/initrd_root/busybox
 	if [ -f $(BUILD_DIR)/coreutils ]; then cp $(BUILD_DIR)/coreutils $(BUILD_DIR)/initrd_root/coreutils; fi
 	for prog in $(GNU_PROGRAMS); do if [ -f "$(BUILD_DIR)/gnu-coreutils/$$prog" ]; then cp "$(BUILD_DIR)/gnu-coreutils/$$prog" "$(BUILD_DIR)/initrd_root/$$prog"; fi; done
-	cd $(BUILD_DIR)/initrd_root && { printf "hello.txt\nuser.elf\nuser2.elf\nshell.elf\nfiletest.elf\naccesstest.elf\nopenflagstest.elf\nduptest.elf\npipetest.elf\nwait4test.elf\nstdincat.elf\nargvtest.elf\npathtest.elf\npartitions.elf\npartitions\nmounts.elf\nmounts\nlspci.elf\nlspci\ndrivers.elf\ndrivers\nmem.elf\nmem\nuptime.elf\nuptime\nuname.elf\nuname\nwhoami.elf\nwhoami\nid.elf\nid\naossetup.elf\naossetup\ndisplay.elf\ndisplay\nsettings.elf\nsettings\nshutdown.elf\nshutdown\nrestart.elf\nrestart\nreboot\ndate.elf\ndate\ntouch.elf\ntouch\nrm.elf\nrm\nmkdir.elf\nmkdir\nsudo.elf\nsudo\n"; for alias in $(PARTITION_ALIASES); do printf "%s\n" "$$alias"; done; printf "aosnano.elf\naosnano\nnano\nbusybox\n"; if [ -f gnunano ]; then printf "gnunano\n"; fi; if [ -f coreutils ]; then printf "coreutils\n"; fi; for prog in $(GNU_PROGRAMS); do if [ -f "$$prog" ]; then printf "%s\n" "$$prog"; fi; done; } | cpio -o -H newc > ../initrd.img
+	cd $(BUILD_DIR)/initrd_root && { printf "hello.txt\nfirmware/aos-wifi-placeholder.fw\nuser.elf\nuser2.elf\nshell.elf\nfiletest.elf\naccesstest.elf\nopenflagstest.elf\nduptest.elf\npipetest.elf\nwait4test.elf\nstdincat.elf\nargvtest.elf\npathtest.elf\npartitions.elf\npartitions\nmounts.elf\nmounts\nlspci.elf\nlspci\ndrivers.elf\ndrivers\ndriver\nnet.elf\nnet\nwifi.elf\nwifi\nfirmware.elf\nfw\nusb.elf\nusb\nping.elf\nping\ndns\nnslookup\nnetrawtest.elf\nnetrawtest\nmem.elf\nmem\nuptime.elf\nuptime\nuname.elf\nuname\nwhoami.elf\nwhoami\nid.elf\nid\naossetup.elf\naossetup\ndisplay.elf\ndisplay\nsettings.elf\nsettings\nshutdown.elf\nshutdown\nrestart.elf\nrestart\nreboot\ndate.elf\ndate\ntouch.elf\ntouch\nrm.elf\nrm\nmkdir.elf\nmkdir\nsudo.elf\nsudo\ndevtest.elf\ndevtest\ngfxdemo.elf\ngfxdemo\ninputtest.elf\ninputtest\n"; for alias in $(PARTITION_ALIASES); do printf "%s\n" "$$alias"; done; printf "aosnano.elf\naosnano\nnano\nbusybox\n"; if [ -f gnunano ]; then printf "gnunano\n"; fi; if [ -f coreutils ]; then printf "coreutils\n"; fi; for prog in $(GNU_PROGRAMS); do if [ -f "$$prog" ]; then printf "%s\n" "$$prog"; fi; done; } | cpio -o -H newc > ../initrd.img
 
 $(BUILD_DIR)/busybox: scripts/build_busybox.sh scripts/prepare_busybox.py
 	@mkdir -p $(BUILD_DIR)
@@ -375,6 +408,48 @@ $(BUILD_DIR)/drivers.o: userspace/drivers.asm
 $(BUILD_DIR)/drivers.elf: $(BUILD_DIR)/drivers.o userspace/user.ld
 	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/drivers.o
 
+$(BUILD_DIR)/net.o: userspace/net.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/net.elf: $(BUILD_DIR)/net.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/net.o
+
+$(BUILD_DIR)/wifi.o: userspace/wifi.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/wifi.elf: $(BUILD_DIR)/wifi.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/wifi.o
+
+$(BUILD_DIR)/firmware_cmd.o: userspace/firmware.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/firmware.elf: $(BUILD_DIR)/firmware_cmd.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/firmware_cmd.o
+
+$(BUILD_DIR)/usb.o: userspace/usb.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/usb.elf: $(BUILD_DIR)/usb.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/usb.o
+
+$(BUILD_DIR)/ping.o: userspace/ping.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/ping.elf: $(BUILD_DIR)/ping.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/ping.o
+
+$(BUILD_DIR)/netrawtest.o: userspace/netrawtest.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/netrawtest.elf: $(BUILD_DIR)/netrawtest.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/netrawtest.o
+
 $(BUILD_DIR)/mem.o: userspace/mem.asm
 	@mkdir -p $(BUILD_DIR)
 	$(AS) -f elf64 $< -o $@
@@ -416,6 +491,35 @@ $(BUILD_DIR)/sudo.o: userspace/sudo.asm
 
 $(BUILD_DIR)/sudo.elf: $(BUILD_DIR)/sudo.o userspace/user.ld
 	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/sudo.o
+
+$(BUILD_DIR)/devtest.o: userspace/devtest.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/devtest.elf: $(BUILD_DIR)/devtest.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/devtest.o
+
+$(BUILD_DIR)/aos_gfx.o: userspace/lib/aos_gfx.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/gfxdemo.o: userspace/gfxdemo.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/aos_input.o: userspace/lib/aos_input.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/gfxdemo.elf: $(BUILD_DIR)/gfxdemo.o $(BUILD_DIR)/aos_gfx.o $(BUILD_DIR)/aos_input.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/gfxdemo.o $(BUILD_DIR)/aos_gfx.o $(BUILD_DIR)/aos_input.o
+
+$(BUILD_DIR)/inputtest.o: userspace/inputtest.asm
+	@mkdir -p $(BUILD_DIR)
+	$(AS) -f elf64 $< -o $@
+
+$(BUILD_DIR)/inputtest.elf: $(BUILD_DIR)/inputtest.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/inputtest.o
 
 $(BUILD_DIR)/aossetup.o: userspace/aossetup.asm
 	@mkdir -p $(BUILD_DIR)
@@ -552,10 +656,25 @@ $(BUILD_DIR)/pci.o: kernel/pci.c
 $(BUILD_DIR)/driver.o: kernel/driver.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/input.o: kernel/input.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/firmware.o: kernel/firmware.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/netdev.o: kernel/netdev.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/ata.o: kernel/ata.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/e1000.o: drivers/net/e1000.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/wifi_driver.o: drivers/net/wifi.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/xhci.o: drivers/usb/xhci.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/aosfs.o: kernel/aosfs.c
@@ -588,6 +707,9 @@ $(BUILD_DIR)/process_c.o: kernel/process.c
 $(BUILD_DIR)/timer.o: kernel/timer.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/tty.o: kernel/tty.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/rtc.o: kernel/rtc.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -597,24 +719,24 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 run: all
-	qemu-system-x86_64 -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) -display gtk -serial stdio -d int -D qemu.log; stty sane; printf '\033[0m\033[?25h\n'
+	qemu-system-x86_64 -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) $(AOS_NET_ARGS) $(AOS_USB_ARGS) -display gtk -serial stdio -d int -D qemu.log; stty sane; printf '\033[0m\033[?25h\n'
 
 run-uefi: uefi
-	qemu-system-x86_64 -m 512M -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd -drive file=$(BUILD_DIR)/esp.img,format=raw,if=ide,index=1,media=disk $(AOSFS_DRIVE_ARGS) -display gtk -serial stdio -d int -D qemu-uefi.log; stty sane; printf '\033[0m\033[?25h\n'
+	qemu-system-x86_64 -m 512M -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd -drive file=$(BUILD_DIR)/esp.img,format=raw,if=ide,index=1,media=disk $(AOSFS_DRIVE_ARGS) $(AOS_NET_ARGS) $(AOS_USB_ARGS) -display gtk -serial stdio -d int -D qemu-uefi.log; stty sane; printf '\033[0m\033[?25h\n'
 
 run-headless: all
-	qemu-system-x86_64 -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) -serial stdio -display none -d int -D qemu.log; stty sane; printf '\033[0m\033[?25h\n'
+	qemu-system-x86_64 -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) $(AOS_NET_ARGS) $(AOS_USB_ARGS) -serial stdio -display none -d int -D qemu.log; stty sane; printf '\033[0m\033[?25h\n'
 
 run-64m: all
-	qemu-system-x86_64 -m 64M -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) -serial stdio -display none -d int -D qemu-64m.log; stty sane; printf '\033[0m\033[?25h\n'
+	qemu-system-x86_64 -m 64M -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) $(AOS_NET_ARGS) $(AOS_USB_ARGS) -serial stdio -display none -d int -D qemu-64m.log; stty sane; printf '\033[0m\033[?25h\n'
 
 run-32m: all
-	qemu-system-x86_64 -m 32M -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) -serial stdio -display none -d int -D qemu-32m.log; stty sane; printf '\033[0m\033[?25h\n'
+	qemu-system-x86_64 -m 32M -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) $(AOS_NET_ARGS) $(AOS_USB_ARGS) -serial stdio -display none -d int -D qemu-32m.log; stty sane; printf '\033[0m\033[?25h\n'
 
 run-16m: all
-	qemu-system-x86_64 -m 16M -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) -serial stdio -display none -d int -D qemu-16m.log; stty sane; printf '\033[0m\033[?25h\n'
+	qemu-system-x86_64 -m 16M -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) $(AOS_NET_ARGS) $(AOS_USB_ARGS) -serial stdio -display none -d int -D qemu-16m.log; stty sane; printf '\033[0m\033[?25h\n'
 
 run-curses: all
-	qemu-system-x86_64 -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) -display curses -serial none -d int -D qemu.log
+	qemu-system-x86_64 -cdrom $(BUILD_DIR)/aos.iso $(AOSFS_DRIVE_ARGS) $(AOS_NET_ARGS) $(AOS_USB_ARGS) -display curses -serial none -d int -D qemu.log
 
 .PHONY: all uefi clean run run-uefi run-headless run-64m run-32m run-16m run-curses

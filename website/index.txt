@@ -1,0 +1,33 @@
+================================================================================
+|                                                                              |
+|     @@@@@@    @@@@@@    @@@@@@      W E L C O M E   T O   A O S   W E B      |
+|    @@    @@  @@    @@  @@           -----------------------------------      |
+|    @@@@@@@@  @@    @@   @@@@@@                (Version 1.0)                  |
+|    @@    @@  @@    @@        @@                                              |
+|    @@    @@   @@@@@@    @@@@@@        "Your hardware, your control."         |
+|                                                                              |
+================================================================================
+
+[ HOME ]  [ ABOUT ]  [ KERNEL ]  [ DRIVERS ]  [ STORAGE ]  [ USERSPACE ]  [ DOWNLOAD ]
+
+--------------------------------------------------------------------------------
+>> SYSTEM STATUS: KERNEL_OK | MEMORY_OPTIMIZED | NO_BLOAT_DETECTED
+--------------------------------------------------------------------------------
+
+Welcome to the official text-based web portal for AOS (Abhigyan Operating System).
+
+AOS is a 64-bit operating system built from the ground up with a singular 
+vision: true ownership of hardware. In a world of bloated software and 
+restrictive licenses, AOS stands as a beacon of efficiency and freedom.
+
+QUICK LINKS:
+------------
+- To learn about our philosophy, visit [ ABOUT ].
+- To dive into the technical depths, check [ KERNEL ] and [ DRIVERS ].
+- Looking to try it yourself? Head over to [ DOWNLOAD ].
+
+"I understand this is hard, but I will do it." - Oppeko (Lead Developer)
+
+--------------------------------------------------------------------------------
+(C) 2026 Oppeko. Licensed under GPL 3.0.
+================================================================================

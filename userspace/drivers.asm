@@ -15,6 +15,7 @@ global _start
 %define DRV_BUS_OFF 2
 %define DRV_SLOT_OFF 3
 %define DRV_FUNC_OFF 4
+%define DRV_CLASS_OFF 5
 %define DRV_IRQ_OFF 8
 %define DRV_VENDOR_OFF 16
 %define DRV_DEVICE_OFF 18
@@ -37,6 +38,29 @@ _start:
     test rax, rax
     js .done
 
+    cmp byte [rel driver_buf + DRV_TYPE_OFF], 1
+    je .print_pci
+
+    lea rsi, [rel sys_msg]
+    mov rdx, sys_msg_end - sys_msg
+    call write_stdout
+    movzx edi, byte [rel driver_buf + DRV_CLASS_OFF]
+    call write_class
+    lea rsi, [rel gap_msg]
+    mov rdx, gap_msg_end - gap_msg
+    call write_stdout
+    lea rsi, [rel sys_device_msg]
+    mov rdx, sys_device_msg_end - sys_device_msg
+    call write_stdout
+    lea rsi, [rel gap_msg]
+    mov rdx, gap_msg_end - gap_msg
+    call write_stdout
+    lea rsi, [rel sys_vendor_msg]
+    mov rdx, sys_vendor_msg_end - sys_vendor_msg
+    call write_stdout
+    jmp .print_common
+
+.print_pci:
     lea rsi, [rel pci_msg]
     mov rdx, pci_msg_end - pci_msg
     call write_stdout
@@ -64,11 +88,12 @@ _start:
     movzx edi, word [rel driver_buf + DRV_DEVICE_OFF]
     call write_hex16
 
+.print_common:
     lea rsi, [rel gap_msg]
     mov rdx, gap_msg_end - gap_msg
     call write_stdout
     lea rsi, [rel driver_buf + DRV_NAME_OFF]
-    mov rdx, 12
+    mov rdx, 18
     call write_padded_cstr
 
     lea rsi, [rel gap_msg]
@@ -165,6 +190,59 @@ write_hex16:
     call write_hex8
     ret
 
+write_class:
+    cmp dil, 1
+    je .core
+    cmp dil, 2
+    je .input
+    cmp dil, 3
+    je .display
+    cmp dil, 4
+    je .storage
+    cmp dil, 5
+    je .fs
+    cmp dil, 6
+    je .network
+    cmp dil, 7
+    je .time
+    cmp dil, 8
+    je .usb
+    lea rsi, [rel class_unknown]
+    mov rdx, class_unknown_end - class_unknown
+    jmp write_stdout
+.core:
+    lea rsi, [rel class_core]
+    mov rdx, class_core_end - class_core
+    jmp write_stdout
+.input:
+    lea rsi, [rel class_input]
+    mov rdx, class_input_end - class_input
+    jmp write_stdout
+.display:
+    lea rsi, [rel class_display]
+    mov rdx, class_display_end - class_display
+    jmp write_stdout
+.storage:
+    lea rsi, [rel class_storage]
+    mov rdx, class_storage_end - class_storage
+    jmp write_stdout
+.fs:
+    lea rsi, [rel class_fs]
+    mov rdx, class_fs_end - class_fs
+    jmp write_stdout
+.network:
+    lea rsi, [rel class_network]
+    mov rdx, class_network_end - class_network
+    jmp write_stdout
+.time:
+    lea rsi, [rel class_time]
+    mov rdx, class_time_end - class_time
+    jmp write_stdout
+.usb:
+    lea rsi, [rel class_usb]
+    mov rdx, class_usb_end - class_usb
+    jmp write_stdout
+
 write_stdout:
     mov rax, SYS_WRITE
     mov rdi, 1
@@ -179,8 +257,8 @@ one_char:
 
 section .rodata
 header_msg:
-    db "DEVICE    VENDOR:DEVICE  DRIVER       STATUS", 10
-    db "----------------------------------------------", 10
+    db "TYPE CLASS      DEVICE    VENDOR:DEVICE  DRIVER             STATUS", 10
+    db "--------------------------------------------------------------------", 10
 header_msg_end:
 
 no_devices_msg:
@@ -190,6 +268,18 @@ no_devices_msg_end:
 pci_msg:
     db "pci "
 pci_msg_end:
+
+sys_msg:
+    db "sys "
+sys_msg_end:
+
+sys_device_msg:
+    db "----------"
+sys_device_msg_end:
+
+sys_vendor_msg:
+    db "----:----"
+sys_vendor_msg_end:
 
 gap_msg:
     db "  "
@@ -212,3 +302,39 @@ newline_msg_end:
 
 hex_digits:
     db "0123456789abcdef"
+
+class_core:
+    db "core      "
+class_core_end:
+
+class_input:
+    db "input     "
+class_input_end:
+
+class_display:
+    db "display   "
+class_display_end:
+
+class_storage:
+    db "storage   "
+class_storage_end:
+
+class_fs:
+    db "fs        "
+class_fs_end:
+
+class_network:
+    db "network   "
+class_network_end:
+
+class_time:
+    db "time      "
+class_time_end:
+
+class_usb:
+    db "usb       "
+class_usb_end:
+
+class_unknown:
+    db "unknown   "
+class_unknown_end:

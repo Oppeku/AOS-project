@@ -2,6 +2,7 @@
 #include <pmm.h>
 #include <vmm.h>
 #include <timer.h>
+#include <xhci.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -93,6 +94,7 @@ void schedule(struct syscall_regs* regs) {
 void timer_handler(struct syscall_regs* regs) {
     (void)regs;
     timer_tick();
+    xhci_poll_keyboard();
     /*
      * The timer IRQ currently arrives through an interrupt gate, not the
      * SYSCALL entry path, so we do not have a syscall_regs frame here.

@@ -1,0 +1,5 @@
+AOS firmware placeholder
+
+This file proves the boot firmware registry and userspace firmware command.
+Real WiFi support will replace this with chipset firmware such as Intel iwlwifi
+or Realtek firmware blobs when the matching driver is implemented.

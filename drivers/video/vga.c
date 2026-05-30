@@ -9,27 +9,43 @@
 #include <stdint.h>
 
 unsigned char* vga_buffer = (unsigned char*)0xB8000;
-#define VGA_WIDTH 80
-#define VGA_HEIGHT 25
-#define VGA_HISTORY_ROWS 256
-#define FB_CELL_WIDTH 10
-#define FB_CELL_HEIGHT 18
-#define FB_GLYPH_SCALE 2
+#define VGA_TEXT_WIDTH 80
+#define VGA_TEXT_HEIGHT 25
+#define CONSOLE_MAX_COLS 128
+#define CONSOLE_MAX_ROWS 64
+#define VGA_HISTORY_ROWS 512
+#define FB_CELL_WIDTH 18
+#define FB_CELL_HEIGHT 28
+#define FB_GLYPH_SCALE 3
 
-static unsigned int vga_mode_cols = VGA_WIDTH;
-static unsigned int vga_mode_rows = VGA_HEIGHT;
+static unsigned int vga_mode_cols = VGA_TEXT_WIDTH;
+static unsigned int vga_mode_rows = VGA_TEXT_HEIGHT;
+static unsigned int vga_detected_cols = VGA_TEXT_WIDTH;
+static unsigned int vga_detected_rows = VGA_TEXT_HEIGHT;
 static int vga_cursor_x = 0;
 static int vga_cursor_row = 0;
 static unsigned char vga_default_color = 0x07;
 static unsigned char vga_current_color = 0x07;
 static int vga_view_offset = 0;
-static unsigned char vga_history[VGA_HISTORY_ROWS][VGA_WIDTH * 2];
+static unsigned char vga_history[VGA_HISTORY_ROWS][CONSOLE_MAX_COLS * 2];
 static uint32_t fb_origin_x;
 static uint32_t fb_origin_y;
 
 extern void serial_print(const char* s);
 
 static int vga_max_view_offset(void);
+static void vga_render(void);
+static void fb_update_origin(void);
+
+void vga_init_tty(void) {
+    vga_mode_cols = VGA_TEXT_WIDTH;
+    vga_mode_rows = VGA_TEXT_HEIGHT;
+    vga_detected_cols = VGA_TEXT_WIDTH;
+    vga_detected_rows = VGA_TEXT_HEIGHT;
+    fb_origin_x = 0;
+    fb_origin_y = 0;
+    vga_render();
+}
 
 static char ascii_upper(char c) {
     if (c >= 'a' && c <= 'z') {
@@ -116,7 +132,7 @@ static uint8_t glyph_row(char c, int row) {
 }
 
 static void vga_clear_history_row(int row, unsigned char color) {
-    for (int x = 0; x < VGA_WIDTH; x++) {
+    for (int x = 0; x < CONSOLE_MAX_COLS; x++) {
         vga_history[row][x * 2] = ' ';
         vga_history[row][x * 2 + 1] = color;
     }
@@ -151,7 +167,7 @@ static void fb_draw_char(char c, uint8_t attr, uint32_t cell_x, uint32_t cell_y)
         for (int col = 0; col < 5; col++) {
             if (bits & (uint8_t)(1U << (4 - col))) {
                 uint32_t px = x0 + 2 + (uint32_t)col * FB_GLYPH_SCALE;
-                uint32_t py = y0 + 2 + (uint32_t)row * FB_GLYPH_SCALE;
+                uint32_t py = y0 + 3 + (uint32_t)row * FB_GLYPH_SCALE;
                 gfx_fill_rect(px, py, FB_GLYPH_SCALE, FB_GLYPH_SCALE, fg);
             }
         }
@@ -167,14 +183,14 @@ static void fb_render(void) {
         vga_view_offset = max_offset;
     }
 
-    start_row = vga_cursor_row - (VGA_HEIGHT - 1) - vga_view_offset;
+    start_row = vga_cursor_row - ((int)vga_mode_rows - 1) - vga_view_offset;
     if (start_row < 0) {
         start_row = 0;
     }
 
-    for (int y = 0; y < VGA_HEIGHT; y++) {
+    for (unsigned int y = 0; y < vga_mode_rows; y++) {
         int source_row = start_row + y;
-        for (int x = 0; x < VGA_WIDTH; x++) {
+        for (unsigned int x = 0; x < vga_mode_cols; x++) {
             char ch = ' ';
             uint8_t attr = vga_default_color;
             if (source_row <= vga_cursor_row && source_row < VGA_HISTORY_ROWS) {
@@ -188,7 +204,7 @@ static void fb_render(void) {
 }
 
 static int fb_visible_start_row(void) {
-    int start_row = vga_cursor_row - (VGA_HEIGHT - 1) - vga_view_offset;
+    int start_row = vga_cursor_row - ((int)vga_mode_rows - 1) - vga_view_offset;
     if (start_row < 0) {
         start_row = 0;
     }
@@ -201,10 +217,10 @@ static void fb_draw_history_cell(int history_row, int x) {
     char ch;
     uint8_t attr;
 
-    if (!gfx_is_ready() || x < 0 || x >= VGA_WIDTH) return;
+    if (!gfx_is_ready() || x < 0 || x >= (int)vga_mode_cols) return;
     start_row = fb_visible_start_row();
     screen_y = history_row - start_row;
-    if (screen_y < 0 || screen_y >= VGA_HEIGHT) return;
+    if (screen_y < 0 || screen_y >= (int)vga_mode_rows) return;
     ch = (char)vga_history[history_row][x * 2];
     attr = vga_history[history_row][x * 2 + 1];
     fb_draw_char(ch, attr, (uint32_t)x, (uint32_t)screen_y);
@@ -213,8 +229,20 @@ static void fb_draw_history_cell(int history_row, int x) {
 static void fb_update_origin(void) {
     uint32_t width = gfx_width();
     uint32_t height = gfx_height();
-    fb_origin_x = width > VGA_WIDTH * FB_CELL_WIDTH ? (width - VGA_WIDTH * FB_CELL_WIDTH) / 2 : 0;
-    fb_origin_y = height > VGA_HEIGHT * FB_CELL_HEIGHT ? (height - VGA_HEIGHT * FB_CELL_HEIGHT) / 2 : 0;
+    uint32_t cols = width / FB_CELL_WIDTH;
+    uint32_t rows = height / FB_CELL_HEIGHT;
+
+    if (cols > CONSOLE_MAX_COLS) cols = CONSOLE_MAX_COLS;
+    if (rows > CONSOLE_MAX_ROWS) rows = CONSOLE_MAX_ROWS;
+    if (cols < 40) cols = 40;
+    if (rows < 10) rows = 10;
+
+    vga_detected_cols = cols;
+    vga_detected_rows = rows;
+    vga_mode_cols = cols;
+    vga_mode_rows = rows;
+    fb_origin_x = width > vga_mode_cols * FB_CELL_WIDTH ? (width - vga_mode_cols * FB_CELL_WIDTH) / 2 : 0;
+    fb_origin_y = height > vga_mode_rows * FB_CELL_HEIGHT ? (height - vga_mode_rows * FB_CELL_HEIGHT) / 2 : 0;
 }
 
 void vga_init_framebuffer(uint64_t mb_info) {
@@ -250,7 +278,7 @@ void vga_init_framebuffer(uint64_t mb_info) {
 
 static void vga_shift_history_up(void) {
     for (int row = 0; row < VGA_HISTORY_ROWS - 1; row++) {
-        for (int col = 0; col < VGA_WIDTH * 2; col++) {
+        for (int col = 0; col < CONSOLE_MAX_COLS * 2; col++) {
             vga_history[row][col] = vga_history[row + 1][col];
         }
     }
@@ -262,10 +290,10 @@ static void vga_shift_history_up(void) {
 
 static int vga_max_view_offset(void) {
     int used_rows = vga_cursor_row + 1;
-    if (used_rows <= VGA_HEIGHT) {
+    if (used_rows <= (int)vga_mode_rows) {
         return 0;
     }
-    return used_rows - VGA_HEIGHT;
+    return used_rows - (int)vga_mode_rows;
 }
 
 static void vga_render(void) {
@@ -279,20 +307,21 @@ static void vga_render(void) {
         vga_view_offset = max_offset;
     }
 
-    int start_row = vga_cursor_row - (VGA_HEIGHT - 1) - vga_view_offset;
+    int start_row = vga_cursor_row - (VGA_TEXT_HEIGHT - 1) - vga_view_offset;
     if (start_row < 0) {
         start_row = 0;
     }
 
-    for (int y = 0; y < VGA_HEIGHT; y++) {
+    for (int y = 0; y < VGA_TEXT_HEIGHT; y++) {
         int source_row = start_row + y;
-        for (int x = 0; x < VGA_WIDTH * 2; x++) {
-            if (source_row <= vga_cursor_row && source_row < VGA_HISTORY_ROWS) {
-                vga_buffer[y * VGA_WIDTH * 2 + x] = vga_history[source_row][x];
-            } else if ((x & 1) == 0) {
-                vga_buffer[y * VGA_WIDTH * 2 + x] = ' ';
+        for (int x = 0; x < VGA_TEXT_WIDTH; x++) {
+            int dst = (y * VGA_TEXT_WIDTH + x) * 2;
+            if (source_row <= vga_cursor_row && source_row < VGA_HISTORY_ROWS && x < (int)vga_mode_cols) {
+                vga_buffer[dst] = vga_history[source_row][x * 2];
+                vga_buffer[dst + 1] = vga_history[source_row][x * 2 + 1];
             } else {
-                vga_buffer[y * VGA_WIDTH * 2 + x] = vga_default_color;
+                vga_buffer[dst] = ' ';
+                vga_buffer[dst + 1] = vga_default_color;
             }
         }
     }
@@ -316,7 +345,7 @@ void vga_clear(unsigned char color) {
 void vga_print(const char* str, unsigned char color, int x, int y) {
     if (gfx_is_ready()) {
         if (y < 0 || y >= VGA_HISTORY_ROWS) return;
-        for (int i = 0; str[i] != '\0' && x + i < VGA_WIDTH; i++) {
+        for (int i = 0; str[i] != '\0' && x + i < (int)vga_mode_cols; i++) {
             int index = (x + i) * 2;
             vga_history[y][index] = str[i];
             vga_history[y][index + 1] = color;
@@ -328,8 +357,9 @@ void vga_print(const char* str, unsigned char color, int x, int y) {
         return;
     }
 
-    int index = (y * VGA_WIDTH + x) * 2;
-    for (int i = 0; str[i] != '\0'; i++) {
+    if (x < 0 || y < 0 || x >= VGA_TEXT_WIDTH || y >= VGA_TEXT_HEIGHT) return;
+    int index = (y * VGA_TEXT_WIDTH + x) * 2;
+    for (int i = 0; str[i] != '\0' && x + i < VGA_TEXT_WIDTH; i++) {
         vga_buffer[index + (i * 2)] = str[i];
         vga_buffer[index + (i * 2) + 1] = color;
     }
@@ -365,9 +395,9 @@ static void vga_ensure_bottom_view(void) {
 
 static void vga_set_cursor(int x, int y) {
     if (x < 0) x = 0;
-    if (x >= VGA_WIDTH) x = VGA_WIDTH - 1;
+    if (x >= (int)vga_mode_cols) x = (int)vga_mode_cols - 1;
     if (y < 0) y = 0;
-    if (y >= VGA_HEIGHT) y = VGA_HEIGHT - 1;
+    if (y >= (int)vga_mode_rows) y = (int)vga_mode_rows - 1;
     vga_cursor_x = x;
     vga_cursor_row = y;
 }
@@ -385,7 +415,7 @@ static int ansi_parse_number(const char* str, int* index) {
 }
 
 static void vga_clear_to_end_of_line(void) {
-    for (int x = vga_cursor_x; x < VGA_WIDTH; x++) {
+    for (int x = vga_cursor_x; x < (int)vga_mode_cols; x++) {
         int index = x * 2;
         vga_history[vga_cursor_row][index] = ' ';
         vga_history[vga_cursor_row][index + 1] = vga_current_color;
@@ -398,24 +428,36 @@ void vga_get_display_mode(unsigned int* cols, unsigned int* rows,
                           unsigned int* max_cols, unsigned int* max_rows) {
     if (cols) *cols = vga_mode_cols;
     if (rows) *rows = vga_mode_rows;
-    if (detected_cols) *detected_cols = VGA_WIDTH;
-    if (detected_rows) *detected_rows = VGA_HEIGHT;
-    if (max_cols) *max_cols = VGA_WIDTH;
-    if (max_rows) *max_rows = VGA_HEIGHT;
+    if (detected_cols) *detected_cols = vga_detected_cols;
+    if (detected_rows) *detected_rows = vga_detected_rows;
+    if (max_cols) *max_cols = vga_detected_cols;
+    if (max_rows) *max_rows = vga_detected_rows;
 }
 
 int vga_set_display_mode(unsigned int cols, unsigned int rows) {
-    if (cols < 40 || rows < 10 || cols > VGA_WIDTH || rows > VGA_HEIGHT) {
+    if (cols < 40 || rows < 10 || cols > vga_detected_cols || rows > vga_detected_rows) {
         return -1;
     }
     vga_mode_cols = cols;
     vga_mode_rows = rows;
+    if (gfx_is_ready()) {
+        fb_origin_x = gfx_width() > vga_mode_cols * FB_CELL_WIDTH ? (gfx_width() - vga_mode_cols * FB_CELL_WIDTH) / 2 : 0;
+        fb_origin_y = gfx_height() > vga_mode_rows * FB_CELL_HEIGHT ? (gfx_height() - vga_mode_rows * FB_CELL_HEIGHT) / 2 : 0;
+        vga_render();
+    }
     return 0;
 }
 
 void vga_auto_display_mode(void) {
-    vga_mode_cols = VGA_WIDTH;
-    vga_mode_rows = VGA_HEIGHT;
+    if (gfx_is_ready()) {
+        fb_update_origin();
+        vga_render();
+        return;
+    }
+    vga_mode_cols = VGA_TEXT_WIDTH;
+    vga_mode_rows = VGA_TEXT_HEIGHT;
+    vga_detected_cols = VGA_TEXT_WIDTH;
+    vga_detected_rows = VGA_TEXT_HEIGHT;
 }
 
 void vga_write(const char* str, unsigned char color) {
@@ -474,7 +516,7 @@ void vga_write(const char* str, unsigned char color) {
                 vga_cursor_x--;
             } else if (vga_cursor_row > 0) {
                 vga_cursor_row--;
-                vga_cursor_x = VGA_WIDTH - 1;
+                vga_cursor_x = (int)vga_mode_cols - 1;
             } else {
                 continue;
             }
@@ -493,7 +535,7 @@ void vga_write(const char* str, unsigned char color) {
                 vga_cursor_row = VGA_HISTORY_ROWS - 1;
             }
             vga_clear_history_row(vga_cursor_row, vga_default_color);
-            if (vga_cursor_row >= VGA_HEIGHT) {
+            if (vga_cursor_row >= (int)vga_mode_rows) {
                 need_full_render = 1;
             }
         } else {
@@ -504,7 +546,7 @@ void vga_write(const char* str, unsigned char color) {
             vga_history[vga_cursor_row][index + 1] = vga_current_color ? vga_current_color : color;
             fb_draw_history_cell(draw_row, draw_x);
             vga_cursor_x++;
-            if (vga_cursor_x >= VGA_WIDTH) {
+            if (vga_cursor_x >= (int)vga_mode_cols) {
                 vga_cursor_x = 0;
                 vga_cursor_row++;
                 if (vga_cursor_row >= VGA_HISTORY_ROWS) {
@@ -512,7 +554,7 @@ void vga_write(const char* str, unsigned char color) {
                     vga_cursor_row = VGA_HISTORY_ROWS - 1;
                 }
                 vga_clear_history_row(vga_cursor_row, vga_default_color);
-                if (vga_cursor_row >= VGA_HEIGHT) {
+                if (vga_cursor_row >= (int)vga_mode_rows) {
                     need_full_render = 1;
                 }
             }

@@ -1,0 +1,41 @@
+================================================================================
+|   [ HOME ]  [ ABOUT ]  [[ KERNEL ]]  [ DRIVERS ]  [ STORAGE ]  [ DOWNLOAD ]  |
+================================================================================
+
+AOS KERNEL ARCHITECTURE
+-----------------------
+The AOS kernel is a high-performance, 64-bit monolithic-hybrid engine
+designed for stability and speed.
+
+CORE SUBSYSTEMS:
+----------------
+1. Memory Management:
+   - PMM (Physical Memory Manager): Efficiently tracks every byte of RAM.
+   - VMM (Virtual Memory Manager): Handles 4-level paging and memory mapping.
+
+2. Interrupt Handling:
+   - GDT (Global Descriptor Table): Manages code and data segments.
+   - IDT (Interrupt Descriptor Table): Handles hardware IRQs and exceptions.
+   - PIC/IOAPIC: Advanced interrupt routing for modern hardware.
+
+3. Process Management:
+   - Multitasking support for running multiple userspace applications.
+   - ELF64 Loading: Support for standard 64-bit Linux-compatible binaries.
+
+4. System Calls:
+   - AOS implements a robust syscall interface (via `syscall` instruction).
+   - Compatibility: Supports many Linux-standard syscalls (read, write, open).
+   - AOS Extras: Over 20 custom syscalls for OS-specific features like:
+     * GFX (Graphics) control
+     * Partition management
+     * Network device interaction
+
+BOOT SEQUENCE:
+--------------
+Multiboot2 -> GDT/IDT Setup -> PMM/VMM -> Driver Init -> VFS Mount -> Shell
+AOS uses a highly optimized bootloader stage that gets you to the shell 
+in seconds!
+
+--------------------------------------------------------------------------------
+Back to [ HOME ] | Read about [ DRIVERS ]
+================================================================================

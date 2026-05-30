@@ -1,0 +1,47 @@
+================================================================================
+|   [ HOME ]  [ ABOUT ]  [ KERNEL ]  [ DRIVERS ]  [[ STORAGE ]]  [ DOWNLOAD ]  |
+================================================================================
+
+STORAGE & FILESYSTEMS
+---------------------
+AOS provides a sophisticated VFS (Virtual File System) layer that 
+allows seamless interaction with multiple storage formats.
+
+SUPPORTED FILESYSTEMS:
+----------------------
+1. AOSFS (Native):
+   - Our custom, high-speed filesystem designed specifically for AOS.
+   - Optimized for boot speed and stability.
+
+2. FAT32:
+   - Full support for ubiquitous FAT32 partitions.
+   - Perfect for data exchange with other operating systems.
+
+3. EXT4:
+   - Robust support for Linux's favorite filesystem.
+   - High performance and data integrity.
+
+4. Tmpfs:
+   - RAM-backed volatile storage for temporary files (/tmp).
+   - Blazing fast performance.
+
+5. Initrd (CPIO):
+   - Boot-time ramdisk containing essential system files and the shell.
+
+PARTITION MANAGEMENT:
+---------------------
+AOS includes a built-in Partition Manager capable of:
+- Loading and saving partition tables.
+- Creating/Deleting partitions.
+- Identifying roles (Root, Main, Trash, etc.).
+
+VFS MOUNT TABLE:
+----------------
+/          -> AOSFS (Root)
+/tmp       -> Tmpfs
+/mnt/fat32 -> FAT32 Partition
+/mnt/ext4  -> EXT4 Partition
+
+--------------------------------------------------------------------------------
+Back to [ HOME ] | See [ USERSPACE ]
+================================================================================

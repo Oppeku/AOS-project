@@ -29,6 +29,7 @@
 
 #define LINUX_DTYPE_REG 8
 #define LINUX_DTYPE_DIR 4
+#define LINUX_DTYPE_CHR 2
 
 struct vfs_mount {
     uint8_t in_use;
@@ -316,7 +317,7 @@ static int synthetic_dir_exists(const char* normalized) {
     if (!normalized) {
         return 0;
     }
-    if (*normalized == '\0' || path_equals(normalized, "mnt")) {
+    if (*normalized == '\0' || path_equals(normalized, "mnt") || path_equals(normalized, "dev")) {
         return 1;
     }
     for (size_t i = 0; i < VFS_MAX_MOUNTS; i++) {
@@ -406,6 +407,15 @@ static void fill_synthetic_dir(struct vfs_node* out, uint64_t inode, const char*
     out->type = VFS_NODE_TYPE_DIRECTORY;
     out->backend = VFS_BACKEND_SYNTHETIC;
     out->inode = inode;
+    copy_path_string(out->path, sizeof(out->path), path);
+}
+
+static void fill_synthetic_char_device(struct vfs_node* out, uint64_t device_id, const char* path) {
+    local_memset(out, 0, sizeof(*out));
+    out->type = VFS_NODE_TYPE_CHAR_DEVICE;
+    out->backend = VFS_BACKEND_SYNTHETIC;
+    out->inode = 0xD000 + device_id;
+    out->u.first_cluster = (uint32_t)device_id;
     copy_path_string(out->path, sizeof(out->path), path);
 }
 
@@ -572,6 +582,23 @@ int vfs_lookup(const char* path, struct vfs_node* out) {
         return aosfs_lookup_path("", out);
     }
 
+    if (path_equals(normalized, "dev")) {
+        fill_synthetic_dir(out, 0xD00, normalized);
+        return 0;
+    }
+    if (path_equals(normalized, "dev/console")) {
+        fill_synthetic_char_device(out, VFS_DEV_CONSOLE, normalized);
+        return 0;
+    }
+    if (path_equals(normalized, "dev/tty0")) {
+        fill_synthetic_char_device(out, VFS_DEV_TTY0, normalized);
+        return 0;
+    }
+    if (path_equals(normalized, "dev/null")) {
+        fill_synthetic_char_device(out, VFS_DEV_NULL, normalized);
+        return 0;
+    }
+
     mount = find_mount_for_path(normalized, backend_path, sizeof(backend_path));
     if (mount) {
         if (mount->backend == VFS_BACKEND_TMPFS) {
@@ -610,6 +637,9 @@ int vfs_access_path(const char* path, uint64_t mode) {
     }
     if (vfs_lookup(path, &node) != 0) {
         return -1;
+    }
+    if (node.type == VFS_NODE_TYPE_CHAR_DEVICE) {
+        return 0;
     }
     if (mode & LINUX_W_OK) {
         return (node.backend == VFS_BACKEND_AOSFS || node.backend == VFS_BACKEND_TMPFS || node.backend == VFS_BACKEND_FAT32 || node.backend == VFS_BACKEND_EXT4) ? 0 : -1;
@@ -746,6 +776,7 @@ int vfs_dirent_at(const struct vfs_node* node, uint64_t index, char* name_buf, s
     if (node->backend == VFS_BACKEND_SYNTHETIC) {
         if (node->inode == VFS_SYNTH_ROOT_INO) {
             uint64_t mount_count;
+            uint64_t initrd_index;
             if (index == 0) {
                 copy_path_string(name_buf, name_buf_size, ".");
                 if (size) *size = 0;
@@ -763,11 +794,55 @@ int vfs_dirent_at(const struct vfs_node* node, uint64_t index, char* name_buf, s
                 return 0;
             }
             mount_count = mount_child_count("");
-            if (index < 2 + mount_count || initrd_get_entry(index - 2 - mount_count, name_buf, name_buf_size, size) != 0) {
+            if (index < 2 + mount_count) {
+                return -1;
+            }
+            if (index == 2 + mount_count) {
+                copy_path_string(name_buf, name_buf_size, "dev");
+                if (size) *size = 0;
+                if (d_type) *d_type = LINUX_DTYPE_DIR;
+                return 0;
+            }
+            initrd_index = index - 3 - mount_count;
+            if (initrd_get_entry(initrd_index, name_buf, name_buf_size, size) != 0) {
                 return -1;
             }
             if (d_type) *d_type = LINUX_DTYPE_REG;
             return 0;
+        }
+
+        if (path_equals(node->path, "dev")) {
+            if (index == 0) {
+                copy_path_string(name_buf, name_buf_size, ".");
+                if (size) *size = 0;
+                if (d_type) *d_type = LINUX_DTYPE_DIR;
+                return 0;
+            }
+            if (index == 1) {
+                copy_path_string(name_buf, name_buf_size, "..");
+                if (size) *size = 0;
+                if (d_type) *d_type = LINUX_DTYPE_DIR;
+                return 0;
+            }
+            if (index == 2) {
+                copy_path_string(name_buf, name_buf_size, "console");
+                if (size) *size = 0;
+                if (d_type) *d_type = LINUX_DTYPE_CHR;
+                return 0;
+            }
+            if (index == 3) {
+                copy_path_string(name_buf, name_buf_size, "tty0");
+                if (size) *size = 0;
+                if (d_type) *d_type = LINUX_DTYPE_CHR;
+                return 0;
+            }
+            if (index == 4) {
+                copy_path_string(name_buf, name_buf_size, "null");
+                if (size) *size = 0;
+                if (d_type) *d_type = LINUX_DTYPE_CHR;
+                return 0;
+            }
+            return -1;
         }
 
         if (index == 0) {

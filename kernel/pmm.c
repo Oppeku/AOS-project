@@ -120,7 +120,14 @@ void pmm_init(uint64_t mb_info) {
     // 3. Mark kernel image pages as used so allocator cannot overwrite it.
     mark_used_range((uint64_t)__kernel_start, (uint64_t)__kernel_end);
 
-    // 4. Mark module (e.g., initrd) pages as used.
+    // 4. Mark the Multiboot info block itself; later early allocations must not
+    // overwrite the boot tags before kernel_main has walked them.
+    uint32_t mb_total_size = *(uint32_t*)(uintptr_t)mb_info;
+    if (mb_total_size >= 8 && mb_total_size < 1024 * 1024) {
+        mark_used_range(mb_info, mb_info + mb_total_size);
+    }
+
+    // 5. Mark module (e.g., initrd) pages as used.
     for (tag = (struct multiboot_tag*)(mb_info + 8);
          tag->type != MULTIBOOT_TAG_TYPE_END;
          tag = (struct multiboot_tag*)((uint8_t*)tag + ((tag->size + 7) & ~7)))

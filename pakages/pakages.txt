@@ -1,0 +1,10 @@
+------------------------------------------------------------------- #
+Add you pakages url here i will never delete this file from github  # SHOULD NOT MOVE FROM THE TOP 
+------------------------------------------------------------------  # 
+ 
+example :- 
+mypakage.myweb.org --My pakage Name 
+
+---------------------------------------------HERE U GO NOW ROCK--------------------------------------------------
+
+http://pakage.oppeku.org/testing.txt --testingtxt 

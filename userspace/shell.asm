@@ -2302,7 +2302,7 @@ help_msg:
     db "GNU coreutils: ls cat echo head tail true false", 10
     db "GNU priority: ls cat echo run GNU first, then BusyBox if missing", 10
     db "Per-command help: run ls --help, cat --help, echo --help, pwd --help", 10
-    db "AOS tools: lspci drivers mem uptime date uname whoami id sudo aossetup settings display mounts partitions nano aosnano touch rm mkdir rmdir shutdown restart reboot", 10
+    db "AOS tools: lspci driver/drivers net wifi fw usb ping dns nslookup netrawtest mem uptime date uname whoami id sudo aossetup settings display gfxdemo inputtest mounts partitions nano aosnano touch rm mkdir rmdir shutdown restart reboot", 10
     db "Redirection: < > and >> are supported", 10
     db "Pipes: cmd1 | cmd2 | cmd3", 10
     db "Quotes: 'one two' and ", 34, "one two", 34, 10

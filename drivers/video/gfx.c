@@ -3,6 +3,7 @@
  */
 
 #include <gfx.h>
+#include <pci.h>
 #include <vmm.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -14,6 +15,8 @@
 #define GFX_BOCHS_WIDTH 1024
 #define GFX_BOCHS_HEIGHT 768
 #define GFX_BOCHS_BPP 32
+#define PCI_COMMAND_REG 0x04
+#define PCI_COMMAND_MEMORY_SPACE 0x2
 #define PAGE_WRITE_THROUGH (1ULL << 3)
 #define PAGE_CACHE_DISABLE (1ULL << 4)
 #define VBE_DISPI_IOPORT_INDEX 0x01CE
@@ -46,6 +49,16 @@ static uint32_t gfx_dirty_y1;
 extern uint64_t p4_table[];
 extern void serial_print(const char* s);
 
+static void serial_print_hex32(uint32_t value) {
+    const char* hex = "0123456789abcdef";
+    char out[9];
+    for (int i = 0; i < 8; i++) {
+        out[i] = hex[(value >> ((7 - i) * 4)) & 0xF];
+    }
+    out[8] = '\0';
+    serial_print(out);
+}
+
 static void outw_local(uint16_t port, uint16_t value) {
     asm volatile("outw %0, %1" : : "a"(value), "Nd"(port));
 }
@@ -64,6 +77,33 @@ static void bochs_write(uint16_t index, uint16_t value) {
 static uint16_t bochs_read(uint16_t index) {
     outw_local(VBE_DISPI_IOPORT_INDEX, index);
     return inw_local(VBE_DISPI_IOPORT_DATA);
+}
+
+static uint64_t gfx_find_vga_lfb_phys(void) {
+    size_t count = pci_count();
+
+    for (size_t i = 0; i < count; i++) {
+        const struct pci_device* dev = pci_get(i);
+        uint32_t bar0;
+        uint32_t command;
+
+        if (!dev || dev->class_code != 0x03) {
+            continue;
+        }
+
+        bar0 = dev->bar[0];
+        if ((bar0 & 1U) || bar0 == 0) {
+            continue;
+        }
+
+        command = pci_config_read32(dev->bus, dev->slot, dev->function, PCI_COMMAND_REG);
+        command |= PCI_COMMAND_MEMORY_SPACE;
+        pci_config_write32(dev->bus, dev->slot, dev->function, PCI_COMMAND_REG, command);
+
+        return (uint64_t)(bar0 & 0xFFFFFFF0U);
+    }
+
+    return GFX_BOCHS_PHYS_BASE;
 }
 
 static void gfx_mark_dirty(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
@@ -118,11 +158,13 @@ int gfx_init_framebuffer(uint64_t phys, uint32_t width, uint32_t height,
     gfx_fb_bpp = bpp;
     gfx_ready = 1;
     gfx_clear(0x05070a);
+    gfx_present();
     return 0;
 }
 
 int gfx_init_bochs(void) {
     uint16_t id = bochs_read(VBE_DISPI_INDEX_ID);
+    uint64_t lfb_phys;
 
     if (id < 0xB0C0 || id > 0xB0C5) {
         return -1;
@@ -137,11 +179,14 @@ int gfx_init_bochs(void) {
     bochs_write(VBE_DISPI_INDEX_VIRT_HEIGHT, GFX_BOCHS_HEIGHT);
     bochs_write(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_ENABLED | VBE_DISPI_LFB_ENABLED);
 
-    if (gfx_init_framebuffer(GFX_BOCHS_PHYS_BASE, GFX_BOCHS_WIDTH, GFX_BOCHS_HEIGHT,
+    lfb_phys = gfx_find_vga_lfb_phys();
+    if (gfx_init_framebuffer(lfb_phys, GFX_BOCHS_WIDTH, GFX_BOCHS_HEIGHT,
                              GFX_BOCHS_WIDTH * (GFX_BOCHS_BPP / 8), GFX_BOCHS_BPP) != 0) {
         return -1;
     }
-    serial_print("Framebuffer: Bochs/QEMU LFB 1024x768x32\n");
+    serial_print("Framebuffer: Bochs/QEMU LFB 1024x768x32 phys=0x");
+    serial_print_hex32((uint32_t)lfb_phys);
+    serial_print("\n");
     return 0;
 }
 
@@ -167,7 +212,6 @@ void gfx_clear(uint32_t rgb) {
         gfx_backbuffer[i] = rgb;
     }
     gfx_mark_dirty(0, 0, gfx_fb_width, gfx_fb_height);
-    gfx_present();
 }
 
 void gfx_putpixel(uint32_t x, uint32_t y, uint32_t rgb) {

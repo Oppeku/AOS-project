@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AOS Web - Home</title>
+    <style>
+        body {
+            background-color: #0c0c0c;
+            color: #00ff00;
+            font-family: 'Courier New', Courier, monospace;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 900px;
+            margin: auto;
+            border: 1px solid #333;
+            padding: 20px;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.1);
+        }
+        nav {
+            border-bottom: 1px solid #333;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        nav a {
+            color: #00ff00;
+            text-decoration: none;
+            padding: 5px 15px;
+            border: 1px solid transparent;
+        }
+        nav a:hover, nav a.active {
+            border: 1px solid #00ff00;
+            background-color: rgba(0, 255, 0, 0.1);
+        }
+        h1, h2 {
+            color: #00ff00;
+            text-transform: uppercase;
+        }
+        pre {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            color: #00ff00;
+        }
+        .status-bar {
+            background: #222;
+            padding: 5px 10px;
+            font-size: 0.8em;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+        }
+        footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 0.8em;
+            border-top: 1px solid #333;
+            padding-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <nav>
+            <a href="index.html" class="active">HOME</a>
+            <a href="about.html">ABOUT</a>
+            <a href="kernel.html">KERNEL</a>
+            <a href="drivers.html">DRIVERS</a>
+            <a href="storage.html">STORAGE</a>
+            <a href="userspace.html">USERSPACE</a>
+            <a href="download.html">DOWNLOAD</a>
+        </nav>
+
+        <div class="status-bar">
+            <span>>> SYSTEM STATUS: KERNEL_OK</span>
+            <span>UPTIME: 99.9%</span>
+            <span>BLOAT: 0%</span>
+        </div>
+
+        <h1>Welcome to AOS Web</h1>
+        <p>Your hardware, your control. AOS is a 64-bit operating system built from scratch with a focus on efficiency and true ownership.</p>
+        
+        <pre>
+    @@@@@@    @@@@@@    @@@@@@      W E L C O M E   T O   A O S   W E B
+   @@    @@  @@    @@  @@           -----------------------------------
+   @@@@@@@@  @@    @@   @@@@@@                (Version 1.0)
+   @@    @@  @@    @@        @@
+   @@    @@   @@@@@@    @@@@@@        "Your hardware, your control."
+        </pre>
+
+        <h2>Quick Start</h2>
+        <ul>
+            <li>Learn about our philosophy in <a href="about.html">About</a>.</li>
+            <li>Explore the technical side in <a href="kernel.html">Kernel Architecture</a>.</li>
+            <li>Ready to download? Visit the <a href="download.html">Download Page</a>.</li>
+        </ul>
+
+        <footer>
+            (C) 2026 Oppeko. Licensed under GPL 3.0.
+        </footer>
+    </div>
+</body>
+</html>

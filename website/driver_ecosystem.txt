@@ -1,0 +1,43 @@
+================================================================================
+|   [ HOME ]  [ ABOUT ]  [ KERNEL ]  [[ DRIVERS ]]  [ STORAGE ]  [ DOWNLOAD ]  |
+================================================================================
+
+AOS DRIVER ECOSYSTEM
+--------------------
+AOS features a growing library of built-in drivers to support a wide
+variety of hardware configurations.
+
+STORAGE DRIVERS:
+----------------
+- ATA/ATAPI (PIO): Support for IDE/SATA hard drives and CD-ROMs.
+- Block Device Layer: Abstracted access to any storage medium.
+
+NETWORK STACK:
+--------------
+- PCI Discovery: Automatic detection of network cards.
+- Intel E1000: High-speed gigabit ethernet support.
+- Wifi Support: Experimental framework for wireless connectivity.
+- Netdev Layer: A unified interface for network applications.
+
+INPUT & DISPLAY:
+----------------
+- PS/2 Keyboard: Traditional keyboard support.
+- VGA Text Mode: Classic terminal output.
+- MUI Framebuffer: High-resolution graphical console support.
+- Input Event Queue: Asynchronous handling of user input.
+
+OTHER SUPPORT:
+--------------
+- PCI/PCIe: Comprehensive bus scanning and device registration.
+- XHCI (USB 3.0): Foundation for modern USB peripherals.
+- RTC: Real-time clock for accurate system time.
+
+DRIVER PHILOSOPHY:
+------------------
+Every driver in AOS is written to be "Lean & Mean." We avoid 
+convoluted abstractions, favoring direct, efficient hardware 
+communication.
+
+--------------------------------------------------------------------------------
+Back to [ HOME ] | Explore [ STORAGE ]
+================================================================================

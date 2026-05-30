@@ -13,6 +13,16 @@
 #define DRIVER_STATUS_MAX 64
 
 #define DRIVER_DEVICE_PCI 1
+#define DRIVER_DEVICE_SYSTEM 2
+
+#define DRIVER_CLASS_CORE 1
+#define DRIVER_CLASS_INPUT 2
+#define DRIVER_CLASS_DISPLAY 3
+#define DRIVER_CLASS_STORAGE 4
+#define DRIVER_CLASS_FILESYSTEM 5
+#define DRIVER_CLASS_NETWORK 6
+#define DRIVER_CLASS_TIME 7
+#define DRIVER_CLASS_USB 8
 
 struct driver_device {
     uint8_t type;
@@ -34,7 +44,9 @@ struct driver_device {
 
 void driver_init(void);
 void driver_import_pci_devices(void);
+int driver_register_system(uint8_t class_code, const char* driver, const char* status);
 int driver_claim_pci(uint16_t vendor_id, uint16_t device_id, const char* driver, const char* status);
+int driver_claim_pci_class(uint8_t class_code, uint8_t subclass, const char* driver, const char* status);
 int driver_update_pci_status(uint16_t vendor_id, uint16_t device_id, const char* status);
 size_t driver_count(void);
 const struct driver_device* driver_get(size_t index);

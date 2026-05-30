@@ -22,9 +22,15 @@
 #include <blkdev.h>
 #include <pci.h>
 #include <driver.h>
+#include <firmware.h>
+#include <input.h>
+#include <netdev.h>
 #include <e1000.h>
+#include <wifi.h>
+#include <xhci.h>
 #include <process.h>
 #include <timer.h>
+#include <tty.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -39,6 +45,10 @@ static const char aos_kernel_watermark[] =
 
 #ifndef AOS_BOOT_VERBOSE
 #define AOS_BOOT_VERBOSE 0
+#endif
+
+#ifndef AOS_ENABLE_MUI_FRAMEBUFFER
+#define AOS_ENABLE_MUI_FRAMEBUFFER 0
 #endif
 
 uint8_t aos_boot_verbose = AOS_BOOT_VERBOSE;
@@ -253,18 +263,32 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
     pci_init();
     boot_log_ok("Starting PCI discovery");
     driver_init();
+    netdev_init();
+    driver_register_system(DRIVER_CLASS_CORE, "aos-pmm", "ready: physical memory manager");
+    driver_register_system(DRIVER_CLASS_CORE, "aos-vmm", "ready: virtual memory manager");
+    driver_register_system(DRIVER_CLASS_CORE, "aos-gdt", "ready: descriptor tables");
+    driver_register_system(DRIVER_CLASS_CORE, "aos-idt", "ready: interrupt descriptors");
+    driver_register_system(DRIVER_CLASS_CORE, "aos-process", "ready: process manager");
+    driver_register_system(DRIVER_CLASS_CORE, "aos-pci", "ready: pci discovery");
     driver_import_pci_devices();
     e1000_register_driver();
+    wifi_register_driver();
+    xhci_register_driver();
+    driver_register_system(DRIVER_CLASS_NETWORK, "aos-netdev", "ready: network device registry");
     boot_log_ok("Starting driver model");
     blkdev_init();
+    driver_register_system(DRIVER_CLASS_STORAGE, "aos-blkdev", "ready: block device layer");
     boot_log_ok("Starting block device layer");
     uint32_t ata0_id = ata_init_primary_master();
     if (ata0_id != BLKDEV_INVALID_ID) {
+        driver_register_system(DRIVER_CLASS_STORAGE, "aos-ata-pio", "ready: primary master ata0");
         boot_log_ok("Starting ATA primary master");
     } else {
+        driver_register_system(DRIVER_CLASS_STORAGE, "aos-ata-pio", "not found: primary master");
         boot_log_warn("Starting ATA primary master");
     }
     partition_init();
+    driver_register_system(DRIVER_CLASS_STORAGE, "aos-partition", "ready: AOS partition table");
     if (ata0_id != BLKDEV_INVALID_ID) {
         const struct blkdev* ata0 = blkdev_get(ata0_id);
         if (partition_load_table(ata0_id) > 0) {
@@ -276,12 +300,18 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
     }
     boot_log_ok("Starting PartiotionMANAGAER");
     vfs_init_mounts();
+    driver_register_system(DRIVER_CLASS_FILESYSTEM, "aos-vfs", "ready: mount table and path walking");
     boot_log_ok("Starting VFS mount table");
     init_timer(100);
+    driver_register_system(DRIVER_CLASS_TIME, "aos-timer", "ready: 100 Hz system timer");
+    driver_register_system(DRIVER_CLASS_TIME, "aos-rtc", "ready: cmos clock");
     boot_log_ok("Starting system timer at 100 Hz");
     init_pic();
+    driver_register_system(DRIVER_CLASS_CORE, "aos-pic", "ready: irq remap");
     boot_log_ok("Starting PIC remap");
     asm volatile("sti");
+    driver_register_system(DRIVER_CLASS_CORE, "aos-interrupts", "ready: hardware interrupts");
+    driver_register_system(DRIVER_CLASS_INPUT, "aos-keyboard", "ready: ps/2 keyboard input");
     boot_log_ok("Starting hardware interrupts");
 
     // Handle boot modules: initrd first, remaining modules as RAM-backed partitions.
@@ -309,6 +339,13 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
                     aos_panic("Boot failure", "Could not mount the initrd boot module.");
                 }
                 initrd_ready = 1;
+                driver_register_system(DRIVER_CLASS_FILESYSTEM, "aos-initrd", "ready: cpio boot archive");
+                firmware_init();
+                if (firmware_count() > 0) {
+                    driver_register_system(DRIVER_CLASS_NETWORK, "aos-firmware", "ready: firmware blobs discovered");
+                } else {
+                    driver_register_system(DRIVER_CLASS_NETWORK, "aos-firmware", "ready: no firmware blobs bundled");
+                }
                 boot_log_ok("Starting initrd mount");
             } else {
                 char part_name[16] = "ram0p0";
@@ -324,9 +361,25 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
         boot_log_fail("Starting initrd mount");
         aos_panic("Boot failure", "The initrd boot module is missing.");
     }
-    vga_init_framebuffer(mb_info);
+    if (AOS_ENABLE_MUI_FRAMEBUFFER) {
+        vga_init_framebuffer(mb_info);
+        driver_register_system(DRIVER_CLASS_DISPLAY, "aos-framebuffer", "ready: MUI framebuffer console");
+        if (aos_boot_verbose) {
+            boot_log_ok("Starting framebuffer console");
+        }
+    } else {
+        vga_init_tty();
+        driver_register_system(DRIVER_CLASS_DISPLAY, "aos-vga-tty", "ready: VGA text console");
+        if (aos_boot_verbose) {
+            boot_log_ok("Starting TTY console");
+        }
+    }
+    input_init();
+    driver_register_system(DRIVER_CLASS_INPUT, "aos-input", "ready: keyboard event queue");
+    tty_init();
+    driver_register_system(DRIVER_CLASS_CORE, "aos-tty", "ready: terminal line discipline");
     if (aos_boot_verbose) {
-        boot_log_ok("Starting framebuffer console");
+        boot_log_ok("Starting TTY layer");
     }
     if (aos_boot_verbose) {
         partition_print_table();
@@ -339,14 +392,18 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
     }
     if (aosfs_disk && aosfs_part && aosfs_part->blkdev_id == aosfs_disk->id &&
         aosfs_mount_at(aosfs_part->blkdev_id, aosfs_part->offset) == 0) {
+        driver_register_system(DRIVER_CLASS_FILESYSTEM, "aos-aosfs", "ready: root filesystem mounted from ata0");
         boot_log_ok("Starting AOSFS mount at / from ata0");
     } else if (aosfs_part) {
         if (aosfs_mount(aosfs_part->blkdev_id) == 0) {
+            driver_register_system(DRIVER_CLASS_FILESYSTEM, "aos-aosfs", "ready: root filesystem mounted");
             boot_log_ok("Starting AOSFS mount at /");
         } else {
+            driver_register_system(DRIVER_CLASS_FILESYSTEM, "aos-aosfs", "warn: root mount failed");
             boot_log_warn("Starting AOSFS mount at /");
         }
     } else {
+        driver_register_system(DRIVER_CLASS_FILESYSTEM, "aos-aosfs", "warn: root partition missing");
         boot_log_warn("Starting AOSFS mount at /");
     }
 
@@ -369,8 +426,10 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
         fat32_seen = 1;
         if (fat32_init(fat32_part->start, fat32_part->end) == 0) {
             fat32_ready = 1;
+            driver_register_system(DRIVER_CLASS_FILESYSTEM, "aos-fat32", "ready: mounted at /mnt/fat32");
             boot_log_ok("Starting FAT32 mount at /mnt/fat32");
         } else {
+            driver_register_system(DRIVER_CLASS_FILESYSTEM, "aos-fat32", "warn: mount failed");
             boot_log_warn("Starting FAT32 mount at /mnt/fat32");
         }
     }
@@ -380,8 +439,10 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
         ext4_seen = 1;
         if (ext4_init(ext4_part->start, ext4_part->end) == 0) {
             ext4_ready = 1;
+            driver_register_system(DRIVER_CLASS_FILESYSTEM, "aos-ext4", "ready: mounted at /mnt/ext4");
             boot_log_ok("Starting EXT4 mount at /mnt/ext4");
         } else {
+            driver_register_system(DRIVER_CLASS_FILESYSTEM, "aos-ext4", "warn: mount failed");
             boot_log_warn("Starting EXT4 mount at /mnt/ext4");
         }
     }
@@ -408,6 +469,7 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
     boot_log_ok("Starting default user database");
 
     tmpfs_init();
+    driver_register_system(DRIVER_CLASS_FILESYSTEM, "aos-tmpfs", "ready: mounted at /tmp");
     boot_log_ok("Starting tmpfs mount at /tmp");
 
     // Setup Kernel Stack for GS
@@ -418,6 +480,7 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
 
     extern void init_syscall();
     init_syscall();
+    driver_register_system(DRIVER_CLASS_CORE, "aos-syscall", "ready: userspace syscall entry");
     boot_log_ok("Starting syscall entry");
 
     // Load user ELF from initrd and map PT_LOAD segments.

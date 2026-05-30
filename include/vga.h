@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 void vga_init_framebuffer(uint64_t mb_info);
+void vga_init_tty(void);
 void vga_clear(unsigned char color);
 void vga_print(const char* str, unsigned char color, int x, int y);
 void vga_scroll();

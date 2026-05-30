@@ -1,0 +1,44 @@
+================================================================================
+|   [ HOME ]  [ ABOUT ]  [ KERNEL ]  [ DRIVERS ]  [[ USERSPACE ]] [ DOWNLOAD ] |
+================================================================================
+
+USERSPACE & THE MUI EXPERIENCE
+------------------------------
+AOS is not just a kernel; it's a complete environment powered by
+some of the best tools in the open-source world.
+
+THE SHELL
+---------
+AOS features a custom ELF64 shell (`shell.elf`) that provides 
+a powerful command-line interface. 
+
+BUILT-IN TOOLS:
+---------------
+AOS integrates:
+- Busybox: The "Swiss Army Knife" of embedded Linux.
+- GNU Coreutils: Standard utilities for file management.
+
+MUI (MASTERED USER INTERFACE)
+-----------------------------
+While we love the command line, the future of AOS is MUI. 
+Currently, MUI provides a high-resolution framebuffer console 
+that sets the stage for a full graphical desktop experience.
+
+CUSTOM AOS UTILITIES:
+---------------------
+AOS includes specific tools for system management:
+- `lspci`: List all connected PCI devices.
+- `partitions`: View and manage disk partitions.
+- `mem`: Monitor memory usage.
+- `gfxdemo`: Experience the raw power of the MUI graphics engine.
+- `net`: Basic networking and connectivity tests.
+
+PACKAGES:
+---------
+Users can manage their system via `pakages.txt`. AOS aims to 
+have a decentralized package system where you control exactly 
+what is installed.
+
+--------------------------------------------------------------------------------
+Back to [ HOME ] | Proceed to [ DOWNLOAD ]
+================================================================================

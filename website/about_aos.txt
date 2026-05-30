@@ -1,0 +1,36 @@
+================================================================================
+|   [ HOME ]  [[ ABOUT ]]  [ KERNEL ]  [ DRIVERS ]  [ STORAGE ]  [ DOWNLOAD ]  |
+================================================================================
+
+WHAT IS AOS?
+------------
+AOS (Abhigyan Operating System) is a kernel developed from scratch by Oppeko.
+It is designed for the x86_64 architecture and follows a modular, 
+efficient design pattern.
+
+THE PHILOSOPHY
+--------------
+The motive behind AOS is simple yet powerful:
+"If you bought your hardware, why pay to use it?"
+
+AOS aims to eliminate the "software tax" and "bloat" often found in modern
+operating systems. It is open-sourced under the GPL 3.0 license, ensuring
+that the community always has access to the code.
+
+MEET THE DEVELOPER
+------------------
+AOS is the brainchild of Abhigyan Narayan (Oppeko). 
+Passionate about low-level systems and hardware freedom, Abhigyan has
+crafted this kernel to prove that a modern, functional OS can be 
+built without the unnecessary complexity of mainstream alternatives.
+
+THE VISION: MUI (Mastered User Interface)
+-----------------------------------------
+Inspired by Dragon Ball's "Ultra Instinct" (Mastered Self-Movement), 
+MUI is the AOS vision for a user interface that is fluid, powerful, 
+and "just works." It's more than just a GUI; it's a philosophy of 
+interaction.
+
+--------------------------------------------------------------------------------
+Back to [ HOME ]
+================================================================================
