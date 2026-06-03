@@ -432,6 +432,7 @@ void e1000_register_driver(void) {
                                          e1000_send_frame, e1000_recv_frame);
     if (net_index >= 0) {
         netdev_configure_ipv4((size_t)net_index, qemu_ip, 24, qemu_gateway, qemu_dns);
+        netdev_configure_ipv6_link_local((size_t)net_index);
     }
     serial_print("e1000: MMIO BAR0=0x");
     serial_print_hex32((uint32_t)phys_base);

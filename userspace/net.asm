@@ -9,6 +9,7 @@ global _start
 %define SYS_WRITE 1
 %define SYS_EXIT 60
 %define AOS_SYS_NETDEV_INFO 526
+%define AOS_SYS_NETDEV_STATS 535
 
 %define NET_TYPE_OFF 0
 %define NET_LINK_OFF 1
@@ -24,7 +25,22 @@ global _start
 %define NET_DNS_OFF 136
 %define NET_PREFIX_OFF 140
 %define NET_IPV4_CONFIGURED_OFF 141
-%define NET_STRUCT_SIZE 160
+%define NET_IPV6_CONFIGURED_OFF 142
+%define NET_IPV6_PREFIX_OFF 143
+%define NET_IPV6_OFF 146
+%define NET_IPV6_GATEWAY_OFF 162
+%define NET_IPV6_DNS_OFF 178
+%define NET_STRUCT_SIZE 208
+
+%define ST_TX_PACKETS_OFF 0
+%define ST_RX_PACKETS_OFF 8
+%define ST_TX_BYTES_OFF 16
+%define ST_RX_BYTES_OFF 24
+%define ST_TX_ERRORS_OFF 32
+%define ST_RX_ERRORS_OFF 40
+%define ST_TX_DROPPED_OFF 48
+%define ST_RX_DROPPED_OFF 56
+%define ST_STRUCT_SIZE 64
 
 _start:
     lea rsi, [rel header_msg]
@@ -137,6 +153,89 @@ _start:
     mov rdx, newline_msg_end - newline_msg
     call write_stdout
 .no_ipv4:
+    cmp byte [rel net_buf + NET_IPV6_CONFIGURED_OFF], 0
+    je .no_ipv6
+    lea rsi, [rel inet6_indent_msg]
+    mov rdx, inet6_indent_msg_end - inet6_indent_msg
+    call write_stdout
+    lea rbx, [rel net_buf + NET_IPV6_OFF]
+    call write_ipv6_from_rbx
+    lea rsi, [rel slash_msg]
+    mov rdx, slash_msg_end - slash_msg
+    call write_stdout
+    movzx edi, byte [rel net_buf + NET_IPV6_PREFIX_OFF]
+    call write_u64
+    lea rsi, [rel newline_msg]
+    mov rdx, newline_msg_end - newline_msg
+    call write_stdout
+    lea rbx, [rel net_buf + NET_IPV6_GATEWAY_OFF]
+    call ipv6_is_zero
+    test eax, eax
+    jnz .no_ipv6
+    lea rsi, [rel gateway6_indent_msg]
+    mov rdx, gateway6_indent_msg_end - gateway6_indent_msg
+    call write_stdout
+    lea rbx, [rel net_buf + NET_IPV6_GATEWAY_OFF]
+    call write_ipv6_from_rbx
+    lea rsi, [rel newline_msg]
+    mov rdx, newline_msg_end - newline_msg
+    call write_stdout
+.no_ipv6:
+    mov rax, AOS_SYS_NETDEV_STATS
+    mov rdi, r12
+    lea rsi, [rel stats_buf]
+    syscall
+    test rax, rax
+    js .skip_stats
+
+    lea rsi, [rel stats_indent_msg]
+    mov rdx, stats_indent_msg_end - stats_indent_msg
+    call write_stdout
+    mov rdi, [rel stats_buf + ST_RX_PACKETS_OFF]
+    call write_u64
+    lea rsi, [rel packets_bytes_sep_msg]
+    mov rdx, packets_bytes_sep_msg_end - packets_bytes_sep_msg
+    call write_stdout
+    mov rdi, [rel stats_buf + ST_RX_BYTES_OFF]
+    call write_u64
+    lea rsi, [rel tx_stats_msg]
+    mov rdx, tx_stats_msg_end - tx_stats_msg
+    call write_stdout
+    mov rdi, [rel stats_buf + ST_TX_PACKETS_OFF]
+    call write_u64
+    lea rsi, [rel packets_bytes_sep_msg]
+    mov rdx, packets_bytes_sep_msg_end - packets_bytes_sep_msg
+    call write_stdout
+    mov rdi, [rel stats_buf + ST_TX_BYTES_OFF]
+    call write_u64
+    lea rsi, [rel newline_msg]
+    mov rdx, newline_msg_end - newline_msg
+    call write_stdout
+
+    lea rsi, [rel stats_err_indent_msg]
+    mov rdx, stats_err_indent_msg_end - stats_err_indent_msg
+    call write_stdout
+    mov rdi, [rel stats_buf + ST_RX_ERRORS_OFF]
+    call write_u64
+    lea rsi, [rel dropped_msg]
+    mov rdx, dropped_msg_end - dropped_msg
+    call write_stdout
+    mov rdi, [rel stats_buf + ST_RX_DROPPED_OFF]
+    call write_u64
+    lea rsi, [rel tx_errors_msg]
+    mov rdx, tx_errors_msg_end - tx_errors_msg
+    call write_stdout
+    mov rdi, [rel stats_buf + ST_TX_ERRORS_OFF]
+    call write_u64
+    lea rsi, [rel dropped_msg]
+    mov rdx, dropped_msg_end - dropped_msg
+    call write_stdout
+    mov rdi, [rel stats_buf + ST_TX_DROPPED_OFF]
+    call write_u64
+    lea rsi, [rel newline_msg]
+    mov rdx, newline_msg_end - newline_msg
+    call write_stdout
+.skip_stats:
 
     inc r12
     jmp .loop
@@ -215,6 +314,37 @@ write_ipv4_from_rbx:
     movzx edi, byte [rbx + 3]
     jmp write_u64
 
+write_ipv6_from_rbx:
+    xor r14, r14
+.ipv6_loop:
+    movzx edi, byte [rbx + r14 * 2]
+    shl edi, 8
+    movzx eax, byte [rbx + r14 * 2 + 1]
+    or edi, eax
+    call write_hex16
+    inc r14
+    cmp r14, 8
+    jae .ipv6_done
+    lea rsi, [rel colon_msg]
+    mov rdx, colon_msg_end - colon_msg
+    call write_stdout
+    jmp .ipv6_loop
+.ipv6_done:
+    ret
+
+ipv6_is_zero:
+    xor eax, eax
+    xor ecx, ecx
+.zero_loop:
+    cmp byte [rbx + rcx], 0
+    jne .not_zero
+    inc ecx
+    cmp ecx, 16
+    jb .zero_loop
+    mov eax, 1
+.not_zero:
+    ret
+
 write_u64:
     lea rsi, [rel num_buf + 20]
     mov byte [rsi], 0
@@ -262,6 +392,14 @@ write_hex8:
     call write_hex_nibble
     ret
 
+write_hex16:
+    push rdi
+    shr edi, 8
+    call write_hex8
+    pop rdi
+    call write_hex8
+    ret
+
 write_stdout:
     mov rax, SYS_WRITE
     mov rdi, 1
@@ -271,6 +409,8 @@ write_stdout:
 section .bss
 net_buf:
     resb NET_STRUCT_SIZE
+stats_buf:
+    resb ST_STRUCT_SIZE
 one_char:
     resb 1
 num_buf:
@@ -306,6 +446,14 @@ inet_indent_msg:
     db "          inet "
 inet_indent_msg_end:
 
+inet6_indent_msg:
+    db "          inet6 "
+inet6_indent_msg_end:
+
+gateway6_indent_msg:
+    db "          gateway6 "
+gateway6_indent_msg_end:
+
 gateway_msg:
     db "  gateway "
 gateway_msg_end:
@@ -313,6 +461,30 @@ gateway_msg_end:
 dns_msg:
     db "  dns "
 dns_msg_end:
+
+stats_indent_msg:
+    db "          RX packets "
+stats_indent_msg_end:
+
+packets_bytes_sep_msg:
+    db " bytes "
+packets_bytes_sep_msg_end:
+
+tx_stats_msg:
+    db "  TX packets "
+tx_stats_msg_end:
+
+stats_err_indent_msg:
+    db "          RX errors "
+stats_err_indent_msg_end:
+
+dropped_msg:
+    db " dropped "
+dropped_msg_end:
+
+tx_errors_msg:
+    db "  TX errors "
+tx_errors_msg_end:
 
 up_msg:
     db "up  "

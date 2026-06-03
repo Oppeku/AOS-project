@@ -20,7 +20,7 @@ global _start
 %define NET_GATEWAY_OFF 132
 %define NET_DNS_OFF 136
 %define NET_IPV4_CONFIGURED_OFF 141
-%define NET_STRUCT_SIZE 160
+%define NET_STRUCT_SIZE 208
 %define TX_SIZE 1518
 %define RX_SIZE 1518
 
@@ -30,11 +30,28 @@ _start:
     cmp r12, 2
     jb usage
 
+    mov qword [rel iface_index], 0
     mov rsi, [r13]
     call detect_dns_mode
     mov r14, [r13 + 8]
+    cmp r12, 4
+    jb .load_netdev
+    mov rsi, [r13 + 8]
+    call is_dash_i
+    test eax, eax
+    jz .load_netdev
+    mov rsi, [r13 + 16]
+    call parse_iface_index
+    test eax, eax
+    js usage
+    mov [rel iface_index], rax
+    mov r14, [r13 + 24]
+    test r14, r14
+    jz usage
+
+.load_netdev:
     mov rax, AOS_SYS_NETDEV_INFO
-    xor rdi, rdi
+    mov rdi, [rel iface_index]
     lea rsi, [rel net_buf]
     syscall
     test rax, rax
@@ -70,7 +87,7 @@ _start:
 
     call build_icmp_echo
     mov rax, AOS_SYS_NETDEV_SEND
-    xor rdi, rdi
+    mov rdi, [rel iface_index]
     lea rsi, [rel tx_frame]
     mov rdx, 60
     syscall
@@ -81,7 +98,7 @@ _start:
 .icmp_recv_loop:
     push rcx
     mov rax, AOS_SYS_NETDEV_RECV
-    xor rdi, rdi
+    mov rdi, [rel iface_index]
     lea rsi, [rel rx_frame]
     mov rdx, RX_SIZE
     syscall
@@ -162,8 +179,13 @@ link_down:
     syscall
 
 no_ipv4:
-    lea rsi, [rel no_ipv4_msg]
-    mov rdx, no_ipv4_msg_end - no_ipv4_msg
+    lea rsi, [rel no_ipv4_prefix_msg]
+    mov rdx, no_ipv4_prefix_msg_end - no_ipv4_prefix_msg
+    call write_stdout
+    lea rsi, [rel net_buf + NET_NAME_OFF]
+    call write_cstring_stdout
+    lea rsi, [rel no_ipv4_suffix_msg]
+    mov rdx, no_ipv4_suffix_msg_end - no_ipv4_suffix_msg
     call write_stdout
     mov rax, SYS_EXIT
     mov rdi, 1
@@ -220,6 +242,37 @@ print_ping_header:
     lea rsi, [rel driver_close_msg]
     mov rdx, driver_close_msg_end - driver_close_msg
     jmp write_stdout
+
+is_dash_i:
+    xor eax, eax
+    test rsi, rsi
+    jz .done
+    cmp byte [rsi], '-'
+    jne .done
+    cmp byte [rsi + 1], 'i'
+    jne .done
+    cmp byte [rsi + 2], 0
+    jne .done
+    mov eax, 1
+.done:
+    ret
+
+parse_iface_index:
+    test rsi, rsi
+    jz .bad
+    mov al, [rsi]
+    cmp al, '0'
+    jb .bad
+    cmp al, '7'
+    ja .bad
+    cmp byte [rsi + 1], 0
+    jne .bad
+    sub al, '0'
+    movzx eax, al
+    ret
+.bad:
+    mov eax, -1
+    ret
 
 detect_dns_mode:
     mov byte [rel dns_mode], 0
@@ -336,6 +389,7 @@ parse_ipv4:
 
 resolve_dns_name:
     mov byte [rel dns_depth], 0
+    mov byte [rel dns_tries], 3
 .query_again:
     lea rsi, [rel net_buf + NET_DNS_OFF]
     lea rdi, [rel arp_ip]
@@ -346,7 +400,7 @@ resolve_dns_name:
 
     call build_dns_query
     mov rax, AOS_SYS_NETDEV_SEND
-    xor rdi, rdi
+    mov rdi, [rel iface_index]
     lea rsi, [rel tx_frame]
     movzx rdx, word [rel tx_len]
     syscall
@@ -362,11 +416,11 @@ resolve_dns_name:
     mov rdx, newline_msg_end - newline_msg
     call write_stdout
 
-    mov ecx, 700000
+    mov ecx, 900000
 .recv_loop:
     push rcx
     mov rax, AOS_SYS_NETDEV_RECV
-    xor rdi, rdi
+    mov rdi, [rel iface_index]
     lea rsi, [rel rx_frame]
     mov rdx, RX_SIZE
     syscall
@@ -382,6 +436,8 @@ resolve_dns_name:
     je .cname_retry
 .next:
     loop .recv_loop
+    dec byte [rel dns_tries]
+    jnz .query_again
 .fail:
     mov eax, 1
     ret
@@ -389,6 +445,7 @@ resolve_dns_name:
     inc byte [rel dns_depth]
     cmp byte [rel dns_depth], 3
     jae .fail
+    mov byte [rel dns_tries], 3
     jmp .query_again
 .ok:
     lea rsi, [rel dns_reply_msg]
@@ -428,7 +485,7 @@ choose_ping_arp_ip:
 resolve_arp:
     call build_arp_request
     mov rax, AOS_SYS_NETDEV_SEND
-    xor rdi, rdi
+    mov rdi, [rel iface_index]
     lea rsi, [rel tx_frame]
     mov rdx, 60
     syscall
@@ -448,7 +505,7 @@ resolve_arp:
 .recv_loop:
     push rcx
     mov rax, AOS_SYS_NETDEV_RECV
-    xor rdi, rdi
+    mov rdi, [rel iface_index]
     lea rsi, [rel rx_frame]
     mov rdx, RX_SIZE
     syscall
@@ -1080,9 +1137,13 @@ target_mac:
     resb 6
 tx_len:
     resw 1
+iface_index:
+    resq 1
 dns_mode:
     resb 1
 dns_depth:
+    resb 1
+dns_tries:
     resb 1
 target_text:
     resb 128
@@ -1099,8 +1160,8 @@ num_buf:
 
 section .rodata
 usage_msg:
-    db "usage: ping HOST", 10
-    db "examples: ping 10.0.2.2 | ping google.com", 10
+    db "usage: ping [-i IFACE] HOST", 10
+    db "examples: ping 10.0.2.2 | ping -i 1 10.0.2.2 | ping google.com", 10
 usage_msg_end:
 
 no_netdev_msg:
@@ -1111,9 +1172,13 @@ link_down_msg:
     db "ping: network link is down", 10
 link_down_msg_end:
 
-no_ipv4_msg:
-    db "ping: interface has no IPv4 address", 10
-no_ipv4_msg_end:
+no_ipv4_prefix_msg:
+    db "ping: "
+no_ipv4_prefix_msg_end:
+
+no_ipv4_suffix_msg:
+    db " has no IPv4 address", 10
+no_ipv4_suffix_msg_end:
 
 dns_fail_msg:
     db "ping: DNS lookup failed", 10

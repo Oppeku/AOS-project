@@ -15,12 +15,28 @@ global _start
 %define NET_MAC_OFF 2
 %define NET_NAME_OFF 16
 %define NET_DRIVER_OFF 32
-%define NET_STRUCT_SIZE 128
+%define NET_STRUCT_SIZE 208
 %define FRAME_SIZE 60
 
 _start:
+    xor r15, r15
+    mov rax, [rsp]
+    cmp rax, 2
+    jb .have_index
+    mov rsi, [rsp + 16]
+    mov al, [rsi]
+    cmp al, '0'
+    jb bad_index
+    cmp al, '7'
+    ja bad_index
+    cmp byte [rsi + 1], 0
+    jne bad_index
+    sub al, '0'
+    movzx r15, al
+
+.have_index:
     mov rax, AOS_SYS_NETDEV_INFO
-    xor rdi, rdi
+    mov rdi, r15
     lea rsi, [rel net_buf]
     syscall
     test rax, rax
@@ -29,7 +45,7 @@ _start:
     call build_test_frame
 
     mov rax, AOS_SYS_NETDEV_SEND
-    xor rdi, rdi
+    mov rdi, r15
     lea rsi, [rel frame_buf]
     mov rdx, FRAME_SIZE
     syscall
@@ -51,7 +67,7 @@ _start:
     call write_stdout
 
     mov rax, AOS_SYS_NETDEV_RECV
-    xor rdi, rdi
+    mov rdi, r15
     lea rsi, [rel rx_buf]
     mov rdx, 1518
     syscall
@@ -59,10 +75,11 @@ _start:
     js recv_fail
     jz no_rx
 
+    push rax
     lea rsi, [rel rx_msg]
     mov rdx, rx_msg_end - rx_msg
     call write_stdout
-    mov rdi, rax
+    pop rdi
     call write_u64
     lea rsi, [rel bytes_msg]
     mov rdx, bytes_msg_end - bytes_msg
@@ -83,6 +100,14 @@ done_ok:
 no_net:
     lea rsi, [rel no_net_msg]
     mov rdx, no_net_msg_end - no_net_msg
+    call write_stdout
+    mov rax, SYS_EXIT
+    mov rdi, 1
+    syscall
+
+bad_index:
+    lea rsi, [rel bad_index_msg]
+    mov rdx, bad_index_msg_end - bad_index_msg
     call write_stdout
     mov rax, SYS_EXIT
     mov rdi, 1
@@ -217,6 +242,10 @@ no_rx_msg_end:
 no_net_msg:
     db "netrawtest: no network interface", 10
 no_net_msg_end:
+
+bad_index_msg:
+    db "netrawtest: usage: netrawtest [0-7]", 10
+bad_index_msg_end:
 
 send_fail_msg:
     db "netrawtest: send failed", 10

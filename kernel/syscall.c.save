@@ -106,9 +106,6 @@ static inline void io_wait(void) {
 #define LINUX_F_SETFD 2
 #define LINUX_F_GETFL 3
 #define LINUX_F_SETFL 4
-#define LINUX_AF_INET 2
-#define LINUX_SOCK_STREAM 1
-#define LINUX_IPPROTO_TCP 6
 #define LINUX_TERMIOS_ICRNL 0000400U
 #define LINUX_TERMIOS_OPOST 0000001U
 #define LINUX_TERMIOS_CS8 0000060U
@@ -174,67 +171,6 @@ enum fd_kind {
     FD_KIND_PIPE_WRITER = 6,
     FD_KIND_TTY = 7,
     FD_KIND_NULL = 8,
-    FD_KIND_SOCKET = 9,
-};
-
-#define MAX_SOCKET_OBJECTS 8
-#define SOCKET_TX_FRAME_SIZE 1518
-#define SOCKET_RX_FRAME_SIZE 1518
-#define SOCKET_RX_BUFFER_SIZE 2048
-#define SOCKET_TCP_PORT_FIRST 40002
-#define SOCKET_TCP_PORT_LAST 60000
-#define SOCKET_TCP_BASE_SEQ 0xA0502026U
-#define SOCKET_DNS_PORT 40001
-#define SOCKET_DNS_TXID 0xA057
-#define SOCKET_DNS_NAME_MAX 128
-#define SOCKET_DNS_CACHE_ENTRIES 8
-#define SOCKET_DNS_CACHE_TTL_TICKS 6000ULL
-#define SOCKET_DNS_RECV_POLLS 250000
-#define SOCKET_DNS_RETRIES 3
-#define SOCKET_TCP_RETRIES 3
-
-enum socket_state {
-    SOCKET_STATE_FREE = 0,
-    SOCKET_STATE_CREATED = 1,
-    SOCKET_STATE_CONNECTED = 2,
-    SOCKET_STATE_CLOSED = 3,
-};
-
-struct socket_object {
-    uint8_t in_use;
-    uint8_t state;
-    uint8_t family;
-    uint8_t type;
-    uint8_t protocol;
-    uint8_t dev_index;
-    uint16_t local_port;
-    uint32_t refcount;
-    uint16_t remote_port;
-    uint32_t seq;
-    uint32_t ack;
-    uint8_t remote_ip[4];
-    uint8_t next_hop_ip[4];
-    uint8_t remote_mac[6];
-    uint8_t rx_buffer[SOCKET_RX_BUFFER_SIZE];
-    uint32_t rx_len;
-    uint32_t rx_off;
-};
-
-struct linux_sockaddr_in {
-    uint16_t sin_family;
-    uint16_t sin_port;
-    uint8_t sin_addr[4];
-    uint8_t sin_zero[8];
-} __attribute__((packed));
-
-struct dns_cache_entry {
-    uint8_t valid;
-    uint8_t dev_index;
-    uint8_t reserved[2];
-    uint32_t hits;
-    uint64_t expires_at;
-    char name[SOCKET_DNS_NAME_MAX];
-    uint8_t ipv4[4];
 };
 
 struct file_handle {
@@ -306,13 +242,7 @@ struct linux_pollfd {
 
 static struct file_handle g_file_handles[MAX_FILE_HANDLES];
 static struct pipe_object g_pipe_objects[MAX_PIPE_OBJECTS];
-static struct socket_object g_socket_objects[MAX_SOCKET_OBJECTS];
-static struct dns_cache_entry g_dns_cache[SOCKET_DNS_CACHE_ENTRIES];
-static uint16_t g_socket_next_port = SOCKET_TCP_PORT_FIRST;
 static void halt_forever(void);
-static int64_t socket_send_data(struct socket_object* sock, const uint8_t* data, uint64_t len);
-static int64_t socket_recv_data(struct socket_object* sock, uint8_t* dst, uint64_t len);
-static int socket_send_fin_close(struct socket_object* sock);
 
 static void write_msr_u64(uint32_t msr, uint64_t value) {
     asm volatile(
@@ -555,24 +485,6 @@ static struct pipe_object* get_pipe_for_fd(uint64_t fd, uint8_t expected_kind) {
     return get_pipe_object_by_index(entry->handle_index);
 }
 
-static struct socket_object* get_socket_by_index(int32_t socket_index) {
-    if (socket_index < 0 || socket_index >= MAX_SOCKET_OBJECTS) {
-        return NULL;
-    }
-    if (!g_socket_objects[socket_index].in_use) {
-        return NULL;
-    }
-    return &g_socket_objects[socket_index];
-}
-
-static struct socket_object* get_socket_for_fd(uint64_t fd) {
-    struct fd_entry* entry = get_fd_entry(fd);
-    if (!entry || entry->kind != FD_KIND_SOCKET) {
-        return NULL;
-    }
-    return get_socket_by_index(entry->handle_index);
-}
-
 static void release_file_handle(int32_t handle_index) {
     struct file_handle* handle = get_file_handle_by_index(handle_index);
     if (!handle) {
@@ -607,13 +519,6 @@ static void retain_fd_entry_refs(struct fd_entry* entry) {
         } else {
             pipe->write_refs++;
         }
-        return;
-    }
-    if (entry->kind == FD_KIND_SOCKET) {
-        struct socket_object* sock = get_socket_by_index(entry->handle_index);
-        if (sock) {
-            sock->refcount++;
-        }
     }
 }
 
@@ -632,30 +537,6 @@ static void release_pipe_ref(int32_t pipe_index, uint8_t kind) {
     }
 }
 
-static void release_socket_ref(int32_t socket_index) {
-    struct socket_object* sock = get_socket_by_index(socket_index);
-    if (!sock) {
-        return;
-    }
-    if (sock->refcount > 0) {
-        sock->refcount--;
-    }
-    if (sock->refcount == 0) {
-        local_memset(sock, 0, sizeof(*sock));
-    }
-}
-
-static void close_socket_ref(int32_t socket_index) {
-    struct socket_object* sock = get_socket_by_index(socket_index);
-    if (!sock) {
-        return;
-    }
-    if (sock->refcount <= 1) {
-        sock->state = SOCKET_STATE_CLOSED;
-    }
-    release_socket_ref(socket_index);
-}
-
 static void close_fd_internal(uint64_t fd) {
     struct fd_entry* entry = get_fd_entry(fd);
     if (!entry) {
@@ -665,8 +546,6 @@ static void close_fd_internal(uint64_t fd) {
         release_file_handle(entry->handle_index);
     } else if (entry->kind == FD_KIND_PIPE_READER || entry->kind == FD_KIND_PIPE_WRITER) {
         release_pipe_ref(entry->handle_index, entry->kind);
-    } else if (entry->kind == FD_KIND_SOCKET) {
-        close_socket_ref(entry->handle_index);
     }
     entry->kind = FD_KIND_FREE;
     entry->handle_index = -1;
@@ -712,57 +591,6 @@ static int64_t install_device_fd(uint8_t kind, int32_t device_id) {
 
     current_fd_table()[fd].kind = kind;
     current_fd_table()[fd].handle_index = device_id;
-    return fd;
-}
-
-static uint16_t allocate_socket_port(void) {
-    uint16_t port = g_socket_next_port++;
-
-    if (g_socket_next_port < SOCKET_TCP_PORT_FIRST || g_socket_next_port > SOCKET_TCP_PORT_LAST) {
-        g_socket_next_port = SOCKET_TCP_PORT_FIRST;
-    }
-    return port;
-}
-
-static int64_t install_socket_fd(int family, int type, int protocol) {
-    int socket_index = -1;
-    int fd = -1;
-
-    if (family != LINUX_AF_INET || type != LINUX_SOCK_STREAM) {
-        return -(int64_t)LINUX_EINVAL;
-    }
-    if (protocol != 0 && protocol != LINUX_IPPROTO_TCP) {
-        return -(int64_t)LINUX_EINVAL;
-    }
-
-    for (int i = 0; i < MAX_SOCKET_OBJECTS; i++) {
-        if (!g_socket_objects[i].in_use) {
-            socket_index = i;
-            break;
-        }
-    }
-    if (socket_index < 0) {
-        return -(int64_t)LINUX_EMFILE;
-    }
-
-    fd = allocate_fd_slot(3);
-    if (fd < 0) {
-        return -(int64_t)LINUX_EMFILE;
-    }
-
-    local_memset(&g_socket_objects[socket_index], 0, sizeof(g_socket_objects[socket_index]));
-    g_socket_objects[socket_index].in_use = 1;
-    g_socket_objects[socket_index].state = SOCKET_STATE_CREATED;
-    g_socket_objects[socket_index].family = (uint8_t)family;
-    g_socket_objects[socket_index].type = (uint8_t)type;
-    g_socket_objects[socket_index].protocol = LINUX_IPPROTO_TCP;
-    g_socket_objects[socket_index].dev_index = 0;
-    g_socket_objects[socket_index].refcount = 1;
-    g_socket_objects[socket_index].local_port = allocate_socket_port();
-    g_socket_objects[socket_index].seq = SOCKET_TCP_BASE_SEQ + (uint32_t)(socket_index * 0x1000U);
-
-    current_fd_table()[fd].kind = FD_KIND_SOCKET;
-    current_fd_table()[fd].handle_index = socket_index;
     return fd;
 }
 
@@ -852,17 +680,6 @@ static int64_t sys_poll(struct syscall_regs* regs) {
             } else if ((pfd->events & LINUX_POLLOUT) && pipe->size < sizeof(pipe->buffer)) {
                 revents |= LINUX_POLLOUT;
             }
-        } else if (entry->kind == FD_KIND_SOCKET) {
-            struct socket_object* sock = get_socket_by_index(entry->handle_index);
-            if (!sock) {
-                revents |= LINUX_POLLERR;
-            } else {
-                if (pfd->events & LINUX_POLLOUT) revents |= LINUX_POLLOUT;
-                if ((pfd->events & LINUX_POLLIN) && sock->rx_off < sock->rx_len) {
-                    revents |= LINUX_POLLIN;
-                }
-                if (sock->state == SOCKET_STATE_CLOSED) revents |= LINUX_POLLHUP;
-            }
         }
 
         pfd->revents = revents;
@@ -885,8 +702,6 @@ void syscall_release_fd_table_entries(struct fd_entry* table, size_t count) {
             release_file_handle(table[i].handle_index);
         } else if (table[i].kind == FD_KIND_PIPE_READER || table[i].kind == FD_KIND_PIPE_WRITER) {
             release_pipe_ref(table[i].handle_index, table[i].kind);
-        } else if (table[i].kind == FD_KIND_SOCKET) {
-            close_socket_ref(table[i].handle_index);
         }
         table[i].kind = FD_KIND_FREE;
         table[i].handle_index = -1;
@@ -1771,11 +1586,6 @@ static int64_t sys_write(struct syscall_regs* regs) {
     if (entry->kind == FD_KIND_NULL) {
         return (int64_t)len;
     }
-    if (entry->kind == FD_KIND_SOCKET) {
-        return socket_send_data(get_socket_by_index(entry->handle_index),
-                                (const uint8_t*)buf,
-                                len);
-    }
     if (entry->kind != FD_KIND_STDOUT && entry->kind != FD_KIND_STDERR && entry->kind != FD_KIND_TTY) {
         return -(int64_t)LINUX_EBADF;
     }
@@ -2065,11 +1875,6 @@ static int64_t sys_read(struct syscall_regs* regs) {
         return (int64_t)bytes_read;
     }
     if (entry->kind == FD_KIND_NULL) return 0;
-    if (entry->kind == FD_KIND_SOCKET) {
-        return socket_recv_data(get_socket_by_index(entry->handle_index),
-                                (uint8_t*)buf,
-                                len);
-    }
     if (entry->kind != FD_KIND_STDIN && entry->kind != FD_KIND_TTY) return -(int64_t)LINUX_EBADF;
     if (len == 0) return 0;
 
@@ -2302,912 +2107,6 @@ static int64_t sys_getppid(struct syscall_regs* regs) {
         return 1;
     }
     return (int64_t)proc->parent_pid;
-}
-
-static uint16_t sock_get_be16(const uint8_t* p) {
-    return (uint16_t)(((uint16_t)p[0] << 8) | p[1]);
-}
-
-static uint32_t sock_get_be32(const uint8_t* p) {
-    return ((uint32_t)p[0] << 24) |
-           ((uint32_t)p[1] << 16) |
-           ((uint32_t)p[2] << 8) |
-           (uint32_t)p[3];
-}
-
-static void sock_put_be16(uint8_t* p, uint16_t v) {
-    p[0] = (uint8_t)(v >> 8);
-    p[1] = (uint8_t)v;
-}
-
-static void sock_put_be32(uint8_t* p, uint32_t v) {
-    p[0] = (uint8_t)(v >> 24);
-    p[1] = (uint8_t)(v >> 16);
-    p[2] = (uint8_t)(v >> 8);
-    p[3] = (uint8_t)v;
-}
-
-static uint32_t sock_checksum_add(uint32_t sum, const uint8_t* data, uint16_t len) {
-    while (len > 1) {
-        sum += (uint16_t)(((uint16_t)data[0] << 8) | data[1]);
-        data += 2;
-        len -= 2;
-    }
-    if (len) {
-        sum += (uint16_t)((uint16_t)data[0] << 8);
-    }
-    return sum;
-}
-
-static uint16_t sock_checksum_finish(uint32_t sum) {
-    while (sum >> 16) {
-        sum = (sum & 0xffffU) + (sum >> 16);
-    }
-    return (uint16_t)(~sum);
-}
-
-static int sock_same_bytes(const uint8_t* a, const uint8_t* b, size_t n) {
-    for (size_t i = 0; i < n; i++) {
-        if (a[i] != b[i]) return 0;
-    }
-    return 1;
-}
-
-static int sock_ipv4_same_subnet(const uint8_t a[4], const uint8_t b[4], uint8_t prefix) {
-    uint32_t av;
-    uint32_t bv;
-    uint32_t mask;
-
-    if (prefix == 0) return 0;
-    if (prefix > 32) return 0;
-    av = ((uint32_t)a[0] << 24) | ((uint32_t)a[1] << 16) | ((uint32_t)a[2] << 8) | a[3];
-    bv = ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) | ((uint32_t)b[2] << 8) | b[3];
-    mask = prefix == 32 ? 0xffffffffU : (0xffffffffU << (32 - prefix));
-    return (av & mask) == (bv & mask);
-}
-
-static uint16_t sock_ipv4_checksum(uint8_t* ip) {
-    ip[10] = 0;
-    ip[11] = 0;
-    return sock_checksum_finish(sock_checksum_add(0, ip, 20));
-}
-
-static uint16_t sock_tcp_checksum(const struct netdev* dev,
-                                  const struct socket_object* sock,
-                                  const uint8_t* tcp,
-                                  uint16_t tcp_len) {
-    uint32_t sum = 0;
-    sum = sock_checksum_add(sum, dev->ipv4_addr, 4);
-    sum = sock_checksum_add(sum, sock->remote_ip, 4);
-    sum += LINUX_IPPROTO_TCP;
-    sum += tcp_len;
-    sum = sock_checksum_add(sum, tcp, tcp_len);
-    return sock_checksum_finish(sum);
-}
-
-static int sock_copy_user_name(char* dst, size_t dst_size, const char* src) {
-    size_t i = 0;
-
-    if (!dst || dst_size == 0 || !src) return -1;
-    while (i + 1 < dst_size && src[i] != '\0') {
-        dst[i] = src[i];
-        i++;
-    }
-    dst[i] = '\0';
-    if (i == 0 || src[i] != '\0') return -1;
-    return 0;
-}
-
-static int sock_name_equal(const char* a, const char* b) {
-    while (*a && *b) {
-        if (*a != *b) return 0;
-        a++;
-        b++;
-    }
-    return *a == '\0' && *b == '\0';
-}
-
-static int dns_cache_lookup(uint8_t dev_index, const char* name, uint8_t out_ip[4]) {
-    uint64_t now = timer_get_ticks();
-
-    for (size_t i = 0; i < SOCKET_DNS_CACHE_ENTRIES; i++) {
-        if (!g_dns_cache[i].valid) continue;
-        if (g_dns_cache[i].dev_index != dev_index) continue;
-        if (g_dns_cache[i].expires_at <= now) {
-            g_dns_cache[i].valid = 0;
-            continue;
-        }
-        if (sock_name_equal(g_dns_cache[i].name, name)) {
-            local_memcpy(out_ip, g_dns_cache[i].ipv4, 4);
-            g_dns_cache[i].hits++;
-            return 1;
-        }
-    }
-    return 0;
-}
-
-static void dns_cache_store(uint8_t dev_index, const char* name, const uint8_t ip[4]) {
-    size_t slot = 0;
-    uint64_t oldest = UINT64_MAX;
-    uint64_t now = timer_get_ticks();
-
-    for (size_t i = 0; i < SOCKET_DNS_CACHE_ENTRIES; i++) {
-        if (!g_dns_cache[i].valid ||
-            (g_dns_cache[i].dev_index == dev_index && sock_name_equal(g_dns_cache[i].name, name))) {
-            slot = i;
-            goto store;
-        }
-        if (g_dns_cache[i].expires_at < oldest) {
-            oldest = g_dns_cache[i].expires_at;
-            slot = i;
-        }
-    }
-
-store:
-    local_memset(&g_dns_cache[slot], 0, sizeof(g_dns_cache[slot]));
-    g_dns_cache[slot].valid = 1;
-    g_dns_cache[slot].dev_index = dev_index;
-    g_dns_cache[slot].expires_at = now + SOCKET_DNS_CACHE_TTL_TICKS;
-    sock_copy_user_name(g_dns_cache[slot].name, sizeof(g_dns_cache[slot].name), name);
-    local_memcpy(g_dns_cache[slot].ipv4, ip, 4);
-}
-
-static uint16_t sock_encode_dns_qname(uint8_t* out, const char* name) {
-    uint8_t* start = out;
-
-    while (*name) {
-        uint8_t* len = out++;
-        uint8_t count = 0;
-        while (*name && *name != '.') {
-            if (count >= 63) return 0;
-            *out++ = (uint8_t)*name++;
-            count++;
-        }
-        if (count == 0) return 0;
-        *len = count;
-        if (*name == '.') name++;
-    }
-    *out++ = 0;
-    return (uint16_t)(out - start);
-}
-
-static uint16_t sock_build_dns_query(const struct netdev* dev,
-                                     const uint8_t dns_mac[6],
-                                     const char* name,
-                                     uint8_t* frame) {
-    uint8_t* ip = frame + 14;
-    uint8_t* udp = frame + 34;
-    uint8_t* dns = frame + 42;
-    uint8_t* qname = dns + 12;
-    uint16_t qlen;
-    uint16_t dns_len;
-    uint16_t udp_len;
-    uint16_t ip_len;
-    uint16_t ip_sum;
-
-    local_memset(frame, 0, SOCKET_TX_FRAME_SIZE);
-    local_memcpy(frame, dns_mac, 6);
-    local_memcpy(frame + 6, dev->mac, 6);
-    frame[12] = 0x08;
-    frame[13] = 0x00;
-
-    ip[0] = 0x45;
-    ip[8] = 64;
-    ip[9] = 17;
-    local_memcpy(ip + 12, dev->ipv4_addr, 4);
-    local_memcpy(ip + 16, dev->ipv4_dns, 4);
-
-    sock_put_be16(udp + 0, SOCKET_DNS_PORT);
-    sock_put_be16(udp + 2, 53);
-
-    sock_put_be16(dns + 0, SOCKET_DNS_TXID);
-    sock_put_be16(dns + 2, 0x0100);
-    sock_put_be16(dns + 4, 1);
-    qlen = sock_encode_dns_qname(qname, name);
-    if (qlen == 0) return 0;
-    sock_put_be16(qname + qlen, 1);
-    sock_put_be16(qname + qlen + 2, 1);
-
-    dns_len = (uint16_t)(12 + qlen + 4);
-    udp_len = (uint16_t)(8 + dns_len);
-    ip_len = (uint16_t)(20 + udp_len);
-    sock_put_be16(udp + 4, udp_len);
-    sock_put_be16(ip + 2, ip_len);
-    ip_sum = sock_ipv4_checksum(ip);
-    sock_put_be16(ip + 10, ip_sum);
-    return (uint16_t)(14 + ip_len);
-}
-
-static const uint8_t* sock_skip_dns_name(const uint8_t* p, const uint8_t* end) {
-    while (p < end) {
-        uint8_t len = *p++;
-        if (len == 0) return p;
-        if ((len & 0xc0) == 0xc0) {
-            if (p >= end) return end;
-            return p + 1;
-        }
-        p += len;
-    }
-    return end;
-}
-
-static void sock_decode_dns_name(const uint8_t* msg,
-                                 const uint8_t* p,
-                                 const uint8_t* end,
-                                 char* out,
-                                 size_t out_size) {
-    size_t out_i = 0;
-    uint32_t jumps = 0;
-
-    if (!out || out_size == 0) return;
-    while (p < end && jumps < 24 && out_i + 1 < out_size) {
-        uint8_t len = *p++;
-        if (len == 0) break;
-        if ((len & 0xc0) == 0xc0) {
-            uint16_t off;
-            if (p >= end) break;
-            off = (uint16_t)(((uint16_t)(len & 0x3f) << 8) | *p);
-            p = msg + off;
-            jumps++;
-            continue;
-        }
-        if (out_i && out_i + 1 < out_size) out[out_i++] = '.';
-        while (len-- && p < end && out_i + 1 < out_size) {
-            out[out_i++] = (char)*p++;
-        }
-    }
-    out[out_i] = '\0';
-}
-
-static int sock_parse_dns_response(const struct netdev* dev,
-                                   const uint8_t* frame,
-                                   int len,
-                                   uint8_t out_ip[4],
-                                   char cname[SOCKET_DNS_NAME_MAX]) {
-    const uint8_t* msg;
-    const uint8_t* p;
-    const uint8_t* end = frame + len;
-    uint16_t qd;
-    uint16_t an;
-
-    if (len < 60) return 0;
-    if (frame[12] != 0x08 || frame[13] != 0x00) return 0;
-    if (frame[23] != 17) return 0;
-    if (!sock_same_bytes(frame + 26, dev->ipv4_dns, 4)) return 0;
-    if (!sock_same_bytes(frame + 30, dev->ipv4_addr, 4)) return 0;
-    if (sock_get_be16(frame + 34) != 53) return 0;
-    if (sock_get_be16(frame + 36) != SOCKET_DNS_PORT) return 0;
-
-    msg = frame + 42;
-    if (sock_get_be16(msg) != SOCKET_DNS_TXID) return 0;
-    if ((msg[2] & 0x80) == 0) return 0;
-    if ((msg[3] & 0x0f) != 0) return -1;
-
-    qd = sock_get_be16(msg + 4);
-    an = sock_get_be16(msg + 6);
-    p = msg + 12;
-    for (uint16_t i = 0; i < qd; i++) {
-        p = sock_skip_dns_name(p, end);
-        if (p + 4 > end) return 0;
-        p += 4;
-    }
-    for (uint16_t i = 0; i < an; i++) {
-        uint16_t type;
-        uint16_t klass;
-        uint16_t rdlen;
-        p = sock_skip_dns_name(p, end);
-        if (p + 10 > end) return 0;
-        type = sock_get_be16(p);
-        klass = sock_get_be16(p + 2);
-        rdlen = sock_get_be16(p + 8);
-        p += 10;
-        if (p + rdlen > end) return 0;
-        if (klass == 1 && type == 1 && rdlen == 4) {
-            local_memcpy(out_ip, p, 4);
-            return 1;
-        }
-        if (klass == 1 && type == 5 && cname) {
-            sock_decode_dns_name(msg, p, end, cname, SOCKET_DNS_NAME_MAX);
-        }
-        p += rdlen;
-    }
-    if (cname && cname[0]) return 2;
-    return -1;
-}
-
-static uint16_t sock_build_arp_request(const struct netdev* dev,
-                                       const uint8_t target_ip[4],
-                                       uint8_t* frame) {
-    local_memset(frame, 0, SOCKET_TX_FRAME_SIZE);
-    for (size_t i = 0; i < 6; i++) frame[i] = 0xff;
-    local_memcpy(frame + 6, dev->mac, 6);
-    frame[12] = 0x08;
-    frame[13] = 0x06;
-    sock_put_be16(frame + 14, 1);
-    sock_put_be16(frame + 16, 0x0800);
-    frame[18] = 6;
-    frame[19] = 4;
-    sock_put_be16(frame + 20, 1);
-    local_memcpy(frame + 22, dev->mac, 6);
-    local_memcpy(frame + 28, dev->ipv4_addr, 4);
-    local_memcpy(frame + 38, target_ip, 4);
-    return 42;
-}
-
-static int sock_parse_arp_reply(const uint8_t* frame,
-                                int len,
-                                const uint8_t target_ip[4],
-                                const uint8_t local_ip[4],
-                                uint8_t out_mac[6]) {
-    if (len < 42) return 0;
-    if (frame[12] != 0x08 || frame[13] != 0x06) return 0;
-    if (sock_get_be16(frame + 20) != 2) return 0;
-    if (!sock_same_bytes(frame + 28, target_ip, 4)) return 0;
-    if (!sock_same_bytes(frame + 38, local_ip, 4)) return 0;
-    local_memcpy(out_mac, frame + 22, 6);
-    return 1;
-}
-
-static int sock_arp_lookup(struct socket_object* sock, const struct netdev* dev) {
-    uint8_t tx[SOCKET_TX_FRAME_SIZE];
-    uint8_t rx[SOCKET_RX_FRAME_SIZE];
-    uint16_t len;
-
-    len = sock_build_arp_request(dev, sock->next_hop_ip, tx);
-    if (netdev_send(sock->dev_index, tx, len) < 0) {
-        return -1;
-    }
-    for (int i = 0; i < 400000; i++) {
-        int n = netdev_recv(sock->dev_index, rx, sizeof(rx));
-        if (n < 0) return -1;
-        if (sock_parse_arp_reply(rx, n, sock->next_hop_ip, dev->ipv4_addr, sock->remote_mac)) {
-            return 0;
-        }
-    }
-    return -1;
-}
-
-static uint16_t sock_build_tcp_frame(struct socket_object* sock,
-                                     uint8_t flags,
-                                     const uint8_t* payload,
-                                     uint16_t payload_len,
-                                     uint8_t* frame) {
-    const struct netdev* dev = netdev_get(sock->dev_index);
-    uint8_t* ip = frame + 14;
-    uint8_t* tcp = frame + 34;
-    uint16_t tcp_len = (uint16_t)(20 + payload_len);
-    uint16_t total_len = (uint16_t)(20 + tcp_len);
-    uint16_t ip_sum;
-    uint16_t tcp_sum;
-
-    local_memset(frame, 0, SOCKET_TX_FRAME_SIZE);
-    local_memcpy(frame, sock->remote_mac, 6);
-    local_memcpy(frame + 6, dev->mac, 6);
-    frame[12] = 0x08;
-    frame[13] = 0x00;
-
-    ip[0] = 0x45;
-    ip[1] = 0;
-    sock_put_be16(ip + 2, total_len);
-    sock_put_be16(ip + 4, 0xa055);
-    ip[8] = 64;
-    ip[9] = LINUX_IPPROTO_TCP;
-    local_memcpy(ip + 12, dev->ipv4_addr, 4);
-    local_memcpy(ip + 16, sock->remote_ip, 4);
-    ip_sum = sock_ipv4_checksum(ip);
-    sock_put_be16(ip + 10, ip_sum);
-
-    sock_put_be16(tcp + 0, sock->local_port);
-    sock_put_be16(tcp + 2, sock->remote_port);
-    sock_put_be32(tcp + 4, sock->seq);
-    sock_put_be32(tcp + 8, sock->ack);
-    tcp[12] = 0x50;
-    tcp[13] = flags;
-    sock_put_be16(tcp + 14, 64240);
-    if (payload_len && payload) {
-        local_memcpy(tcp + 20, payload, payload_len);
-    }
-    tcp_sum = sock_tcp_checksum(dev, sock, tcp, tcp_len);
-    sock_put_be16(tcp + 16, tcp_sum);
-    return (uint16_t)(14 + total_len);
-}
-
-static int sock_parse_tcp_frame(struct socket_object* sock,
-                                const uint8_t* frame,
-                                int len,
-                                uint8_t* flags,
-                                uint32_t* seq,
-                                uint32_t* ack,
-                                const uint8_t** payload,
-                                uint16_t* payload_len) {
-    const struct netdev* dev = netdev_get(sock->dev_index);
-    uint16_t ip_len;
-    uint16_t ip_hlen;
-    uint16_t tcp_hlen;
-
-    if (!dev) return 0;
-    if (len < 54) return 0;
-    if (frame[12] != 0x08 || frame[13] != 0x00) return 0;
-    if (frame[23] != LINUX_IPPROTO_TCP) return 0;
-    if (!sock_same_bytes(frame + 26, sock->remote_ip, 4)) return 0;
-    if (!sock_same_bytes(frame + 30, dev->ipv4_addr, 4)) return 0;
-    if (sock_get_be16(frame + 34) != sock->remote_port) return 0;
-    if (sock_get_be16(frame + 36) != sock->local_port) return 0;
-    ip_hlen = (uint16_t)((frame[14] & 0x0f) * 4);
-    if (ip_hlen < 20) return 0;
-    tcp_hlen = (uint16_t)((frame[14 + ip_hlen + 12] >> 4) * 4);
-    if (tcp_hlen < 20) return 0;
-    ip_len = sock_get_be16(frame + 16);
-    if (ip_len < ip_hlen + tcp_hlen) return 0;
-    *flags = frame[14 + ip_hlen + 13];
-    *seq = sock_get_be32(frame + 14 + ip_hlen + 4);
-    if (ack) *ack = sock_get_be32(frame + 14 + ip_hlen + 8);
-    *payload = frame + 14 + ip_hlen + tcp_hlen;
-    *payload_len = (uint16_t)(ip_len - ip_hlen - tcp_hlen);
-    return 1;
-}
-
-static int sock_wait_tcp_ticks(struct socket_object* sock,
-                               uint8_t want_flags,
-                               uint64_t timeout_ticks,
-                               uint8_t* out_flags,
-                               uint32_t* out_seq,
-                               uint32_t* out_ack,
-                               const uint8_t** out_payload,
-                               uint16_t* out_payload_len) {
-    static uint8_t rx[SOCKET_RX_FRAME_SIZE];
-    uint64_t start = timer_get_ticks();
-
-    if (timeout_ticks == 0) timeout_ticks = 1;
-
-    while (timer_get_ticks() - start < timeout_ticks) {
-        uint8_t flags = 0;
-        uint32_t seq = 0;
-        uint32_t ack = 0;
-        const uint8_t* payload = NULL;
-        uint16_t payload_len = 0;
-        int n = netdev_recv(sock->dev_index, rx, sizeof(rx));
-        if (n < 0) return -1;
-        if (!sock_parse_tcp_frame(sock, rx, n, &flags, &seq, &ack, &payload, &payload_len)) {
-            continue;
-        }
-        if ((want_flags == 0x12 && (flags & 0x12) == 0x12) ||
-            (want_flags != 0x12 && (payload_len > 0 || (flags & 0x01) || (flags & 0x04)))) {
-            if (out_flags) *out_flags = flags;
-            if (out_seq) *out_seq = seq;
-            if (out_ack) *out_ack = ack;
-            if (out_payload) *out_payload = payload;
-            if (out_payload_len) *out_payload_len = payload_len;
-            return 0;
-        }
-    }
-    return -1;
-}
-
-static int sock_wait_tcp(struct socket_object* sock,
-                         uint8_t want_flags,
-                         uint8_t* out_flags,
-                         uint32_t* out_seq,
-                         uint32_t* out_ack,
-                         const uint8_t** out_payload,
-                         uint16_t* out_payload_len) {
-    uint32_t frequency = timer_get_frequency();
-    if (frequency == 0) frequency = 100;
-    return sock_wait_tcp_ticks(sock,
-                               want_flags,
-                               (uint64_t)frequency * 8ULL,
-                               out_flags,
-                               out_seq,
-                               out_ack,
-                               out_payload,
-                               out_payload_len);
-}
-
-static int socket_send_ack(struct socket_object* sock) {
-    uint8_t tx[SOCKET_TX_FRAME_SIZE];
-    uint16_t len = sock_build_tcp_frame(sock, 0x10, NULL, 0, tx);
-    return netdev_send(sock->dev_index, tx, len);
-}
-
-static void socket_store_rx_payload(struct socket_object* sock,
-                                    const uint8_t* payload,
-                                    uint16_t payload_len,
-                                    uint32_t seq) {
-    uint16_t store = payload_len;
-
-    if (!sock || !payload || payload_len == 0) {
-        return;
-    }
-    if (store > SOCKET_RX_BUFFER_SIZE) store = SOCKET_RX_BUFFER_SIZE;
-    local_memcpy(sock->rx_buffer, payload, store);
-    sock->rx_len = store;
-    sock->rx_off = 0;
-    sock->ack = seq + payload_len;
-    socket_send_ack(sock);
-}
-
-static int sock_wait_ack(struct socket_object* sock, uint32_t expected_ack, uint64_t timeout_ticks) {
-    static uint8_t rx[SOCKET_RX_FRAME_SIZE];
-    uint64_t start = timer_get_ticks();
-
-    if (timeout_ticks == 0) timeout_ticks = 1;
-
-    while (timer_get_ticks() - start < timeout_ticks) {
-        uint8_t flags = 0;
-        uint32_t seq = 0;
-        uint32_t ack = 0;
-        const uint8_t* payload = NULL;
-        uint16_t payload_len = 0;
-        int n = netdev_recv(sock->dev_index, rx, sizeof(rx));
-        if (n < 0) return -1;
-        if (!sock_parse_tcp_frame(sock, rx, n, &flags, &seq, &ack, &payload, &payload_len)) {
-            continue;
-        }
-        if (flags & 0x04) {
-            sock->state = SOCKET_STATE_CLOSED;
-            return -1;
-        }
-        if (payload_len > 0) {
-            socket_store_rx_payload(sock, payload, payload_len, seq);
-        }
-        if ((int32_t)(ack - expected_ack) >= 0) {
-            return 0;
-        }
-        if (flags & 0x01) {
-            sock->ack = seq + 1;
-            socket_send_ack(sock);
-            sock->state = SOCKET_STATE_CLOSED;
-            return -1;
-        }
-    }
-    return -1;
-}
-
-__attribute__((unused)) static int socket_send_fin_close(struct socket_object* sock) {
-    uint8_t tx[SOCKET_TX_FRAME_SIZE];
-    static uint8_t rx[SOCKET_RX_FRAME_SIZE];
-    uint64_t start;
-    uint64_t timeout_ticks;
-    uint32_t frequency = timer_get_frequency();
-    uint32_t fin_seq;
-
-    if (!sock || sock->state != SOCKET_STATE_CONNECTED) {
-        return -1;
-    }
-
-    fin_seq = sock->seq;
-    {
-        uint16_t len = sock_build_tcp_frame(sock, 0x11, NULL, 0, tx);
-        if (netdev_send(sock->dev_index, tx, len) < 0) {
-            return -1;
-        }
-    }
-    sock->seq++;
-
-    if (frequency == 0) frequency = 100;
-    timeout_ticks = (uint64_t)frequency * 2ULL;
-    start = timer_get_ticks();
-    while (timer_get_ticks() - start < timeout_ticks) {
-        uint8_t flags = 0;
-        uint32_t seq = 0;
-        uint32_t ack = 0;
-        const uint8_t* payload = NULL;
-        uint16_t payload_len = 0;
-        int n = netdev_recv(sock->dev_index, rx, sizeof(rx));
-        if (n < 0) {
-            sock->state = SOCKET_STATE_CLOSED;
-            return -1;
-        }
-        if (!sock_parse_tcp_frame(sock, rx, n, &flags, &seq, &ack, &payload, &payload_len)) {
-            continue;
-        }
-        if (payload_len > 0) {
-            sock->ack = seq + payload_len;
-            socket_send_ack(sock);
-            continue;
-        }
-        if ((flags & 0x01) != 0) {
-            sock->ack = seq + 1;
-            socket_send_ack(sock);
-            sock->state = SOCKET_STATE_CLOSED;
-            return 0;
-        }
-        if ((flags & 0x10) != 0 && ack == fin_seq + 1) {
-            sock->state = SOCKET_STATE_CLOSED;
-            return 0;
-        }
-        if ((flags & 0x04) != 0) {
-            sock->state = SOCKET_STATE_CLOSED;
-            return -1;
-        }
-    }
-
-    sock->state = SOCKET_STATE_CLOSED;
-    return -1;
-}
-
-static int64_t sys_socket(struct syscall_regs* regs) {
-    return install_socket_fd((int)regs->rdi, (int)regs->rsi, (int)regs->rdx);
-}
-
-static int64_t sys_socket_bind_netdev(struct syscall_regs* regs) {
-    struct socket_object* sock = get_socket_for_fd(regs->rdi);
-    uint64_t index = regs->rsi;
-    const struct netdev* dev;
-
-    if (!sock) return -(int64_t)LINUX_EBADF;
-    if (index > 255U) return -(int64_t)LINUX_EINVAL;
-    dev = netdev_get((size_t)index);
-    if (!dev) return -(int64_t)LINUX_ENODEV;
-    if (sock->state != SOCKET_STATE_CREATED) return -(int64_t)LINUX_EINVAL;
-    sock->dev_index = (uint8_t)index;
-    return 0;
-}
-
-static int64_t sys_connect(struct syscall_regs* regs) {
-    struct socket_object* sock = get_socket_for_fd(regs->rdi);
-    const struct linux_sockaddr_in* addr = (const struct linux_sockaddr_in*)(uintptr_t)regs->rsi;
-    uint64_t addr_len = regs->rdx;
-    const struct netdev* dev;
-    uint8_t tx[SOCKET_TX_FRAME_SIZE];
-    uint8_t flags = 0;
-    uint32_t reply_seq = 0;
-    uint32_t reply_ack = 0;
-    const uint8_t* payload = NULL;
-    uint16_t payload_len = 0;
-
-    if (!sock) return -(int64_t)LINUX_EBADF;
-    if (!addr || addr_len < sizeof(*addr)) return -(int64_t)LINUX_EFAULT;
-    if (addr->sin_family != LINUX_AF_INET) return -(int64_t)LINUX_EINVAL;
-    dev = netdev_get(sock->dev_index);
-    if (!dev || !dev->link_up || !dev->ipv4_configured) return -(int64_t)LINUX_ENODEV;
-
-    local_memcpy(sock->remote_ip, addr->sin_addr, 4);
-    sock->remote_port = sock_get_be16((const uint8_t*)&addr->sin_port);
-    if (sock_ipv4_same_subnet(sock->remote_ip, dev->ipv4_addr, dev->ipv4_prefix)) {
-        local_memcpy(sock->next_hop_ip, sock->remote_ip, 4);
-    } else {
-        local_memcpy(sock->next_hop_ip, dev->ipv4_gateway, 4);
-    }
-    if (sock_arp_lookup(sock, dev) != 0) {
-        serial_print("socket: ARP failed\n");
-        return -(int64_t)LINUX_EIO;
-    }
-
-    sock->ack = 0;
-    for (int attempt = 0; attempt < SOCKET_TCP_RETRIES; attempt++) {
-        uint16_t len = sock_build_tcp_frame(sock, 0x02, NULL, 0, tx);
-        if (netdev_send(sock->dev_index, tx, len) < 0) {
-            serial_print("socket: SYN send failed\n");
-            return -(int64_t)LINUX_EIO;
-        }
-        if (sock_wait_tcp_ticks(sock,
-                                0x12,
-                                (uint64_t)(timer_get_frequency() ? timer_get_frequency() : 100) * 2ULL,
-                                &flags,
-                                &reply_seq,
-                                &reply_ack,
-                                &payload,
-                                &payload_len) == 0) {
-            break;
-        }
-        flags = 0;
-    }
-    if ((flags & 0x12) != 0x12) {
-        serial_print("socket: SYN-ACK wait failed\n");
-        return -(int64_t)LINUX_EIO;
-    }
-    (void)payload;
-    (void)payload_len;
-    if ((flags & 0x12) != 0x12 || reply_ack != sock->seq + 1) {
-        serial_print("socket: unexpected TCP flags\n");
-        return -(int64_t)LINUX_EIO;
-    }
-    sock->seq++;
-    sock->ack = reply_seq + 1;
-    socket_send_ack(sock);
-    sock->state = SOCKET_STATE_CONNECTED;
-    return 0;
-}
-
-static int64_t socket_send_data(struct socket_object* sock, const uint8_t* data, uint64_t len) {
-    uint8_t tx[SOCKET_TX_FRAME_SIZE];
-    uint64_t sent = 0;
-
-    if (!sock || sock->state != SOCKET_STATE_CONNECTED) return -(int64_t)LINUX_EBADF;
-    if (!data && len > 0) return -(int64_t)LINUX_EFAULT;
-    while (sent < len) {
-        uint16_t chunk = (uint16_t)(len - sent);
-        uint32_t seq_before;
-        uint32_t expected_ack;
-        int acked = 0;
-        if (chunk > 1024) chunk = 1024;
-        seq_before = sock->seq;
-        expected_ack = seq_before + chunk;
-        for (int attempt = 0; attempt < SOCKET_TCP_RETRIES; attempt++) {
-            uint16_t frame_len = sock_build_tcp_frame(sock, 0x18, data + sent, chunk, tx);
-            if (netdev_send(sock->dev_index, tx, frame_len) < 0) {
-                return sent ? (int64_t)sent : -(int64_t)LINUX_EIO;
-            }
-            if (sock_wait_ack(sock,
-                              expected_ack,
-                              (uint64_t)(timer_get_frequency() ? timer_get_frequency() : 100) * 2ULL) == 0) {
-                acked = 1;
-                break;
-            }
-            if (sock->state == SOCKET_STATE_CLOSED) {
-                return sent ? (int64_t)sent : -(int64_t)LINUX_EIO;
-            }
-        }
-        if (!acked) {
-            sock->seq = seq_before;
-            return sent ? (int64_t)sent : -(int64_t)LINUX_EIO;
-        }
-        sock->seq = expected_ack;
-        sent += chunk;
-    }
-    return (int64_t)sent;
-}
-
-static int64_t socket_recv_data(struct socket_object* sock, uint8_t* dst, uint64_t len) {
-    const uint8_t* payload = NULL;
-    uint16_t payload_len = 0;
-    uint8_t flags = 0;
-    uint32_t seq = 0;
-    uint32_t ack = 0;
-    uint64_t copied = 0;
-
-    if (!sock) return -(int64_t)LINUX_EBADF;
-    if (sock->state == SOCKET_STATE_CLOSED && sock->rx_off >= sock->rx_len) return 0;
-    if (sock->state != SOCKET_STATE_CONNECTED && sock->state != SOCKET_STATE_CLOSED) return -(int64_t)LINUX_EBADF;
-    if (!dst && len > 0) return -(int64_t)LINUX_EFAULT;
-    if (len == 0) return 0;
-
-    while (copied < len) {
-        if (sock->rx_off < sock->rx_len) {
-            uint64_t avail = sock->rx_len - sock->rx_off;
-            if (avail > len - copied) avail = len - copied;
-            local_memcpy(dst + copied, sock->rx_buffer + sock->rx_off, avail);
-            sock->rx_off += (uint32_t)avail;
-            copied += avail;
-            if (copied > 0) break;
-            continue;
-        }
-
-        sock->rx_off = 0;
-        sock->rx_len = 0;
-        if (sock_wait_tcp(sock, 0x10, &flags, &seq, &ack, &payload, &payload_len) != 0) {
-            break;
-        }
-        (void)ack;
-        if (flags & 0x04) {
-            sock->state = SOCKET_STATE_CLOSED;
-            break;
-        }
-        if (payload_len > 0 && (flags & 0x01)) {
-            uint16_t store = payload_len;
-            if (store > SOCKET_RX_BUFFER_SIZE) store = SOCKET_RX_BUFFER_SIZE;
-            local_memcpy(sock->rx_buffer, payload, store);
-            sock->rx_len = store;
-            sock->rx_off = 0;
-            sock->ack = seq + payload_len + 1U;
-            socket_send_ack(sock);
-            sock->state = SOCKET_STATE_CLOSED;
-            continue;
-        }
-        if (payload_len > 0) {
-            socket_store_rx_payload(sock, payload, payload_len, seq);
-            continue;
-        }
-        if (flags & 0x01) {
-            sock->ack = seq + 1;
-            socket_send_ack(sock);
-            sock->state = SOCKET_STATE_CLOSED;
-            break;
-        }
-    }
-    return (int64_t)copied;
-}
-
-static int64_t sys_sendto(struct syscall_regs* regs) {
-    struct socket_object* sock = get_socket_for_fd(regs->rdi);
-    const uint8_t* buf = (const uint8_t*)(uintptr_t)regs->rsi;
-    uint64_t len = regs->rdx;
-    (void)regs->r10;
-    (void)regs->r8;
-    (void)regs->r9;
-    return socket_send_data(sock, buf, len);
-}
-
-static int64_t sys_recvfrom(struct syscall_regs* regs) {
-    struct socket_object* sock = get_socket_for_fd(regs->rdi);
-    uint8_t* buf = (uint8_t*)(uintptr_t)regs->rsi;
-    uint64_t len = regs->rdx;
-    (void)regs->r10;
-    (void)regs->r8;
-    (void)regs->r9;
-    return socket_recv_data(sock, buf, len);
-}
-
-static int64_t sys_dns_lookup(struct syscall_regs* regs) {
-    const char* user_name = (const char*)(uintptr_t)regs->rdi;
-    uint8_t* out_ip = (uint8_t*)(uintptr_t)regs->rsi;
-    uint64_t requested_dev = regs->rdx;
-    const struct netdev* dev;
-    struct socket_object dns_sock;
-    uint8_t tx[SOCKET_TX_FRAME_SIZE];
-    uint8_t rx[SOCKET_RX_FRAME_SIZE];
-    uint8_t answer[4];
-    char name[SOCKET_DNS_NAME_MAX];
-    char current[SOCKET_DNS_NAME_MAX];
-    char cname[SOCKET_DNS_NAME_MAX];
-
-    if (!user_name || !out_ip) return -(int64_t)LINUX_EFAULT;
-    if (requested_dev > 255U) return -(int64_t)LINUX_EINVAL;
-    dev = netdev_get((size_t)requested_dev);
-    if (!dev || !dev->link_up || !dev->ipv4_configured) return -(int64_t)LINUX_ENODEV;
-    if (dev->ipv4_dns[0] == 0 && dev->ipv4_dns[1] == 0 &&
-        dev->ipv4_dns[2] == 0 && dev->ipv4_dns[3] == 0) {
-        return -(int64_t)LINUX_ENODEV;
-    }
-    if (sock_copy_user_name(name, sizeof(name), user_name) != 0) {
-        return -(int64_t)LINUX_EINVAL;
-    }
-    if (dns_cache_lookup((uint8_t)requested_dev, name, answer)) {
-        local_memcpy(out_ip, answer, 4);
-        return 0;
-    }
-    local_memcpy(current, name, sizeof(current));
-
-    local_memset(&dns_sock, 0, sizeof(dns_sock));
-    dns_sock.dev_index = (uint8_t)requested_dev;
-    if (sock_ipv4_same_subnet(dev->ipv4_dns, dev->ipv4_addr, dev->ipv4_prefix)) {
-        local_memcpy(dns_sock.next_hop_ip, dev->ipv4_dns, 4);
-    } else {
-        local_memcpy(dns_sock.next_hop_ip, dev->ipv4_gateway, 4);
-    }
-    if (sock_arp_lookup(&dns_sock, dev) != 0) {
-        return -(int64_t)LINUX_EIO;
-    }
-
-    for (int depth = 0; depth < 3; depth++) {
-        uint16_t query_len;
-        int followed_cname = 0;
-
-        cname[0] = '\0';
-        query_len = sock_build_dns_query(dev, dns_sock.remote_mac, current, tx);
-        if (query_len == 0) return -(int64_t)LINUX_EINVAL;
-
-        for (int attempt = 0; attempt < SOCKET_DNS_RETRIES; attempt++) {
-            if (netdev_send((size_t)requested_dev, tx, query_len) < 0) {
-                return -(int64_t)LINUX_EIO;
-            }
-
-            for (int poll = 0; poll < SOCKET_DNS_RECV_POLLS; poll++) {
-                int parsed;
-                int n = netdev_recv((size_t)requested_dev, rx, sizeof(rx));
-                if (n < 0) return -(int64_t)LINUX_EIO;
-                parsed = sock_parse_dns_response(dev, rx, n, answer, cname);
-                if (parsed == 1) {
-                    dns_cache_store((uint8_t)requested_dev, name, answer);
-                    local_memcpy(out_ip, answer, 4);
-                    return 0;
-                }
-                if (parsed == 2) {
-                    local_memcpy(current, cname, sizeof(current));
-                    followed_cname = 1;
-                    break;
-                }
-                if (parsed < 0) {
-                    return -(int64_t)LINUX_ENOENT;
-                }
-            }
-            if (followed_cname) break;
-        }
-        if (!followed_cname) break;
-    }
-
-    return -(int64_t)LINUX_ENOENT;
 }
 
 static int64_t sys_rt_sigaction(struct syscall_regs* regs) {
@@ -3565,17 +2464,6 @@ struct aos_netdev_info_user {
     uint8_t reserved3[12];
 } __attribute__((packed));
 
-struct aos_netdev_stats_user {
-    uint64_t tx_packets;
-    uint64_t rx_packets;
-    uint64_t tx_bytes;
-    uint64_t rx_bytes;
-    uint64_t tx_errors;
-    uint64_t rx_errors;
-    uint64_t tx_dropped;
-    uint64_t rx_dropped;
-} __attribute__((packed));
-
 struct aos_firmware_info_user {
     char name[96];
     uint32_t size;
@@ -3589,38 +2477,6 @@ struct aos_wifi_scan_info_user {
     int8_t rssi_dbm;
     uint8_t security;
     uint8_t reserved[7];
-} __attribute__((packed));
-
-struct aos_wifi_state_info_user {
-    uint8_t state;
-    uint8_t scan_count;
-    uint8_t selected;
-    uint8_t security;
-    char ssid[32];
-    uint8_t bssid[6];
-    uint8_t channel;
-    int8_t rssi_dbm;
-    uint8_t reserved[4];
-    uint32_t auth_attempts;
-    uint32_t assoc_attempts;
-    uint32_t rx_mgmt;
-    uint32_t rx_beacon;
-    uint32_t rx_probe_resp;
-    uint32_t rx_data;
-    uint32_t rx_other;
-    uint32_t tx_mgmt;
-    uint32_t tx_probe_req;
-    uint32_t last_tx_len;
-    uint32_t driver_tx_calls;
-    uint32_t driver_tx_hw;
-    uint32_t driver_tx_sim;
-    uint32_t driver_tx_errors;
-    uint32_t driver_rx_calls;
-    uint32_t driver_rx_accepted;
-    uint32_t driver_rx_errors;
-    uint32_t driver_rx_last_len;
-    int8_t driver_rx_last_rssi;
-    uint8_t reserved2[3];
 } __attribute__((packed));
 
 static void copy_cstr_bounded(char* dst, size_t dst_size, const char* src) {
@@ -4005,27 +2861,6 @@ static int64_t sys_netdev_info(struct syscall_regs* regs) {
     return 0;
 }
 
-static int64_t sys_netdev_stats(struct syscall_regs* regs) {
-    uint64_t index = regs->rdi;
-    struct aos_netdev_stats_user* out = (struct aos_netdev_stats_user*)(uintptr_t)regs->rsi;
-    struct netdev_stats stats;
-
-    if (!out) return -(int64_t)LINUX_EFAULT;
-    if (netdev_get_stats((size_t)index, &stats) != 0) {
-        return -(int64_t)LINUX_ENOENT;
-    }
-
-    out->tx_packets = stats.tx_packets;
-    out->rx_packets = stats.rx_packets;
-    out->tx_bytes = stats.tx_bytes;
-    out->rx_bytes = stats.rx_bytes;
-    out->tx_errors = stats.tx_errors;
-    out->rx_errors = stats.rx_errors;
-    out->tx_dropped = stats.tx_dropped;
-    out->rx_dropped = stats.rx_dropped;
-    return 0;
-}
-
 static int64_t sys_netdev_send(struct syscall_regs* regs) {
     uint64_t index = regs->rdi;
     const uint8_t* frame = (const uint8_t*)(uintptr_t)regs->rsi;
@@ -4069,78 +2904,6 @@ static int64_t sys_netdev_recv(struct syscall_regs* regs) {
     return rc;
 }
 
-static int64_t sys_netdev_ipv6_config(struct syscall_regs* regs) {
-    uint64_t index = regs->rdi;
-    const uint8_t* addr = (const uint8_t*)(uintptr_t)regs->rsi;
-    uint64_t prefix = regs->rdx;
-    const uint8_t* gateway = (const uint8_t*)(uintptr_t)regs->r10;
-    const uint8_t* dns = (const uint8_t*)(uintptr_t)regs->r8;
-    uint8_t local_addr[16];
-    uint8_t local_gateway[16];
-    uint8_t local_dns[16];
-
-    if (!addr || prefix > 128) {
-        return -(int64_t)LINUX_EINVAL;
-    }
-
-    local_memcpy(local_addr, addr, sizeof(local_addr));
-    if (gateway) {
-        local_memcpy(local_gateway, gateway, sizeof(local_gateway));
-    } else {
-        local_memset(local_gateway, 0, sizeof(local_gateway));
-    }
-    if (dns) {
-        local_memcpy(local_dns, dns, sizeof(local_dns));
-    } else {
-        local_memset(local_dns, 0, sizeof(local_dns));
-    }
-
-    if (netdev_configure_ipv6((size_t)index,
-                              local_addr,
-                              (uint8_t)prefix,
-                              local_gateway,
-                              local_dns) != 0) {
-        return -(int64_t)LINUX_EINVAL;
-    }
-    return 0;
-}
-
-static int64_t sys_netdev_ipv4_config(struct syscall_regs* regs) {
-    uint64_t index = regs->rdi;
-    const uint8_t* addr = (const uint8_t*)(uintptr_t)regs->rsi;
-    uint64_t prefix = regs->rdx;
-    const uint8_t* gateway = (const uint8_t*)(uintptr_t)regs->r10;
-    const uint8_t* dns = (const uint8_t*)(uintptr_t)regs->r8;
-    uint8_t local_addr[4];
-    uint8_t local_gateway[4];
-    uint8_t local_dns[4];
-
-    if (!addr || prefix > 32) {
-        return -(int64_t)LINUX_EINVAL;
-    }
-
-    local_memcpy(local_addr, addr, sizeof(local_addr));
-    if (gateway) {
-        local_memcpy(local_gateway, gateway, sizeof(local_gateway));
-    } else {
-        local_memset(local_gateway, 0, sizeof(local_gateway));
-    }
-    if (dns) {
-        local_memcpy(local_dns, dns, sizeof(local_dns));
-    } else {
-        local_memset(local_dns, 0, sizeof(local_dns));
-    }
-
-    if (netdev_configure_ipv4((size_t)index,
-                              local_addr,
-                              (uint8_t)prefix,
-                              local_gateway,
-                              local_dns) != 0) {
-        return -(int64_t)LINUX_EINVAL;
-    }
-    return 0;
-}
-
 static int64_t sys_firmware_info(struct syscall_regs* regs) {
     uint64_t index = regs->rdi;
     struct aos_firmware_info_user* out = (struct aos_firmware_info_user*)(uintptr_t)regs->rsi;
@@ -4174,79 +2937,6 @@ static int64_t sys_wifi_scan_info(struct syscall_regs* regs) {
     out->rssi_dbm = result->rssi_dbm;
     out->security = result->security;
     return 0;
-}
-
-static int64_t sys_wifi_state_info(struct syscall_regs* regs) {
-    struct aos_wifi_state_info_user* out = (struct aos_wifi_state_info_user*)(uintptr_t)regs->rsi;
-    const struct mac80211_state* state;
-
-    if (!out) return -(int64_t)LINUX_EFAULT;
-    state = mac80211_get_state();
-
-    local_memset(out, 0, sizeof(*out));
-    out->state = state->state;
-    out->scan_count = state->scan_count;
-    out->selected = state->selected;
-    out->security = state->security;
-    copy_cstr_bounded(out->ssid, sizeof(out->ssid), state->ssid);
-    for (size_t i = 0; i < 6; i++) {
-        out->bssid[i] = state->bssid[i];
-    }
-    out->channel = state->channel;
-    out->rssi_dbm = state->rssi_dbm;
-    out->auth_attempts = state->auth_attempts;
-    out->assoc_attempts = state->assoc_attempts;
-    out->rx_mgmt = state->rx_mgmt;
-    out->rx_beacon = state->rx_beacon;
-    out->rx_probe_resp = state->rx_probe_resp;
-    out->rx_data = state->rx_data;
-    out->rx_other = state->rx_other;
-    out->tx_mgmt = state->tx_mgmt;
-    out->tx_probe_req = state->tx_probe_req;
-    out->last_tx_len = state->last_tx_len;
-    out->driver_tx_calls = state->driver_tx_calls;
-    out->driver_tx_hw = state->driver_tx_hw;
-    out->driver_tx_sim = state->driver_tx_sim;
-    out->driver_tx_errors = state->driver_tx_errors;
-    out->driver_rx_calls = state->driver_rx_calls;
-    out->driver_rx_accepted = state->driver_rx_accepted;
-    out->driver_rx_errors = state->driver_rx_errors;
-    out->driver_rx_last_len = state->driver_rx_last_len;
-    out->driver_rx_last_rssi = state->driver_rx_last_rssi;
-    return 0;
-}
-
-static int64_t sys_wifi_control(struct syscall_regs* regs) {
-    uint64_t action = regs->rdi;
-    uint64_t index = regs->rsi;
-    int rc = -1;
-
-    switch (action) {
-        case 1:
-            rc = mac80211_select_network((uint32_t)index);
-            break;
-        case 2:
-            rc = mac80211_authenticate_selected();
-            break;
-        case 3:
-            rc = mac80211_associate_selected();
-            break;
-        case 4:
-            rc = mac80211_select_network((uint32_t)index);
-            if (rc == 0) rc = mac80211_authenticate_selected();
-            if (rc == 0) rc = mac80211_associate_selected();
-            break;
-        case 5:
-            rc = mac80211_active_probe();
-            break;
-        case 6:
-            rc = mac80211_test_rx_probe_response();
-            break;
-        default:
-            return -(int64_t)LINUX_EINVAL;
-    }
-
-    return rc == 0 ? 0 : -(int64_t)LINUX_EINVAL;
 }
 
 static int64_t sys_shutdown(struct syscall_regs* regs) {
@@ -4406,18 +3096,6 @@ void syscall_handler(struct syscall_regs* regs) {
         case LINUX_SYS_DUP2:
             regs->rax = (uint64_t)sys_dup2(regs);
             return;
-        case LINUX_SYS_SOCKET:
-            regs->rax = (uint64_t)sys_socket(regs);
-            return;
-        case LINUX_SYS_CONNECT:
-            regs->rax = (uint64_t)sys_connect(regs);
-            return;
-        case LINUX_SYS_SENDTO:
-            regs->rax = (uint64_t)sys_sendto(regs);
-            return;
-        case LINUX_SYS_RECVFROM:
-            regs->rax = (uint64_t)sys_recvfrom(regs);
-            return;
         case LINUX_SYS_WAIT4:
             regs->rax = (uint64_t)sys_wait4(regs);
             return;
@@ -4575,38 +3253,17 @@ void syscall_handler(struct syscall_regs* regs) {
         case AOS_SYS_NETDEV_INFO:
             regs->rax = (uint64_t)sys_netdev_info(regs);
             return;
-        case AOS_SYS_NETDEV_STATS:
-            regs->rax = (uint64_t)sys_netdev_stats(regs);
-            return;
         case AOS_SYS_NETDEV_SEND:
             regs->rax = (uint64_t)sys_netdev_send(regs);
             return;
         case AOS_SYS_NETDEV_RECV:
             regs->rax = (uint64_t)sys_netdev_recv(regs);
             return;
-        case AOS_SYS_NETDEV_IPV6_CONFIG:
-            regs->rax = (uint64_t)sys_netdev_ipv6_config(regs);
-            return;
-        case AOS_SYS_NETDEV_IPV4_CONFIG:
-            regs->rax = (uint64_t)sys_netdev_ipv4_config(regs);
-            return;
         case AOS_SYS_FIRMWARE_INFO:
             regs->rax = (uint64_t)sys_firmware_info(regs);
             return;
         case AOS_SYS_WIFI_SCAN_INFO:
             regs->rax = (uint64_t)sys_wifi_scan_info(regs);
-            return;
-        case AOS_SYS_WIFI_STATE_INFO:
-            regs->rax = (uint64_t)sys_wifi_state_info(regs);
-            return;
-        case AOS_SYS_WIFI_CONTROL:
-            regs->rax = (uint64_t)sys_wifi_control(regs);
-            return;
-        case AOS_SYS_SOCKET_BIND_NETDEV:
-            regs->rax = (uint64_t)sys_socket_bind_netdev(regs);
-            return;
-        case AOS_SYS_DNS_LOOKUP:
-            regs->rax = (uint64_t)sys_dns_lookup(regs);
             return;
         case LINUX_SYS_FACCESSAT:
             regs->rax = (uint64_t)sys_faccessat(regs);
@@ -4704,3 +3361,7 @@ void syscall_retain_fd_table_entries(struct fd_entry* table, size_t count) {
         }
     }
 }
+//NAH IT GOTTA BE MORE BIG
+//ELBAFH IS FIRE
+//MUIIIIIIIIII
+//DAN DAN KOKORO HIKARETEKU ZONO HASHIROKI KORUKA TEKA HITOKA NEMOYA EIINEN WO KURKI EE TARU ZEN ZEN KIMI SHIRA my hands tired just sing it

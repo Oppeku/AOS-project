@@ -24,6 +24,7 @@
 #include <driver.h>
 #include <firmware.h>
 #include <input.h>
+#include <mac80211.h>
 #include <netdev.h>
 #include <e1000.h>
 #include <wifi.h>
@@ -271,6 +272,7 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
     driver_register_system(DRIVER_CLASS_CORE, "aos-process", "ready: process manager");
     driver_register_system(DRIVER_CLASS_CORE, "aos-pci", "ready: pci discovery");
     driver_import_pci_devices();
+    mac80211_init();
     e1000_register_driver();
     wifi_register_driver();
     xhci_register_driver();

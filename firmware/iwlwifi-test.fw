@@ -1,0 +1,4 @@
+AOS Intel WiFi firmware placeholder
+
+This is not real Intel firmware. It lets AOS test firmware discovery and driver
+status plumbing until a real iwlwifi-compatible firmware blob is bundled.
