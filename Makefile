@@ -138,11 +138,14 @@ $(BUILD_DIR)/esp.img: $(BUILD_DIR)/BOOTX64.EFI $(BUILD_DIR)/kernel.bin $(BUILD_D
 	mcopy -i $@ $(BUILD_DIR)/ext4.img ::/boot/ext4.img
 	mcopy -i $@ $(BUILD_DIR)/aosfs.img ::/boot/aosfs.img
 
-$(BUILD_DIR)/initrd.img: hello.txt firmware/aos-wifi-placeholder.fw firmware/iwlwifi-test.fw $(BUILD_DIR)/user.elf $(BUILD_DIR)/user2.elf $(BUILD_DIR)/shell.elf $(BUILD_DIR)/filetest.elf $(BUILD_DIR)/accesstest.elf $(BUILD_DIR)/openflagstest.elf $(BUILD_DIR)/duptest.elf $(BUILD_DIR)/pipetest.elf $(BUILD_DIR)/wait4test.elf $(BUILD_DIR)/stdincat.elf $(BUILD_DIR)/argvtest.elf $(BUILD_DIR)/pathtest.elf $(BUILD_DIR)/partitions.elf $(BUILD_DIR)/mounts.elf $(BUILD_DIR)/lspci.elf $(BUILD_DIR)/drivers.elf $(BUILD_DIR)/net.elf $(BUILD_DIR)/wifi.elf $(BUILD_DIR)/firmware.elf $(BUILD_DIR)/usb.elf $(BUILD_DIR)/ping.elf $(BUILD_DIR)/ping6.elf $(BUILD_DIR)/rdisc6.elf $(BUILD_DIR)/route.elf $(BUILD_DIR)/neigh.elf $(BUILD_DIR)/dhcp.elf $(BUILD_DIR)/tcp.elf $(BUILD_DIR)/kshttpget.elf $(BUILD_DIR)/wget.elf $(BUILD_DIR)/gethost.elf $(BUILD_DIR)/netrawtest.elf $(BUILD_DIR)/mem.elf $(BUILD_DIR)/uptime.elf $(BUILD_DIR)/uname.elf $(BUILD_DIR)/whoami.elf $(BUILD_DIR)/id.elf $(BUILD_DIR)/aossetup.elf $(BUILD_DIR)/display.elf $(BUILD_DIR)/settings.elf $(BUILD_DIR)/shutdown.elf $(BUILD_DIR)/restart.elf $(BUILD_DIR)/date.elf $(BUILD_DIR)/touch.elf $(BUILD_DIR)/rm.elf $(BUILD_DIR)/mkdir.elf $(BUILD_DIR)/sudo.elf $(BUILD_DIR)/devtest.elf $(BUILD_DIR)/gfxdemo.elf $(BUILD_DIR)/inputtest.elf $(BUILD_DIR)/nano.elf $(BUILD_DIR)/gnu-nano $(BUILD_DIR)/busybox $(BUILD_DIR)/coreutils $(BUILD_DIR)/gnu-coreutils.stamp
+$(BUILD_DIR)/initrd.img: hello.txt pakages/pakages.txt firmware/aos-wifi-placeholder.fw firmware/iwlwifi-test.fw $(BUILD_DIR)/user.elf $(BUILD_DIR)/user2.elf $(BUILD_DIR)/shell.elf $(BUILD_DIR)/filetest.elf $(BUILD_DIR)/accesstest.elf $(BUILD_DIR)/openflagstest.elf $(BUILD_DIR)/duptest.elf $(BUILD_DIR)/pipetest.elf $(BUILD_DIR)/wait4test.elf $(BUILD_DIR)/stdincat.elf $(BUILD_DIR)/argvtest.elf $(BUILD_DIR)/pathtest.elf $(BUILD_DIR)/partitions.elf $(BUILD_DIR)/mounts.elf $(BUILD_DIR)/lspci.elf $(BUILD_DIR)/drivers.elf $(BUILD_DIR)/net.elf $(BUILD_DIR)/ip.elf $(BUILD_DIR)/wifi.elf $(BUILD_DIR)/firmware.elf $(BUILD_DIR)/usb.elf $(BUILD_DIR)/ping.elf $(BUILD_DIR)/ping6.elf $(BUILD_DIR)/rdisc6.elf $(BUILD_DIR)/route.elf $(BUILD_DIR)/neigh.elf $(BUILD_DIR)/dhcp.elf $(BUILD_DIR)/tcp.elf $(BUILD_DIR)/curl.elf $(BUILD_DIR)/acur.elf $(BUILD_DIR)/kshttpget.elf $(BUILD_DIR)/wget.elf $(BUILD_DIR)/sockclose.elf $(BUILD_DIR)/gethost.elf $(BUILD_DIR)/netcache.elf $(BUILD_DIR)/netstat.elf $(BUILD_DIR)/netrawtest.elf $(BUILD_DIR)/mem.elf $(BUILD_DIR)/uptime.elf $(BUILD_DIR)/uname.elf $(BUILD_DIR)/whoami.elf $(BUILD_DIR)/id.elf $(BUILD_DIR)/aossetup.elf $(BUILD_DIR)/display.elf $(BUILD_DIR)/settings.elf $(BUILD_DIR)/shutdown.elf $(BUILD_DIR)/restart.elf $(BUILD_DIR)/date.elf $(BUILD_DIR)/touch.elf $(BUILD_DIR)/rm.elf $(BUILD_DIR)/mkdir.elf $(BUILD_DIR)/sudo.elf $(BUILD_DIR)/devtest.elf $(BUILD_DIR)/gfxdemo.elf $(BUILD_DIR)/inputtest.elf $(BUILD_DIR)/nano.elf $(BUILD_DIR)/gnu-nano $(BUILD_DIR)/busybox $(BUILD_DIR)/coreutils $(BUILD_DIR)/gnu-coreutils.stamp
 	rm -rf $(BUILD_DIR)/initrd_root
 	@mkdir -p $(BUILD_DIR)/initrd_root
 	@mkdir -p $(BUILD_DIR)/initrd_root/firmware
+	@mkdir -p $(BUILD_DIR)/initrd_root/pakages
 	cp hello.txt $(BUILD_DIR)/initrd_root/hello.txt
+	cp pakages/pakages.txt $(BUILD_DIR)/initrd_root/pakages/pakages.txt
+	cp pakages/pakages.txt $(BUILD_DIR)/initrd_root/pakages.txt
 	cp firmware/aos-wifi-placeholder.fw $(BUILD_DIR)/initrd_root/firmware/aos-wifi-placeholder.fw
 	cp firmware/iwlwifi-test.fw $(BUILD_DIR)/initrd_root/firmware/iwlwifi-test.fw
 	cp $(BUILD_DIR)/user.elf $(BUILD_DIR)/initrd_root/user.elf
@@ -168,6 +171,9 @@ $(BUILD_DIR)/initrd.img: hello.txt firmware/aos-wifi-placeholder.fw firmware/iwl
 	cp $(BUILD_DIR)/drivers.elf $(BUILD_DIR)/initrd_root/driver
 	cp $(BUILD_DIR)/net.elf $(BUILD_DIR)/initrd_root/net.elf
 	cp $(BUILD_DIR)/net.elf $(BUILD_DIR)/initrd_root/net
+	cp $(BUILD_DIR)/net.elf $(BUILD_DIR)/initrd_root/ifconfig
+	cp $(BUILD_DIR)/ip.elf $(BUILD_DIR)/initrd_root/ip.elf
+	cp $(BUILD_DIR)/ip.elf $(BUILD_DIR)/initrd_root/ip
 	cp $(BUILD_DIR)/wifi.elf $(BUILD_DIR)/initrd_root/wifi.elf
 	cp $(BUILD_DIR)/wifi.elf $(BUILD_DIR)/initrd_root/wifi
 	cp $(BUILD_DIR)/firmware.elf $(BUILD_DIR)/initrd_root/firmware.elf
@@ -176,10 +182,14 @@ $(BUILD_DIR)/initrd.img: hello.txt firmware/aos-wifi-placeholder.fw firmware/iwl
 	cp $(BUILD_DIR)/usb.elf $(BUILD_DIR)/initrd_root/usb
 	cp $(BUILD_DIR)/ping.elf $(BUILD_DIR)/initrd_root/ping.elf
 	cp $(BUILD_DIR)/ping.elf $(BUILD_DIR)/initrd_root/ping
-	cp $(BUILD_DIR)/ping.elf $(BUILD_DIR)/initrd_root/dns
 	cp $(BUILD_DIR)/gethost.elf $(BUILD_DIR)/initrd_root/gethost.elf
 	cp $(BUILD_DIR)/gethost.elf $(BUILD_DIR)/initrd_root/gethost
+	cp $(BUILD_DIR)/gethost.elf $(BUILD_DIR)/initrd_root/dns
 	cp $(BUILD_DIR)/gethost.elf $(BUILD_DIR)/initrd_root/nslookup
+	cp $(BUILD_DIR)/netcache.elf $(BUILD_DIR)/initrd_root/netcache.elf
+	cp $(BUILD_DIR)/netcache.elf $(BUILD_DIR)/initrd_root/netcache
+	cp $(BUILD_DIR)/netstat.elf $(BUILD_DIR)/initrd_root/netstat.elf
+	cp $(BUILD_DIR)/netstat.elf $(BUILD_DIR)/initrd_root/netstat
 	cp $(BUILD_DIR)/ping6.elf $(BUILD_DIR)/initrd_root/ping6.elf
 	cp $(BUILD_DIR)/ping6.elf $(BUILD_DIR)/initrd_root/ping6
 	cp $(BUILD_DIR)/rdisc6.elf $(BUILD_DIR)/initrd_root/rdisc6.elf
@@ -194,11 +204,17 @@ $(BUILD_DIR)/initrd.img: hello.txt firmware/aos-wifi-placeholder.fw firmware/iwl
 	cp $(BUILD_DIR)/tcp.elf $(BUILD_DIR)/initrd_root/tcp
 	cp $(BUILD_DIR)/tcp.elf $(BUILD_DIR)/initrd_root/httpget.elf
 	cp $(BUILD_DIR)/tcp.elf $(BUILD_DIR)/initrd_root/httpget
+	cp $(BUILD_DIR)/curl.elf $(BUILD_DIR)/initrd_root/curl.elf
+	cp $(BUILD_DIR)/curl.elf $(BUILD_DIR)/initrd_root/curl
+	cp $(BUILD_DIR)/acur.elf $(BUILD_DIR)/initrd_root/acur.elf
+	cp $(BUILD_DIR)/acur.elf $(BUILD_DIR)/initrd_root/acur
 	cp $(BUILD_DIR)/kshttpget.elf $(BUILD_DIR)/initrd_root/kshttpget.elf
 	cp $(BUILD_DIR)/kshttpget.elf $(BUILD_DIR)/initrd_root/kshttpget
 	cp $(BUILD_DIR)/wget.elf $(BUILD_DIR)/initrd_root/wget.elf
 	cp $(BUILD_DIR)/wget.elf $(BUILD_DIR)/initrd_root/wget
 	cp $(BUILD_DIR)/wget.elf $(BUILD_DIR)/initrd_root/download
+	cp $(BUILD_DIR)/sockclose.elf $(BUILD_DIR)/initrd_root/sockclose.elf
+	cp $(BUILD_DIR)/sockclose.elf $(BUILD_DIR)/initrd_root/sockclose
 	cp $(BUILD_DIR)/netrawtest.elf $(BUILD_DIR)/initrd_root/netrawtest.elf
 	cp $(BUILD_DIR)/netrawtest.elf $(BUILD_DIR)/initrd_root/netrawtest
 	cp $(BUILD_DIR)/mem.elf $(BUILD_DIR)/initrd_root/mem.elf
@@ -246,7 +262,7 @@ $(BUILD_DIR)/initrd.img: hello.txt firmware/aos-wifi-placeholder.fw firmware/iwl
 	cp $(BUILD_DIR)/busybox $(BUILD_DIR)/initrd_root/busybox
 	if [ -f $(BUILD_DIR)/coreutils ]; then cp $(BUILD_DIR)/coreutils $(BUILD_DIR)/initrd_root/coreutils; fi
 	for prog in $(GNU_PROGRAMS); do if [ -f "$(BUILD_DIR)/gnu-coreutils/$$prog" ]; then cp "$(BUILD_DIR)/gnu-coreutils/$$prog" "$(BUILD_DIR)/initrd_root/$$prog"; fi; done
-	cd $(BUILD_DIR)/initrd_root && { printf "hello.txt\nfirmware/aos-wifi-placeholder.fw\nfirmware/iwlwifi-test.fw\nuser.elf\nuser2.elf\nshell.elf\nfiletest.elf\naccesstest.elf\nopenflagstest.elf\nduptest.elf\npipetest.elf\nwait4test.elf\nstdincat.elf\nargvtest.elf\npathtest.elf\npartitions.elf\npartitions\nmounts.elf\nmounts\nlspci.elf\nlspci\ndrivers.elf\ndrivers\ndriver\nnet.elf\nnet\nwifi.elf\nwifi\nfirmware.elf\nfw\nusb.elf\nusb\nping.elf\nping\ndns\ngethost.elf\ngethost\nnslookup\nping6.elf\nping6\nrdisc6.elf\nrdisc6\nroute.elf\nroute\nneigh.elf\nneigh\ndhcp.elf\ndhcp\ntcp.elf\ntcp\nhttpget.elf\nhttpget\nkshttpget.elf\nkshttpget\nwget.elf\nwget\ndownload\nnetrawtest.elf\nnetrawtest\nmem.elf\nmem\nuptime.elf\nuptime\nuname.elf\nuname\nwhoami.elf\nwhoami\nid.elf\nid\naossetup.elf\naossetup\ndisplay.elf\ndisplay\nsettings.elf\nsettings\nshutdown.elf\nshutdown\nrestart.elf\nrestart\nreboot\ndate.elf\ndate\ntouch.elf\ntouch\nrm.elf\nrm\nmkdir.elf\nmkdir\nsudo.elf\nsudo\ndevtest.elf\ndevtest\ngfxdemo.elf\ngfxdemo\ninputtest.elf\ninputtest\n"; for alias in $(PARTITION_ALIASES); do printf "%s\n" "$$alias"; done; printf "aosnano.elf\naosnano\nnano\nbusybox\n"; if [ -f gnunano ]; then printf "gnunano\n"; fi; if [ -f coreutils ]; then printf "coreutils\n"; fi; for prog in $(GNU_PROGRAMS); do if [ -f "$$prog" ]; then printf "%s\n" "$$prog"; fi; done; } | cpio -o -H newc > ../initrd.img
+	cd $(BUILD_DIR)/initrd_root && { printf "hello.txt\npakages/pakages.txt\npakages.txt\nfirmware/aos-wifi-placeholder.fw\nfirmware/iwlwifi-test.fw\nuser.elf\nuser2.elf\nshell.elf\nfiletest.elf\naccesstest.elf\nopenflagstest.elf\nduptest.elf\npipetest.elf\nwait4test.elf\nstdincat.elf\nargvtest.elf\npathtest.elf\npartitions.elf\npartitions\nmounts.elf\nmounts\nlspci.elf\nlspci\ndrivers.elf\ndrivers\ndriver\nnet.elf\nnet\nifconfig\nip.elf\nip\nwifi.elf\nwifi\nfirmware.elf\nfw\nusb.elf\nusb\nping.elf\nping\ndns\ngethost.elf\ngethost\nnslookup\nnetcache.elf\nnetcache\nnetstat.elf\nnetstat\nping6.elf\nping6\nrdisc6.elf\nrdisc6\nroute.elf\nroute\nneigh.elf\nneigh\ndhcp.elf\ndhcp\ntcp.elf\ntcp\nhttpget.elf\nhttpget\ncurl.elf\ncurl\nacur.elf\nacur\nkshttpget.elf\nkshttpget\nwget.elf\nwget\ndownload\nsockclose.elf\nsockclose\nnetrawtest.elf\nnetrawtest\nmem.elf\nmem\nuptime.elf\nuptime\nuname.elf\nuname\nwhoami.elf\nwhoami\nid.elf\nid\naossetup.elf\naossetup\ndisplay.elf\ndisplay\nsettings.elf\nsettings\nshutdown.elf\nshutdown\nrestart.elf\nrestart\nreboot\ndate.elf\ndate\ntouch.elf\ntouch\nrm.elf\nrm\nmkdir.elf\nmkdir\nsudo.elf\nsudo\ndevtest.elf\ndevtest\ngfxdemo.elf\ngfxdemo\ninputtest.elf\ninputtest\n"; for alias in $(PARTITION_ALIASES); do printf "%s\n" "$$alias"; done; printf "aosnano.elf\naosnano\nnano\nbusybox\n"; if [ -f gnunano ]; then printf "gnunano\n"; fi; if [ -f coreutils ]; then printf "coreutils\n"; fi; for prog in $(GNU_PROGRAMS); do if [ -f "$$prog" ]; then printf "%s\n" "$$prog"; fi; done; } | cpio -o -H newc > ../initrd.img
 
 $(BUILD_DIR)/busybox: scripts/build_busybox.sh scripts/prepare_busybox.py
 	@mkdir -p $(BUILD_DIR)
@@ -509,6 +525,20 @@ $(BUILD_DIR)/tcp.o: userspace/tcp.c
 $(BUILD_DIR)/tcp.elf: $(BUILD_DIR)/tcp.o userspace/user.ld
 	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/tcp.o
 
+$(BUILD_DIR)/curl.o: userspace/curl.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/curl.elf: $(BUILD_DIR)/curl.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/curl.o
+
+$(BUILD_DIR)/acur.o: userspace/acur.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/acur.elf: $(BUILD_DIR)/acur.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/acur.o
+
 $(BUILD_DIR)/kshttpget.o: userspace/kshttpget.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(USER_CFLAGS) -c $< -o $@
@@ -523,12 +553,40 @@ $(BUILD_DIR)/wget.o: userspace/wget.c
 $(BUILD_DIR)/wget.elf: $(BUILD_DIR)/wget.o userspace/user.ld
 	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/wget.o
 
+$(BUILD_DIR)/sockclose.o: userspace/sockclose.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/sockclose.elf: $(BUILD_DIR)/sockclose.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/sockclose.o
+
 $(BUILD_DIR)/gethost.o: userspace/gethost.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(USER_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/gethost.elf: $(BUILD_DIR)/gethost.o userspace/user.ld
 	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/gethost.o
+
+$(BUILD_DIR)/netcache.o: userspace/netcache.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/netcache.elf: $(BUILD_DIR)/netcache.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/netcache.o
+
+$(BUILD_DIR)/netstat.o: userspace/netstat.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/netstat.elf: $(BUILD_DIR)/netstat.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/netstat.o
+
+$(BUILD_DIR)/ip.o: userspace/ip.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/ip.elf: $(BUILD_DIR)/ip.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/ip.o
 
 $(BUILD_DIR)/netrawtest.o: userspace/netrawtest.asm
 	@mkdir -p $(BUILD_DIR)

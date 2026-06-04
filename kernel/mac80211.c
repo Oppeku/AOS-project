@@ -22,6 +22,8 @@
 #define DNS_PORT 53U
 #define HTTP_PORT 80U
 #define SIM_TCP_SEQ 0xa0053000U
+#define SIM_HTTP_BODY_LEN 1024U
+#define SIM_HTTP_CHUNK_SIZE 384U
 #define DHCP_CLIENT_PORT 68U
 #define DHCP_SERVER_PORT 67U
 #define DHCP_BOOTREQUEST 1U
@@ -46,6 +48,12 @@ static const uint8_t g_sim_ap_ipv4[4] = {10, 0, 3, 1};
 static const uint8_t g_sim_station_ipv4[4] = {10, 0, 3, 15};
 static const uint8_t g_sim_mask_ipv4[4] = {255, 255, 255, 0};
 static const uint8_t g_sim_broadcast_ipv4[4] = {255, 255, 255, 255};
+static struct {
+    uint8_t active;
+    uint16_t client_port;
+    uint32_t client_next_seq;
+    uint32_t sent;
+} g_sim_http;
 static const uint8_t g_aos_lab_probe_resp[] = {
     0x50, 0x00, 0x00, 0x00,
     0xa0, 0x05, 0x00, 0x00, 0x00, 0x02,
@@ -621,18 +629,59 @@ static int build_sim_icmp_echo_reply(const uint8_t* request,
     return frame_len < 60U ? 60 : (int)frame_len;
 }
 
+static uint32_t sim_http_header_len(void) {
+    static const uint8_t header[] =
+        "HTTP/1.0 200 OK\r\n"
+        "Server: AOS-WiFi-Sim\r\n"
+        "Content-Type: text/plain\r\n"
+        "Content-Length: 1024\r\n"
+        "Connection: close\r\n"
+        "\r\n";
+    return (uint32_t)(sizeof(header) - 1U);
+}
+
+static uint32_t sim_http_total_len(void) {
+    return sim_http_header_len() + SIM_HTTP_BODY_LEN;
+}
+
+static uint8_t sim_http_byte_at(uint32_t offset) {
+    static const uint8_t header[] =
+        "HTTP/1.0 200 OK\r\n"
+        "Server: AOS-WiFi-Sim\r\n"
+        "Content-Type: text/plain\r\n"
+        "Content-Length: 1024\r\n"
+        "Connection: close\r\n"
+        "\r\n";
+    static const uint8_t body_pattern[] =
+        "AOS Wi-Fi TCP multi-packet download data.\n";
+    uint32_t header_len = (uint32_t)(sizeof(header) - 1U);
+    uint32_t body_len = (uint32_t)(sizeof(body_pattern) - 1U);
+
+    if (offset < header_len) {
+        return header[offset];
+    }
+    offset -= header_len;
+    return body_pattern[offset % body_len];
+}
+
+static uint16_t sim_http_copy(uint32_t offset, uint8_t* out, uint16_t max_len) {
+    uint32_t total = sim_http_total_len();
+    uint16_t copied = 0;
+
+    if (!out || offset >= total) {
+        return 0;
+    }
+    while (copied < max_len && offset + copied < total) {
+        out[copied] = sim_http_byte_at(offset + copied);
+        copied++;
+    }
+    return copied;
+}
+
 static int build_sim_tcp_http_reply(const uint8_t* request,
                                     uint16_t request_len,
                                     uint8_t* out,
                                     uint32_t out_len) {
-    static const uint8_t http_payload[] =
-        "HTTP/1.0 200 OK\r\n"
-        "Server: AOS-WiFi-Sim\r\n"
-        "Content-Type: text/plain\r\n"
-        "Content-Length: 24\r\n"
-        "Connection: close\r\n"
-        "\r\n"
-        "AOS Wi-Fi TCP is alive.\n";
     const uint8_t* req_ip;
     const uint8_t* req_tcp;
     uint8_t* ip;
@@ -645,6 +694,10 @@ static int build_sim_tcp_http_reply(const uint8_t* request,
     uint16_t req_dst_port;
     uint32_t req_seq;
     uint32_t req_ack;
+    uint32_t reply_seq = SIM_TCP_SEQ;
+    uint32_t reply_ack = 0;
+    uint32_t reply_offset = 0;
+    uint32_t tcp_payload_len32;
     uint16_t payload_len = 0;
     uint8_t flags;
     uint16_t tcp_len;
@@ -691,14 +744,51 @@ static int build_sim_tcp_http_reply(const uint8_t* request,
               ((uint32_t)req_tcp[10] << 8) |
               (uint32_t)req_tcp[11];
     flags = req_tcp[13];
+    tcp_payload_len32 = (uint32_t)(req_tcp_len - req_tcp_hlen);
 
     if ((flags & 0x02U) != 0U) {
         flags = 0x12U;
+        reply_seq = SIM_TCP_SEQ;
+        reply_ack = req_seq + 1U;
+        g_sim_http.active = 0U;
+    } else if ((flags & 0x01U) != 0U) {
+        flags = 0x10U;
+        reply_seq = req_ack >= SIM_TCP_SEQ ? req_ack : SIM_TCP_SEQ + 1U + g_sim_http.sent;
+        reply_ack = req_seq + 1U;
+        payload_len = 0U;
+        g_sim_http.active = 0U;
     } else if ((flags & 0x18U) != 0U &&
                req_tcp_len > req_tcp_hlen &&
                req_ack == SIM_TCP_SEQ + 1U) {
-        flags = 0x19U;
-        payload_len = (uint16_t)(sizeof(http_payload) - 1U);
+        g_sim_http.active = 1U;
+        g_sim_http.client_port = req_src_port;
+        g_sim_http.client_next_seq = req_seq + tcp_payload_len32;
+        g_sim_http.sent = 0U;
+        reply_offset = 0U;
+        reply_seq = SIM_TCP_SEQ + 1U;
+        reply_ack = g_sim_http.client_next_seq;
+        payload_len = SIM_HTTP_CHUNK_SIZE;
+        if (payload_len > sim_http_total_len()) {
+            payload_len = (uint16_t)sim_http_total_len();
+        }
+        flags = (payload_len >= sim_http_total_len()) ? 0x19U : 0x18U;
+        g_sim_http.sent = payload_len;
+    } else if ((flags & 0x10U) != 0U &&
+               tcp_payload_len32 == 0U &&
+               g_sim_http.active &&
+               g_sim_http.client_port == req_src_port &&
+               req_ack >= SIM_TCP_SEQ + 1U &&
+               req_ack <= SIM_TCP_SEQ + 1U + g_sim_http.sent) {
+        uint32_t remaining;
+        reply_offset = req_ack - (SIM_TCP_SEQ + 1U);
+        remaining = sim_http_total_len() - reply_offset;
+        payload_len = remaining > SIM_HTTP_CHUNK_SIZE ? SIM_HTTP_CHUNK_SIZE : (uint16_t)remaining;
+        reply_seq = SIM_TCP_SEQ + 1U + reply_offset;
+        reply_ack = g_sim_http.client_next_seq;
+        flags = (reply_offset + payload_len >= sim_http_total_len()) ? 0x19U : 0x18U;
+        if (reply_offset + payload_len > g_sim_http.sent) {
+            g_sim_http.sent = reply_offset + payload_len;
+        }
     } else {
         return 0;
     }
@@ -729,13 +819,13 @@ static int build_sim_tcp_http_reply(const uint8_t* request,
     tcp = ip + 20U;
     put_be16(tcp, HTTP_PORT);
     put_be16(tcp + 2U, req_src_port);
-    put_be32(tcp + 4U, SIM_TCP_SEQ);
-    put_be32(tcp + 8U, req_seq + (((request[ETH_HEADER_LEN + req_ihl + 13U] & 0x02U) != 0U) ? 1U : (uint32_t)(req_tcp_len - req_tcp_hlen)));
+    put_be32(tcp + 4U, reply_seq);
+    put_be32(tcp + 8U, reply_ack);
     tcp[12] = 0x50U;
     tcp[13] = flags;
     put_be16(tcp + 14U, 64240U);
     if (payload_len > 0U) {
-        local_memcpy(tcp + 20U, http_payload, payload_len);
+        (void)sim_http_copy(reply_offset, tcp + 20U, payload_len);
     }
     put_be16(tcp + 16U, tcp_checksum(g_sim_ap_ipv4, req_ip + 12U, tcp, tcp_len));
     return frame_len < 60U ? 60 : (int)frame_len;

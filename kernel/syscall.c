@@ -189,9 +189,12 @@ enum fd_kind {
 #define SOCKET_DNS_NAME_MAX 128
 #define SOCKET_DNS_CACHE_ENTRIES 8
 #define SOCKET_DNS_CACHE_TTL_TICKS 6000ULL
-#define SOCKET_DNS_RECV_POLLS 250000
+#define SOCKET_ARP_CACHE_ENTRIES 8
+#define SOCKET_ARP_CACHE_TTL_TICKS 6000ULL
+#define SOCKET_DNS_RECV_POLLS 1000000
 #define SOCKET_DNS_RETRIES 3
 #define SOCKET_TCP_RETRIES 3
+#define SOCKET_TCP_RECV_RETRIES 3
 
 enum socket_state {
     SOCKET_STATE_FREE = 0,
@@ -235,6 +238,17 @@ struct dns_cache_entry {
     uint64_t expires_at;
     char name[SOCKET_DNS_NAME_MAX];
     uint8_t ipv4[4];
+};
+
+struct arp_cache_entry {
+    uint8_t valid;
+    uint8_t dev_index;
+    uint8_t reserved[2];
+    uint32_t hits;
+    uint64_t expires_at;
+    uint8_t ipv4[4];
+    uint8_t mac[6];
+    uint8_t reserved2[2];
 };
 
 struct file_handle {
@@ -308,6 +322,7 @@ static struct file_handle g_file_handles[MAX_FILE_HANDLES];
 static struct pipe_object g_pipe_objects[MAX_PIPE_OBJECTS];
 static struct socket_object g_socket_objects[MAX_SOCKET_OBJECTS];
 static struct dns_cache_entry g_dns_cache[SOCKET_DNS_CACHE_ENTRIES];
+static struct arp_cache_entry g_arp_cache[SOCKET_ARP_CACHE_ENTRIES];
 static uint16_t g_socket_next_port = SOCKET_TCP_PORT_FIRST;
 static void halt_forever(void);
 static int64_t socket_send_data(struct socket_object* sock, const uint8_t* data, uint64_t len);
@@ -651,7 +666,11 @@ static void close_socket_ref(int32_t socket_index) {
         return;
     }
     if (sock->refcount <= 1) {
-        sock->state = SOCKET_STATE_CLOSED;
+        if (sock->state == SOCKET_STATE_CONNECTED) {
+            (void)socket_send_fin_close(sock);
+        } else {
+            sock->state = SOCKET_STATE_CLOSED;
+        }
     }
     release_socket_ref(socket_index);
 }
@@ -2452,6 +2471,53 @@ store:
     local_memcpy(g_dns_cache[slot].ipv4, ip, 4);
 }
 
+static int arp_cache_lookup(uint8_t dev_index, const uint8_t ip[4], uint8_t out_mac[6]) {
+    uint64_t now = timer_get_ticks();
+
+    if (!ip || !out_mac) return 0;
+    for (size_t i = 0; i < SOCKET_ARP_CACHE_ENTRIES; i++) {
+        if (!g_arp_cache[i].valid) continue;
+        if (g_arp_cache[i].dev_index != dev_index) continue;
+        if (g_arp_cache[i].expires_at <= now) {
+            g_arp_cache[i].valid = 0;
+            continue;
+        }
+        if (sock_same_bytes(g_arp_cache[i].ipv4, ip, 4)) {
+            local_memcpy(out_mac, g_arp_cache[i].mac, 6);
+            g_arp_cache[i].hits++;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void arp_cache_store(uint8_t dev_index, const uint8_t ip[4], const uint8_t mac[6]) {
+    size_t slot = 0;
+    uint64_t oldest = UINT64_MAX;
+    uint64_t now = timer_get_ticks();
+
+    if (!ip || !mac) return;
+    for (size_t i = 0; i < SOCKET_ARP_CACHE_ENTRIES; i++) {
+        if (!g_arp_cache[i].valid ||
+            (g_arp_cache[i].dev_index == dev_index && sock_same_bytes(g_arp_cache[i].ipv4, ip, 4))) {
+            slot = i;
+            goto store;
+        }
+        if (g_arp_cache[i].expires_at < oldest) {
+            oldest = g_arp_cache[i].expires_at;
+            slot = i;
+        }
+    }
+
+store:
+    local_memset(&g_arp_cache[slot], 0, sizeof(g_arp_cache[slot]));
+    g_arp_cache[slot].valid = 1;
+    g_arp_cache[slot].dev_index = dev_index;
+    g_arp_cache[slot].expires_at = now + SOCKET_ARP_CACHE_TTL_TICKS;
+    local_memcpy(g_arp_cache[slot].ipv4, ip, 4);
+    local_memcpy(g_arp_cache[slot].mac, mac, 6);
+}
+
 static uint16_t sock_encode_dns_qname(uint8_t* out, const char* name) {
     uint8_t* start = out;
 
@@ -2653,6 +2719,10 @@ static int sock_arp_lookup(struct socket_object* sock, const struct netdev* dev)
     uint8_t rx[SOCKET_RX_FRAME_SIZE];
     uint16_t len;
 
+    if (arp_cache_lookup(sock->dev_index, sock->next_hop_ip, sock->remote_mac)) {
+        return 0;
+    }
+
     len = sock_build_arp_request(dev, sock->next_hop_ip, tx);
     if (netdev_send(sock->dev_index, tx, len) < 0) {
         return -1;
@@ -2661,6 +2731,7 @@ static int sock_arp_lookup(struct socket_object* sock, const struct netdev* dev)
         int n = netdev_recv(sock->dev_index, rx, sizeof(rx));
         if (n < 0) return -1;
         if (sock_parse_arp_reply(rx, n, sock->next_hop_ip, dev->ipv4_addr, sock->remote_mac)) {
+            arp_cache_store(sock->dev_index, sock->next_hop_ip, sock->remote_mac);
             return 0;
         }
     }
@@ -2863,7 +2934,7 @@ static int sock_wait_ack(struct socket_object* sock, uint32_t expected_ack, uint
     return -1;
 }
 
-__attribute__((unused)) static int socket_send_fin_close(struct socket_object* sock) {
+static int socket_send_fin_close(struct socket_object* sock) {
     uint8_t tx[SOCKET_TX_FRAME_SIZE];
     static uint8_t rx[SOCKET_RX_FRAME_SIZE];
     uint64_t start;
@@ -3056,6 +3127,7 @@ static int64_t socket_recv_data(struct socket_object* sock, uint8_t* dst, uint64
     uint32_t seq = 0;
     uint32_t ack = 0;
     uint64_t copied = 0;
+    int recv_retries = 0;
 
     if (!sock) return -(int64_t)LINUX_EBADF;
     if (sock->state == SOCKET_STATE_CLOSED && sock->rx_off >= sock->rx_len) return 0;
@@ -3077,8 +3149,14 @@ static int64_t socket_recv_data(struct socket_object* sock, uint8_t* dst, uint64
         sock->rx_off = 0;
         sock->rx_len = 0;
         if (sock_wait_tcp(sock, 0x10, &flags, &seq, &ack, &payload, &payload_len) != 0) {
+            if (sock->state == SOCKET_STATE_CONNECTED && recv_retries < SOCKET_TCP_RECV_RETRIES) {
+                recv_retries++;
+                (void)socket_send_ack(sock);
+                continue;
+            }
             break;
         }
+        recv_retries = 0;
         (void)ack;
         if (flags & 0x04) {
             sock->state = SOCKET_STATE_CLOSED;
@@ -3105,6 +3183,9 @@ static int64_t socket_recv_data(struct socket_object* sock, uint8_t* dst, uint64
             sock->state = SOCKET_STATE_CLOSED;
             break;
         }
+    }
+    if (copied == 0 && sock->state == SOCKET_STATE_CONNECTED) {
+        return -(int64_t)LINUX_EIO;
     }
     return (int64_t)copied;
 }
@@ -3576,6 +3657,53 @@ struct aos_netdev_stats_user {
     uint64_t rx_dropped;
 } __attribute__((packed));
 
+struct aos_arp_cache_info_user {
+    uint8_t valid;
+    uint8_t dev_index;
+    uint8_t reserved[2];
+    uint32_t hits;
+    uint64_t ttl_ticks;
+    uint8_t ipv4[4];
+    uint8_t mac[6];
+    uint8_t reserved2[2];
+    char dev_name[16];
+} __attribute__((packed));
+
+struct aos_dns_cache_info_user {
+    uint8_t valid;
+    uint8_t dev_index;
+    uint8_t reserved[2];
+    uint32_t hits;
+    uint64_t ttl_ticks;
+    uint8_t ipv4[4];
+    uint8_t reserved2[4];
+    char dev_name[16];
+    char name[128];
+} __attribute__((packed));
+
+struct aos_socket_info_user {
+    uint8_t valid;
+    uint8_t index;
+    uint8_t state;
+    uint8_t family;
+    uint8_t type;
+    uint8_t protocol;
+    uint8_t dev_index;
+    uint8_t reserved;
+    uint16_t local_port;
+    uint16_t remote_port;
+    uint32_t refcount;
+    uint32_t rx_len;
+    uint32_t rx_off;
+    uint32_t seq;
+    uint32_t ack;
+    uint8_t remote_ip[4];
+    uint8_t next_hop_ip[4];
+    uint8_t remote_mac[6];
+    uint8_t reserved2[2];
+    char dev_name[16];
+} __attribute__((packed));
+
 struct aos_firmware_info_user {
     char name[96];
     uint32_t size;
@@ -4023,6 +4151,146 @@ static int64_t sys_netdev_stats(struct syscall_regs* regs) {
     out->rx_errors = stats.rx_errors;
     out->tx_dropped = stats.tx_dropped;
     out->rx_dropped = stats.rx_dropped;
+    return 0;
+}
+
+static int64_t sys_arp_cache_info(struct syscall_regs* regs) {
+    uint64_t index = regs->rdi;
+    struct aos_arp_cache_info_user* out = (struct aos_arp_cache_info_user*)(uintptr_t)regs->rsi;
+    struct arp_cache_entry* entry;
+    const struct netdev* dev;
+    uint64_t now;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+    if (index >= SOCKET_ARP_CACHE_ENTRIES) return -(int64_t)LINUX_ENOENT;
+
+    entry = &g_arp_cache[index];
+    now = timer_get_ticks();
+    if (!entry->valid || now >= entry->expires_at) {
+        entry->valid = 0;
+        return -(int64_t)LINUX_ENOENT;
+    }
+
+    local_memset(out, 0, sizeof(*out));
+    out->valid = 1;
+    out->dev_index = entry->dev_index;
+    out->hits = entry->hits;
+    out->ttl_ticks = entry->expires_at - now;
+    for (size_t i = 0; i < 4; i++) {
+        out->ipv4[i] = entry->ipv4[i];
+    }
+    for (size_t i = 0; i < 6; i++) {
+        out->mac[i] = entry->mac[i];
+    }
+
+    dev = netdev_get(entry->dev_index);
+    if (dev) {
+        copy_cstr_bounded(out->dev_name, sizeof(out->dev_name), dev->name);
+    }
+    return 0;
+}
+
+static int64_t sys_dns_cache_info(struct syscall_regs* regs) {
+    uint64_t index = regs->rdi;
+    struct aos_dns_cache_info_user* out = (struct aos_dns_cache_info_user*)(uintptr_t)regs->rsi;
+    struct dns_cache_entry* entry;
+    const struct netdev* dev;
+    uint64_t now;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+    if (index >= SOCKET_DNS_CACHE_ENTRIES) return -(int64_t)LINUX_ENOENT;
+
+    entry = &g_dns_cache[index];
+    now = timer_get_ticks();
+    if (!entry->valid || now >= entry->expires_at) {
+        entry->valid = 0;
+        return -(int64_t)LINUX_ENOENT;
+    }
+
+    local_memset(out, 0, sizeof(*out));
+    out->valid = 1;
+    out->dev_index = entry->dev_index;
+    out->hits = entry->hits;
+    out->ttl_ticks = entry->expires_at - now;
+    for (size_t i = 0; i < 4; i++) {
+        out->ipv4[i] = entry->ipv4[i];
+    }
+    copy_cstr_bounded(out->name, sizeof(out->name), entry->name);
+
+    dev = netdev_get(entry->dev_index);
+    if (dev) {
+        copy_cstr_bounded(out->dev_name, sizeof(out->dev_name), dev->name);
+    }
+    return 0;
+}
+
+static int64_t sys_net_cache_flush(struct syscall_regs* regs) {
+    uint64_t flags = regs->rdi;
+    uint64_t dev_filter = regs->rsi;
+    uint64_t flushed = 0;
+
+    if ((flags & ~3ULL) != 0 || flags == 0) return -(int64_t)LINUX_EINVAL;
+    if (dev_filter > 255U) return -(int64_t)LINUX_EINVAL;
+
+    if (flags & 1U) {
+        for (size_t i = 0; i < SOCKET_ARP_CACHE_ENTRIES; i++) {
+            if (!g_arp_cache[i].valid) continue;
+            if (dev_filter != 255U && g_arp_cache[i].dev_index != dev_filter) continue;
+            g_arp_cache[i].valid = 0;
+            flushed++;
+        }
+    }
+
+    if (flags & 2U) {
+        for (size_t i = 0; i < SOCKET_DNS_CACHE_ENTRIES; i++) {
+            if (!g_dns_cache[i].valid) continue;
+            if (dev_filter != 255U && g_dns_cache[i].dev_index != dev_filter) continue;
+            g_dns_cache[i].valid = 0;
+            flushed++;
+        }
+    }
+
+    return (int64_t)flushed;
+}
+
+static int64_t sys_socket_info(struct syscall_regs* regs) {
+    uint64_t index = regs->rdi;
+    struct aos_socket_info_user* out = (struct aos_socket_info_user*)(uintptr_t)regs->rsi;
+    struct socket_object* sock;
+    const struct netdev* dev;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+    if (index >= MAX_SOCKET_OBJECTS) return -(int64_t)LINUX_ENOENT;
+
+    sock = &g_socket_objects[index];
+    if (!sock->in_use) return -(int64_t)LINUX_ENOENT;
+
+    local_memset(out, 0, sizeof(*out));
+    out->valid = 1;
+    out->index = (uint8_t)index;
+    out->state = sock->state;
+    out->family = sock->family;
+    out->type = sock->type;
+    out->protocol = sock->protocol;
+    out->dev_index = sock->dev_index;
+    out->local_port = sock->local_port;
+    out->remote_port = sock->remote_port;
+    out->refcount = sock->refcount;
+    out->rx_len = sock->rx_len;
+    out->rx_off = sock->rx_off;
+    out->seq = sock->seq;
+    out->ack = sock->ack;
+    for (size_t i = 0; i < 4; i++) {
+        out->remote_ip[i] = sock->remote_ip[i];
+        out->next_hop_ip[i] = sock->next_hop_ip[i];
+    }
+    for (size_t i = 0; i < 6; i++) {
+        out->remote_mac[i] = sock->remote_mac[i];
+    }
+    dev = netdev_get(sock->dev_index);
+    if (dev) {
+        copy_cstr_bounded(out->dev_name, sizeof(out->dev_name), dev->name);
+    }
     return 0;
 }
 
@@ -4577,6 +4845,18 @@ void syscall_handler(struct syscall_regs* regs) {
             return;
         case AOS_SYS_NETDEV_STATS:
             regs->rax = (uint64_t)sys_netdev_stats(regs);
+            return;
+        case AOS_SYS_ARP_CACHE_INFO:
+            regs->rax = (uint64_t)sys_arp_cache_info(regs);
+            return;
+        case AOS_SYS_DNS_CACHE_INFO:
+            regs->rax = (uint64_t)sys_dns_cache_info(regs);
+            return;
+        case AOS_SYS_NET_CACHE_FLUSH:
+            regs->rax = (uint64_t)sys_net_cache_flush(regs);
+            return;
+        case AOS_SYS_SOCKET_INFO:
+            regs->rax = (uint64_t)sys_socket_info(regs);
             return;
         case AOS_SYS_NETDEV_SEND:
             regs->rax = (uint64_t)sys_netdev_send(regs);

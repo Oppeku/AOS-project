@@ -1,10 +1,4 @@
-------------------------------------------------------------------- #
-Add you pakages url here i will never delete this file from github  # SHOULD NOT MOVE FROM THE TOP 
-------------------------------------------------------------------  # 
- 
-example :- 
-mypakage.myweb.org --My pakage Name 
-
----------------------------------------------HERE U GO NOW ROCK--------------------------------------------------
-
-http://pakage.oppeku.org/testing.txt --testingtxt 
+# AOS package fetch list
+# format: name|host|path|outfile|description
+oppeku-home|oppeku.org|/|/tmp/acur-oppeku.txt|Oppeko homepage test package
+aos-site|aos.oppeku.org|/|/tmp/acur-aos.txt|AOS site test package
