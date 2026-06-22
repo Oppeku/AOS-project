@@ -688,7 +688,7 @@ extract_redirections:
     mov qword [r10 + rdi * 8], 0
 
     xor r11, r11
-    xor r14, r14
+    xor r8, r8
 
 extract_redir_loop:
     cmp r11, r13
@@ -699,8 +699,8 @@ extract_redir_loop:
     je extract_input_redir
     cmp al, '>'
     je extract_output_redir
-    mov [r15 + r14 * 8], rsi
-    inc r14
+    mov [r15 + r8 * 8], rsi
+    inc r8
     inc r11
     jmp extract_redir_loop
 
@@ -731,10 +731,10 @@ extract_output_redir_trunc:
     jmp extract_redir_loop
 
 extract_redir_error:
-    xor r14, r14
+    xor r8, r8
 
 extract_redir_done:
-    mov r13, r14
+    mov r13, r8
     mov qword [r15 + r13 * 8], 0
     ret
 
@@ -2302,7 +2302,7 @@ help_msg:
     db "GNU coreutils: ls cat echo head tail true false", 10
     db "GNU priority: ls cat echo run GNU first, then BusyBox if missing", 10
     db "Per-command help: run ls --help, cat --help, echo --help, pwd --help", 10
-    db "AOS tools: lspci driver/drivers net ifconfig ip netstat netcache route neigh dhcp tcp httpget curl acur kshttpget wget download sockclose gethost wifi fw usb ping ping6 rdisc6 dns nslookup netrawtest mem uptime date uname whoami id sudo aossetup settings display gfxdemo inputtest mounts partitions nano aosnano touch rm mkdir rmdir shutdown restart reboot", 10
+    db "AOS tools: afetch lspci driver/drivers net ifconfig ip netstat netcache route neigh dhcp tcp httpget curl acur kshttpget tcpstress dlstress wget download https tlsprobe sockclose gethost wifi fw usb ping ping6 rdisc6 dns nslookup netrawtest mem uptime date uname whoami id sudo aossetup settings display gfxdemo inputtest mounts partitions nano aosnano touch rm mkdir rmdir shutdown restart reboot", 10
     db "Redirection: < > and >> are supported", 10
     db "Pipes: cmd1 | cmd2 | cmd3", 10
     db "Quotes: 'one two' and ", 34, "one two", 34, 10

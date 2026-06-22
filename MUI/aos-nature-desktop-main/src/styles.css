@@ -1,0 +1,234 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * AOS Design System
+ * A nature-inspired desktop environment UI.
+ * Glassmorphic surfaces, warm forest greens, soft shadows.
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+
+  /* AOS surfaces */
+  --color-panel: var(--panel);
+  --color-panel-foreground: var(--panel-foreground);
+  --color-window: var(--window);
+  --color-window-foreground: var(--window-foreground);
+  --color-window-header: var(--window-header);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --shadow-window: 0 24px 70px -12px oklch(0.2 0.04 150 / 0.55), 0 8px 24px -8px oklch(0.2 0.04 150 / 0.35);
+  --shadow-panel: 0 8px 30px -8px oklch(0.18 0.04 150 / 0.45);
+  --shadow-dock: 0 12px 40px -10px oklch(0.18 0.04 150 / 0.5);
+}
+
+:root {
+  --radius: 0.9rem;
+
+  --background: oklch(0.97 0.01 150);
+  --foreground: oklch(0.24 0.03 150);
+
+  --card: oklch(0.99 0.005 150);
+  --card-foreground: oklch(0.24 0.03 150);
+
+  --popover: oklch(0.99 0.005 150);
+  --popover-foreground: oklch(0.24 0.03 150);
+
+  --primary: oklch(0.55 0.13 152);
+  --primary-foreground: oklch(0.98 0.01 150);
+
+  --secondary: oklch(0.93 0.02 150);
+  --secondary-foreground: oklch(0.3 0.04 150);
+
+  --muted: oklch(0.94 0.012 150);
+  --muted-foreground: oklch(0.5 0.025 150);
+
+  --accent: oklch(0.7 0.12 75);
+  --accent-foreground: oklch(0.22 0.04 75);
+
+  --destructive: oklch(0.6 0.21 25);
+  --destructive-foreground: oklch(0.98 0.01 150);
+
+  --border: oklch(0.88 0.015 150);
+  --input: oklch(0.9 0.015 150);
+  --ring: oklch(0.55 0.13 152);
+
+  /* Glass panels (top bar / dock) — dark translucent */
+  --panel: oklch(0.22 0.02 152 / 0.55);
+  --panel-foreground: oklch(0.97 0.01 150);
+
+  /* Windows — light translucent */
+  --window: oklch(0.99 0.005 150 / 0.82);
+  --window-foreground: oklch(0.24 0.03 150);
+  --window-header: oklch(0.96 0.01 150 / 0.7);
+
+  --chart-1: oklch(0.55 0.13 152);
+  --chart-2: oklch(0.7 0.12 75);
+  --chart-3: oklch(0.6 0.1 220);
+  --chart-4: oklch(0.65 0.15 30);
+  --chart-5: oklch(0.5 0.1 290);
+}
+
+.dark {
+  --background: oklch(0.2 0.02 152);
+  --foreground: oklch(0.95 0.01 150);
+
+  --card: oklch(0.26 0.02 152);
+  --card-foreground: oklch(0.95 0.01 150);
+
+  --popover: oklch(0.26 0.02 152);
+  --popover-foreground: oklch(0.95 0.01 150);
+
+  --primary: oklch(0.68 0.13 152);
+  --primary-foreground: oklch(0.18 0.03 152);
+
+  --secondary: oklch(0.3 0.025 152);
+  --secondary-foreground: oklch(0.95 0.01 150);
+
+  --muted: oklch(0.3 0.02 152);
+  --muted-foreground: oklch(0.7 0.02 150);
+
+  --accent: oklch(0.72 0.12 75);
+  --accent-foreground: oklch(0.2 0.04 75);
+
+  --destructive: oklch(0.62 0.2 25);
+  --destructive-foreground: oklch(0.98 0.01 150);
+
+  --border: oklch(1 0 0 / 0.12);
+  --input: oklch(1 0 0 / 0.15);
+  --ring: oklch(0.68 0.13 152);
+
+  --panel: oklch(0.16 0.02 152 / 0.6);
+  --panel-foreground: oklch(0.97 0.01 150);
+
+  --window: oklch(0.24 0.02 152 / 0.85);
+  --window-foreground: oklch(0.95 0.01 150);
+  --window-header: oklch(0.2 0.02 152 / 0.7);
+
+  --chart-1: oklch(0.68 0.13 152);
+  --chart-2: oklch(0.72 0.12 75);
+  --chart-3: oklch(0.65 0.1 220);
+  --chart-4: oklch(0.68 0.15 30);
+  --chart-5: oklch(0.6 0.1 290);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@utility glass-panel {
+  background-color: var(--color-panel);
+  color: var(--color-panel-foreground);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+}
+
+@utility glass-window {
+  background-color: var(--color-window);
+  color: var(--color-window-foreground);
+  backdrop-filter: blur(28px) saturate(150%);
+  -webkit-backdrop-filter: blur(28px) saturate(150%);
+}
+
+@utility no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@keyframes aos-window-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes aos-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@utility animate-window-in {
+  animation: aos-window-in 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@utility animate-fade-in {
+  animation: aos-fade-in 0.2s ease-out;
+}
+
+.aos-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.aos-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--color-muted-foreground);
+  opacity: 0.4;
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.aos-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}

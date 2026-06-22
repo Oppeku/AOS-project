@@ -48,6 +48,7 @@ int driver_register_system(uint8_t class_code, const char* driver, const char* s
 int driver_claim_pci(uint16_t vendor_id, uint16_t device_id, const char* driver, const char* status);
 int driver_claim_pci_class(uint8_t class_code, uint8_t subclass, const char* driver, const char* status);
 int driver_update_pci_status(uint16_t vendor_id, uint16_t device_id, const char* status);
+int driver_update_system_status(const char* driver, const char* status);
 size_t driver_count(void);
 const struct driver_device* driver_get(size_t index);
 

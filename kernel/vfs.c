@@ -702,8 +702,14 @@ int vfs_unlink_path(const char* path) {
     }
 
     mount = find_mount_for_path(normalized, backend_path, sizeof(backend_path));
+    if (mount && mount->backend == VFS_BACKEND_TMPFS) {
+        return tmpfs_unlink_path(backend_path);
+    }
     if (mount && mount->backend == VFS_BACKEND_AOSFS) {
         return aosfs_unlink_path(backend_path);
+    }
+    if (!mount && node.backend == VFS_BACKEND_TMPFS) {
+        return tmpfs_unlink_path(normalized);
     }
     if (!mount && node.backend == VFS_BACKEND_AOSFS) {
         return aosfs_unlink_path(normalized);

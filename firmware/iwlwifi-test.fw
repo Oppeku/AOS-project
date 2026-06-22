@@ -1,4 +1,10 @@
-AOS Intel WiFi firmware placeholder
+AOS-IWLFW
+version=1
+driver=aos-iwlwifi
+vendor=8086
+payload=test-placeholder
+ENDHDR
 
-This is not real Intel firmware. It lets AOS test firmware discovery and driver
-status plumbing until a real iwlwifi-compatible firmware blob is bundled.
+This is not real Intel firmware. It lets AOS test firmware discovery, header
+validation, and firmware staging until a real iwlwifi-compatible firmware blob
+is bundled.

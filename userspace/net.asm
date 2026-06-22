@@ -40,7 +40,7 @@ global _start
 %define ST_RX_ERRORS_OFF 40
 %define ST_TX_DROPPED_OFF 48
 %define ST_RX_DROPPED_OFF 56
-%define ST_STRUCT_SIZE 64
+%define ST_STRUCT_SIZE 160
 
 _start:
     lea rsi, [rel header_msg]

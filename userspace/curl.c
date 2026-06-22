@@ -35,7 +35,10 @@ static char rx[512];
 static char header[1536];
 static char host_buf[128];
 static char path_buf[256];
+static char redirect_host_buf[128];
+static char redirect_path_buf[256];
 static char num_buf[21];
+static char live_outfile[160];
 
 static long syscall3(long n, long a, long b, long c) {
     long ret;
@@ -147,6 +150,45 @@ static uint64_t append(char* dst, uint64_t at, uint64_t cap, const char* src) {
     return at;
 }
 
+static int starts_with(const char* s, const char* prefix) {
+    uint64_t i = 0;
+    while (prefix[i]) {
+        if (s[i] != prefix[i]) return 0;
+        i++;
+    }
+    return 1;
+}
+
+static int copy_cstr(char* dst, uint64_t cap, const char* src) {
+    uint64_t i = 0;
+    if (!cap) return 0;
+    while (src && src[i]) {
+        if (i + 1 >= cap) return 0;
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = 0;
+    return 1;
+}
+
+static const char* live_download_path(const char* requested) {
+    const char* leaf = requested;
+    uint64_t n = 0;
+
+    if (!requested || !requested[0]) return "/tmp/aos-download";
+    if (starts_with(requested, "/tmp/") || starts_with(requested, "tmp/")) return requested;
+
+    for (uint64_t i = 0; requested[i]; i++) {
+        if (requested[i] == '/') leaf = &requested[i + 1];
+    }
+    if (!leaf[0]) leaf = "aos-download";
+
+    n = append(live_outfile, n, sizeof(live_outfile), "/tmp/");
+    n = append(live_outfile, n, sizeof(live_outfile), leaf);
+    if (n <= 5) return "/tmp/aos-download";
+    return live_outfile;
+}
+
 static uint64_t build_request(const char* method, const char* host, const char* path) {
     uint64_t n = 0;
     if (!path || !path[0]) path = "/";
@@ -221,6 +263,128 @@ static int find_header_end(const char* buf, uint64_t len, uint64_t* body_at) {
     return 0;
 }
 
+static int http_status_code(const char* buf, uint64_t len) {
+    uint64_t i = 0;
+    int code = 0;
+    int digits = 0;
+
+    if (len < 12 ||
+        buf[0] != 'H' || buf[1] != 'T' || buf[2] != 'T' || buf[3] != 'P' ||
+        buf[4] != '/') {
+        return -1;
+    }
+
+    while (i < len && buf[i] != ' ') i++;
+    while (i < len && buf[i] == ' ') i++;
+    while (i < len && buf[i] >= '0' && buf[i] <= '9' && digits < 3) {
+        code = code * 10 + (int)(buf[i] - '0');
+        digits++;
+        i++;
+    }
+    return digits == 3 ? code : -1;
+}
+
+static int lower_char(int c) {
+    if (c >= 'A' && c <= 'Z') return c + ('a' - 'A');
+    return c;
+}
+
+static int header_name_matches(const char* buf, uint64_t at, const char* name) {
+    uint64_t i = 0;
+    while (name[i]) {
+        if (lower_char(buf[at + i]) != lower_char(name[i])) return 0;
+        i++;
+    }
+    return buf[at + i] == ':';
+}
+
+static int find_header_value(const char* buf,
+                             uint64_t len,
+                             const char* name,
+                             uint64_t* value_start,
+                             uint64_t* value_end) {
+    uint64_t name_len = cstrlen(name);
+
+    for (uint64_t i = 0; i + name_len < len; i++) {
+        if ((i == 0 || buf[i - 1] == '\n') && header_name_matches(buf, i, name)) {
+            uint64_t p = i + name_len + 1;
+            while (p < len && (buf[p] == ' ' || buf[p] == '\t')) p++;
+            *value_start = p;
+            while (p < len && buf[p] != '\r' && buf[p] != '\n') p++;
+            *value_end = p;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int slice_starts_with(const char* buf, uint64_t start, uint64_t end, const char* prefix) {
+    uint64_t i = 0;
+    while (prefix[i]) {
+        if (start + i >= end || lower_char(buf[start + i]) != lower_char(prefix[i])) return 0;
+        i++;
+    }
+    return 1;
+}
+
+static void print_slice(const char* buf, uint64_t start, uint64_t end) {
+    for (uint64_t p = start; p < end; p++) {
+        syscall3(SYS_WRITE, 1, (long)(buf + p), 1);
+    }
+}
+
+static void print_redirect_location(const char* prefix, const char* buf, uint64_t len) {
+    uint64_t start = 0;
+    uint64_t end = 0;
+
+    if (!find_header_value(buf, len, "location", &start, &end)) return;
+    write_cstr(prefix);
+    write_cstr(": redirect location: ");
+    print_slice(buf, start, end);
+    write_cstr("\n");
+    if (slice_starts_with(buf, start, end, "https://")) {
+        write_cstr(prefix);
+        write_cstr(": HTTPS is not supported yet; use HTTP for now\n");
+    }
+}
+
+static int parse_redirect_target(const char* buf,
+                                 uint64_t len,
+                                 const char* current_host,
+                                 char* out_host,
+                                 uint64_t out_host_cap,
+                                 char* out_path,
+                                 uint64_t out_path_cap) {
+    uint64_t start = 0;
+    uint64_t end = 0;
+    uint64_t host_start;
+    uint64_t host_end;
+    uint64_t path_start;
+
+    if (!find_header_value(buf, len, "location", &start, &end)) return 0;
+    if (slice_starts_with(buf, start, end, "https://")) return -2;
+    if (slice_starts_with(buf, start, end, "http://")) {
+        host_start = start + 7;
+        host_end = host_start;
+        while (host_end < end && buf[host_end] != '/') host_end++;
+        if (host_end == host_start) return 0;
+        if (!copy_url_part(out_host, out_host_cap, buf + host_start, host_end - host_start)) return 0;
+        if (host_end < end) {
+            path_start = host_end;
+            if (!copy_url_part(out_path, out_path_cap, buf + path_start, end - path_start)) return 0;
+        } else if (!copy_cstr(out_path, out_path_cap, "/")) {
+            return 0;
+        }
+        return 1;
+    }
+    if (start < end && buf[start] == '/') {
+        if (!copy_cstr(out_host, out_host_cap, current_host)) return 0;
+        if (!copy_url_part(out_path, out_path_cap, buf + start, end - start)) return 0;
+        return 1;
+    }
+    return 0;
+}
+
 static void usage(void) {
     write_cstr("usage: curl [-i] [-I] [-o FILE] [--iface N] URL|HOST [PATH]\n");
     write_cstr("examples: curl oppeku.org / | curl http://oppeku.org/ | curl -o /tmp/page.txt oppeku.org /\n");
@@ -239,6 +403,7 @@ void aos_main(uint64_t argc, char** argv) {
     uint64_t req_len = 0;
     uint64_t header_len = 0;
     uint64_t saved = 0;
+    uint64_t redirects = 0;
     int include_headers = 0;
     int headers_only = 0;
     int body_started = 0;
@@ -283,6 +448,8 @@ void aos_main(uint64_t argc, char** argv) {
         exit_code(1);
     }
 
+    if (outfile) outfile = live_download_path(outfile);
+
     if (outfile) {
         out_fd = (int)syscall4(SYS_OPENAT,
                                AT_FDCWD,
@@ -294,6 +461,10 @@ void aos_main(uint64_t argc, char** argv) {
             exit_code(1);
         }
     }
+
+retry_request:
+    header_len = 0;
+    body_started = 0;
 
     sock_fd = (int)syscall3(SYS_SOCKET, AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock_fd < 0) {
@@ -320,7 +491,10 @@ void aos_main(uint64_t argc, char** argv) {
         write_cstr("dns: query ");
         write_cstr(host);
         write_cstr("\n");
-        rc = syscall3(AOS_SYS_DNS_LOOKUP, (long)host, (long)addr.sin_addr, (long)iface_index);
+        rc = -1;
+        for (uint64_t attempt = 0; attempt < 3 && rc < 0; attempt++) {
+            rc = syscall3(AOS_SYS_DNS_LOOKUP, (long)host, (long)addr.sin_addr, (long)iface_index);
+        }
         if (rc < 0) {
             write_cstr("curl: DNS lookup failed\n");
             syscall3(SYS_CLOSE, sock_fd, 0, 0);
@@ -367,6 +541,48 @@ void aos_main(uint64_t argc, char** argv) {
             for (uint64_t i = 0; i < (uint64_t)rc; i++) header[header_len + i] = rx[i];
             header_len += (uint64_t)rc;
             if (!find_header_end(header, header_len, &body_at)) continue;
+            {
+                int status = http_status_code(header, body_at);
+                if (status < 200 || status >= 300) {
+                    if (status >= 300 && status < 400 && redirects < 3) {
+                        int redirect = parse_redirect_target(header,
+                                                             body_at,
+                                                             host,
+                                                             redirect_host_buf,
+                                                             sizeof(redirect_host_buf),
+                                                             redirect_path_buf,
+                                                             sizeof(redirect_path_buf));
+                        print_redirect_location("curl", header, body_at);
+                        if (redirect == 1) {
+                            if (!copy_cstr(host_buf, sizeof(host_buf), redirect_host_buf) ||
+                                !copy_cstr(path_buf, sizeof(path_buf), redirect_path_buf)) {
+                                write_cstr("curl: redirect URL is too long\n");
+                                syscall3(SYS_CLOSE, sock_fd, 0, 0);
+                                if (outfile) syscall3(SYS_CLOSE, out_fd, 0, 0);
+                                exit_code(1);
+                            }
+                            host = host_buf;
+                            path = path_buf;
+                            redirects++;
+                            write_cstr("curl: following HTTP redirect\n");
+                            syscall3(SYS_CLOSE, sock_fd, 0, 0);
+                            goto retry_request;
+                        }
+                    }
+                    write_cstr("curl: HTTP request failed");
+                    if (status > 0) {
+                        write_cstr(" status=");
+                        write_u64((uint64_t)status);
+                    }
+                    write_cstr("\n");
+                    if (status >= 300 && status < 400 && redirects >= 3) {
+                        print_redirect_location("curl", header, body_at);
+                    }
+                    syscall3(SYS_CLOSE, sock_fd, 0, 0);
+                    if (outfile) syscall3(SYS_CLOSE, out_fd, 0, 0);
+                    exit_code(1);
+                }
+            }
             body_started = 1;
             if (include_headers || headers_only) {
                 write_buf_fd(out_fd, header, headers_only ? header_len : body_at);

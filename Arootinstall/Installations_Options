@@ -1,0 +1,480 @@
+===============================================================================
+AOS INSTALLER OPTIONS
+=====================
+
+This file contains all text-mode option screens for the AOS Installer.
+
+Main installer file:
+installer.txt
+
+Options file:
+installer_options.txt
+
+---
+
+## OPTION NAMES
+
+[01] USER_ACCOUNT
+[02] PARTITIONING
+[03] LANGUAGE
+[04] COUNTRY_REGION
+[05] TIMEZONE
+[06] WIFI_SETUP
+[07] DEVICE_SCAN_DRIVERS
+[08] ADDITIONAL_APPS
+[09] KEYBOARD_LAYOUT
+[10] HOSTNAME
+[11] INSTALL_AOS
+
+===============================================================================
+[01] USER_ACCOUNT
+=================
+
+Screen title:
+AOS INSTALLER - USERNAME AND PASSWORD
+
+Purpose:
+Create the first AOS user account.
+
+Fields:
+
+Username: ______________________________
+
+Password: ______________________________
+Confirm password: ______________________
+
+Account type:
+
+[1] Administrator
+[2] Standard user
+
+Login mode:
+
+[1] Require password at login
+[2] Auto-login after boot
+
+Actions:
+
+[1] Save user settings
+[2] Clear fields
+[3] Back to main menu
+
+===============================================================================
+[02] PARTITIONING
+=================
+
+Screen title:
+AOS INSTALLER - PARTITIONING
+
+Purpose:
+Choose how AOS should use the disk.
+
+Detected disks:
+
+[0] /dev/vda
+[1] /dev/vdb
+[2] /dev/sda
+
+Selected disk: __________________________
+
+Partitioning mode:
+
+[1] Auto-partition selected disk
+[2] Manual partitioning
+[3] View disk information
+[4] Back to main menu
+
+---
+
+AUTO-PARTITION MODE
+
+Auto-partition will erase the selected disk and create the required AOS layout.
+
+Default layout:
+
+/dev/vda1    boot/root partition
+
+WARNING:
+Auto-partition will delete all data on the selected disk.
+
+To continue, type:
+
+AOS
+
+Confirmation: __________________________
+
+Auto-partition actions:
+
+[1] Start auto-partition
+[2] Cancel and go back
+
+---
+
+MANUAL PARTITIONING MODE
+
+Manual partitioning opens the AOS partition command.
+
+Command:
+
+partition
+
+Use this mode if you want to manually create, delete, or edit partitions.
+
+After manual partitioning is complete, return to the installer and select the
+partition where AOS should be installed.
+
+Selected install partition: ______________
+
+Manual partitioning actions:
+
+[1] Open partition command
+[2] Save selected partition
+[3] Back to partitioning menu
+
+===============================================================================
+[03] LANGUAGE
+=============
+
+Screen title:
+AOS INSTALLER - LANGUAGE
+
+Purpose:
+Choose the system language.
+
+Available languages:
+
+[1] English
+[2] Hindi
+[3] Other / custom
+
+Selected language: ______________________
+
+Actions:
+
+[1] Save language
+[2] Back to main menu
+
+===============================================================================
+[04] COUNTRY_REGION
+===================
+
+Screen title:
+AOS INSTALLER - COUNTRY / REGION
+
+Purpose:
+Choose your country or region.
+
+Available countries / regions:
+
+[1] India
+[2] United States
+[3] United Kingdom
+[4] Other
+
+Selected country: _______________________
+
+Actions:
+
+[1] Save country / region
+[2] Back to main menu
+
+===============================================================================
+[05] TIMEZONE
+=============
+
+Screen title:
+AOS INSTALLER - TIMEZONE
+
+Purpose:
+Choose your timezone.
+
+Common timezones:
+
+[1] Asia/Kolkata
+[2] UTC
+[3] America/New_York
+[4] Europe/London
+[5] Manual timezone entry
+
+Selected timezone: ______________________
+
+Actions:
+
+[1] Save timezone
+[2] Back to main menu
+
+===============================================================================
+[06] WIFI_SETUP
+===============
+
+Screen title:
+AOS INSTALLER - PRE-CONFIGURE WI-FI
+
+Purpose:
+Configure Wi-Fi before the first boot.
+
+Wi-Fi setup:
+
+[1] Scan for Wi-Fi networks
+[2] Enter SSID manually
+[3] Use DHCP automatically
+[4] Configure static IP
+[5] Skip Wi-Fi setup
+[6] Back to main menu
+
+Network name / SSID: ___________________
+
+Password: ______________________________
+
+IP mode:
+
+[1] DHCP
+[2] Static
+
+Static IP: ______________________________
+Gateway: _______________________________
+DNS: ___________________________________
+
+Selected mode: __________________________
+
+Actions:
+
+[1] Save Wi-Fi settings
+[2] Test connection
+[3] Clear Wi-Fi settings
+[4] Back to main menu
+
+===============================================================================
+[07] DEVICE_SCAN_DRIVERS
+========================
+
+Screen title:
+AOS INSTALLER - DEVICE SCAN AND DRIVERS
+
+Purpose:
+Scan hardware and install available AOS drivers.
+
+Device scan options:
+
+[1] Scan PCI devices
+[2] Scan storage devices
+[3] Scan network devices
+[4] Scan USB devices
+[5] Scan all devices
+[6] Skip driver installation
+[7] Back to main menu
+
+Driver install mode:
+
+[1] Install stable drivers only
+[2] Install experimental drivers too
+[3] Ask before each driver
+
+Status:
+
+[ -- ] PCI scan not started
+[ -- ] Storage scan not started
+[ -- ] Network scan not started
+[ -- ] USB scan not started
+
+Actions:
+
+[1] Start device scan
+[2] Install detected drivers
+[3] View detected devices
+[4] Back to main menu
+
+===============================================================================
+[08] ADDITIONAL_APPS
+====================
+
+Screen title:
+AOS INSTALLER - ADDITIONAL APPS
+
+Purpose:
+Choose extra applications to install.
+
+Install profile:
+
+[1] Minimal system only
+[2] Basic tools
+[3] Full default system
+[4] Custom app selection
+
+Available apps:
+
+[ ] afetch
+[ ] aosctl
+[ ] acur package manager
+[ ] text editor
+[ ] file tools
+[ ] network tools
+[ ] system monitor
+[ ] development tools
+
+Selected profile: _______________________
+
+Actions:
+
+[1] Save app selection
+[2] Select all basic apps
+[3] Clear app selection
+[4] Back to main menu
+
+===============================================================================
+[09] KEYBOARD_LAYOUT
+====================
+
+Screen title:
+AOS INSTALLER - KEYBOARD LAYOUT
+
+Purpose:
+Choose keyboard layout.
+
+Available layouts:
+
+[1] US English
+[2] UK English
+[3] Indian English
+[4] Hindi / InScript
+[5] Custom layout
+
+Selected keyboard layout: _______________
+
+Test keyboard input:
+
+---
+
+Actions:
+
+[1] Test keyboard input
+[2] Save keyboard layout
+[3] Back to main menu
+
+===============================================================================
+[10] HOSTNAME
+=============
+
+Screen title:
+AOS INSTALLER - HOSTNAME
+
+Purpose:
+Set the computer name.
+
+Hostname: _______________________________
+
+Examples:
+
+aos
+oppeko-pc
+aos-laptop
+aos-vm
+
+Rules:
+
+* Use lowercase letters if possible
+* Avoid spaces
+* Avoid special symbols
+* Keep it short
+
+Actions:
+
+[1] Save hostname
+[2] Reset to default: aos
+[3] Back to main menu
+
+===============================================================================
+[11] INSTALL_AOS
+================
+
+Screen title:
+AOS INSTALLER - INSTALL AOS
+
+Purpose:
+Show final installation summary and start installation.
+
+Current configuration:
+
+Username:          ______________________
+Hostname:          ______________________
+Language:          ______________________
+Country / Region:  ______________________
+Timezone:          ______________________
+Keyboard:          ______________________
+Wi-Fi:             configured / skipped
+Partition mode:    auto / manual
+Target disk:       ______________________
+Target partition:  ______________________
+Drivers:           configured / skipped
+Additional apps:   ______________________
+
+---
+
+FINAL WARNING:
+
+Installing AOS may erase data on the selected disk.
+
+Check the selected disk and partition before continuing.
+
+To start installation, type:
+
+AOS
+
+Confirmation: ___________________________
+
+Actions:
+
+[1] Start installation
+[2] Back to main menu
+[3] Cancel installer
+
+===============================================================================
+INSTALLATION_PROGRESS
+=====================
+
+Screen title:
+AOS INSTALLER - INSTALLATION PROGRESS
+
+Status:
+
+[ -- ] Preparing installer
+[ -- ] Checking target disk
+[ -- ] Creating partitions
+[ -- ] Formatting filesystem
+[ -- ] Copying kernel
+[ -- ] Copying initrd
+[ -- ] Copying userspace files
+[ -- ] Writing system configuration
+[ -- ] Installing bootloader
+[ -- ] Creating install log
+[ -- ] Finishing installation
+
+Progress log:
+
+---
+
+---
+
+---
+
+---
+
+===============================================================================
+POST_INSTALL
+============
+
+Screen title:
+AOS INSTALLER - INSTALLATION COMPLETE
+
+AOS installation is complete.
+
+Next action:
+
+[1] Reboot now
+[2] Reboot manually
+[3] Open shell and explore system
+[4] View install log
+
+Message:
+
+Remove the installation media before rebooting if needed.

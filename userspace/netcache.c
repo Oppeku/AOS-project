@@ -9,9 +9,11 @@
 #define AOS_SYS_ARP_CACHE_INFO 539
 #define AOS_SYS_DNS_CACHE_INFO 540
 #define AOS_SYS_NET_CACHE_FLUSH 541
+#define AOS_SYS_NDP_CACHE_INFO 542
 
 #define AOS_NET_CACHE_ARP 1
 #define AOS_NET_CACHE_DNS 2
+#define AOS_NET_CACHE_NDP 4
 #define AOS_NET_CACHE_ALL_DEVICES 255
 
 struct aos_arp_cache_info_user {
@@ -29,18 +31,33 @@ struct aos_arp_cache_info_user {
 struct aos_dns_cache_info_user {
     uint8_t valid;
     uint8_t dev_index;
-    uint8_t reserved[2];
+    uint8_t family;
+    uint8_t reserved;
     uint32_t hits;
     uint64_t ttl_ticks;
     uint8_t ipv4[4];
     uint8_t reserved2[4];
+    uint8_t ipv6[16];
     char dev_name[16];
     char name[128];
+} __attribute__((packed));
+
+struct aos_ndp_cache_info_user {
+    uint8_t valid;
+    uint8_t dev_index;
+    uint8_t reserved[2];
+    uint32_t hits;
+    uint64_t ttl_ticks;
+    uint8_t ipv6[16];
+    uint8_t mac[6];
+    uint8_t reserved2[2];
+    char dev_name[16];
 } __attribute__((packed));
 
 static char num_buf[21];
 static struct aos_arp_cache_info_user arp_entry;
 static struct aos_dns_cache_info_user dns_entry;
+static struct aos_ndp_cache_info_user ndp_entry;
 
 static long syscall3(long n, long a, long b, long c) {
     long ret;
@@ -110,10 +127,23 @@ static void write_hex8(uint8_t v) {
     write_cstr(buf);
 }
 
+static void write_hex16(uint16_t v) {
+    write_hex8((uint8_t)(v >> 8));
+    write_hex8((uint8_t)v);
+}
+
 static void write_mac(const uint8_t mac[6]) {
     for (int i = 0; i < 6; i++) {
         if (i) write_cstr(":");
         write_hex8(mac[i]);
+    }
+}
+
+static void write_ipv6(const uint8_t ip[16]) {
+    for (int i = 0; i < 8; i++) {
+        uint16_t group = ((uint16_t)ip[i * 2] << 8) | ip[i * 2 + 1];
+        if (i) write_cstr(":");
+        write_hex16(group);
     }
 }
 
@@ -137,7 +167,11 @@ static int show_dns_cache(void) {
             write_cstr(" dev ");
             write_dev_name(dns_entry.dev_name, dns_entry.dev_index);
             write_cstr(" -> ");
-            write_ipv4(dns_entry.ipv4);
+            if (dns_entry.family == 6) {
+                write_ipv6(dns_entry.ipv6);
+            } else {
+                write_ipv4(dns_entry.ipv4);
+            }
             write_cstr(" hits=");
             write_u64(dns_entry.hits);
             write_cstr(" ttl_ticks=");
@@ -174,9 +208,34 @@ static int show_arp_cache(void) {
     return shown;
 }
 
+static int show_ndp_cache(void) {
+    int shown = 0;
+
+    write_cstr("NDP cache:\n");
+    for (uint64_t i = 0; i < 8; i++) {
+        if (syscall3(AOS_SYS_NDP_CACHE_INFO, (long)i, (long)&ndp_entry, 0) == 0) {
+            write_cstr("  ");
+            write_ipv6(ndp_entry.ipv6);
+            write_cstr(" dev ");
+            write_dev_name(ndp_entry.dev_name, ndp_entry.dev_index);
+            write_cstr(" lladdr ");
+            write_mac(ndp_entry.mac);
+            write_cstr(" hits=");
+            write_u64(ndp_entry.hits);
+            write_cstr(" ttl_ticks=");
+            write_u64(ndp_entry.ttl_ticks);
+            write_cstr("\n");
+            shown = 1;
+        }
+    }
+    if (!shown) write_cstr("  empty\n");
+    return shown;
+}
+
 static void show_cache(void) {
     show_dns_cache();
     show_arp_cache();
+    show_ndp_cache();
 }
 
 static int flush_cache(uint64_t flags) {
@@ -194,7 +253,7 @@ static int flush_cache(uint64_t flags) {
 }
 
 static void usage(void) {
-    write_cstr("usage: netcache [show] | netcache flush [all|dns|arp]\n");
+    write_cstr("usage: netcache [show] | netcache flush [all|dns|arp|ndp]\n");
 }
 
 void aos_main(uint64_t argc, char** argv) {
@@ -204,13 +263,15 @@ void aos_main(uint64_t argc, char** argv) {
     }
 
     if (argc >= 2 && cstr_eq(argv[1], "flush")) {
-        uint64_t flags = AOS_NET_CACHE_ARP | AOS_NET_CACHE_DNS;
+        uint64_t flags = AOS_NET_CACHE_ARP | AOS_NET_CACHE_DNS | AOS_NET_CACHE_NDP;
 
         if (argc >= 3) {
             if (cstr_eq(argv[2], "dns")) {
                 flags = AOS_NET_CACHE_DNS;
             } else if (cstr_eq(argv[2], "arp")) {
                 flags = AOS_NET_CACHE_ARP;
+            } else if (cstr_eq(argv[2], "ndp")) {
+                flags = AOS_NET_CACHE_NDP;
             } else if (!cstr_eq(argv[2], "all")) {
                 usage();
                 exit_code(1);

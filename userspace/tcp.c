@@ -5,11 +5,22 @@
 #include <stdint.h>
 
 #define SYS_WRITE 1
+#define SYS_CLOSE 3
+#define SYS_SOCKET 41
+#define SYS_CONNECT 42
+#define SYS_SENDTO 44
+#define SYS_RECVFROM 45
 #define SYS_EXIT 60
 #define AOS_SYS_NETDEV_INFO 526
 #define AOS_SYS_NETDEV_SEND 527
 #define AOS_SYS_NETDEV_RECV 528
 #define AOS_SYS_DNS_LOOKUP 534
+#define AOS_SYS_SOCKET_BIND_NETDEV 538
+#define AOS_SYS_DNS_LOOKUP6 543
+
+#define AF_INET6 10
+#define SOCK_STREAM 1
+#define IPPROTO_TCP 6
 
 #define TX_SIZE 1518
 #define RX_SIZE 1518
@@ -47,6 +58,7 @@ static struct aos_netdev_info_user netdev;
 static uint8_t tx_frame[TX_SIZE];
 static uint8_t rx_frame[RX_SIZE];
 static uint8_t target_ip[4];
+static uint8_t target_ip6[16];
 static uint8_t arp_ip[4];
 static uint8_t target_mac[6];
 static char target_name[128];
@@ -58,6 +70,15 @@ static uint64_t iface_index;
 static const char* host_arg;
 static const char* path_arg;
 static const char* port_arg;
+static uint8_t ipv6_mode;
+
+struct sockaddr_in6 {
+    uint16_t sin6_family;
+    uint16_t sin6_port;
+    uint32_t sin6_flowinfo;
+    uint8_t sin6_addr[16];
+    uint32_t sin6_scope_id;
+} __attribute__((packed));
 
 static long syscall3(long n, long a, long b, long c) {
     long ret;
@@ -132,6 +153,28 @@ static void write_ipv4(const uint8_t ip[4]) {
     write_u64(ip[2]);
     write_cstr(".");
     write_u64(ip[3]);
+}
+
+static void write_hex8(uint8_t value) {
+    static const char digits[] = "0123456789abcdef";
+    char out[3];
+    out[0] = digits[(value >> 4) & 0xf];
+    out[1] = digits[value & 0xf];
+    out[2] = 0;
+    write_cstr(out);
+}
+
+static void write_hex16(uint16_t value) {
+    write_hex8((uint8_t)(value >> 8));
+    write_hex8((uint8_t)value);
+}
+
+static void write_ipv6(const uint8_t ip[16]) {
+    for (uint64_t i = 0; i < 8; i++) {
+        uint16_t group = ((uint16_t)ip[i * 2] << 8) | ip[i * 2 + 1];
+        if (i) write_cstr(":");
+        write_hex16(group);
+    }
 }
 
 static void put_be16(uint8_t* p, uint16_t v) {
@@ -213,6 +256,14 @@ static int is_dash_i(const char* s) {
     return s && s[0] == '-' && s[1] == 'i' && s[2] == 0;
 }
 
+static int is_dash4(const char* s) {
+    return s && s[0] == '-' && s[1] == '4' && s[2] == 0;
+}
+
+static int is_dash6(const char* s) {
+    return s && s[0] == '-' && s[1] == '6' && s[2] == 0;
+}
+
 static int parse_iface_index(const char* s, uint64_t* out) {
     if (!s || s[0] < '0' || s[0] > '7' || s[1] != 0) return 0;
     *out = (uint64_t)(s[0] - '0');
@@ -250,6 +301,75 @@ static int parse_ipv4(const char* s, uint8_t out[4]) {
     }
     if (digits == 0 || part != 3) return 0;
     out[part] = (uint8_t)v;
+    return 1;
+}
+
+static int hex_value(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static int parse_ipv6(const char* s, uint8_t out[16]) {
+    uint16_t groups[8];
+    int count = 0;
+    int compress = -1;
+    const char* p = s;
+
+    for (int i = 0; i < 8; i++) groups[i] = 0;
+    if (!s || !s[0]) return 0;
+
+    if (p[0] == ':' && p[1] == ':') {
+        compress = 0;
+        p += 2;
+    }
+
+    while (*p) {
+        uint32_t value = 0;
+        int digits = 0;
+
+        if (count >= 8) return 0;
+        while (*p && *p != ':') {
+            int hv = hex_value(*p);
+            if (hv < 0 || digits >= 4) return 0;
+            value = (value << 4) | (uint32_t)hv;
+            digits++;
+            p++;
+        }
+        if (digits == 0) return 0;
+        groups[count++] = (uint16_t)value;
+
+        if (*p == ':') {
+            p++;
+            if (*p == ':') {
+                if (compress >= 0) return 0;
+                compress = count;
+                p++;
+                if (!*p) break;
+            } else if (!*p) {
+                return 0;
+            }
+        }
+    }
+
+    if (compress >= 0) {
+        int missing = 8 - count;
+        if (missing < 0) return 0;
+        for (int i = count - 1; i >= compress; i--) {
+            groups[i + missing] = groups[i];
+        }
+        for (int i = 0; i < missing; i++) {
+            groups[compress + i] = 0;
+        }
+    } else if (count != 8) {
+        return 0;
+    }
+
+    for (int i = 0; i < 8; i++) {
+        out[i * 2] = (uint8_t)(groups[i] >> 8);
+        out[i * 2 + 1] = (uint8_t)groups[i];
+    }
     return 1;
 }
 
@@ -481,7 +601,7 @@ static int resolve_dns(const char* name) {
 }
 
 static int resolve_name(const char* name) {
-    long rc = syscall3(AOS_SYS_DNS_LOOKUP, (long)name, (long)target_ip, 0);
+    long rc = syscall3(AOS_SYS_DNS_LOOKUP, (long)name, (long)target_ip, (long)iface_index);
     if (rc >= 0) {
         write_cstr("dns: ");
         write_cstr(name);
@@ -491,6 +611,112 @@ static int resolve_name(const char* name) {
         return 1;
     }
     return resolve_dns(name);
+}
+
+static int resolve_name6(const char* name) {
+    long rc = syscall3(AOS_SYS_DNS_LOOKUP6, (long)name, (long)target_ip6, (long)iface_index);
+    if (rc < 0) return 0;
+    write_cstr("dns: ");
+    write_cstr(name);
+    write_cstr(" -> ");
+    write_ipv6(target_ip6);
+    write_cstr("\n");
+    return 1;
+}
+
+static uint16_t build_http_request(const char* host, const char* path);
+
+static int tcp6_connect_only(void) {
+    struct sockaddr_in6 addr;
+    long rc;
+    int fd;
+
+    fd = (int)syscall3(SYS_SOCKET, AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+    if (fd < 0) {
+        write_cstr("tcp: IPv6 socket failed\n");
+        return 0;
+    }
+    if (syscall3(AOS_SYS_SOCKET_BIND_NETDEV, fd, (long)iface_index, 0) < 0) {
+        write_cstr("tcp: IPv6 bind interface failed\n");
+        syscall3(SYS_CLOSE, fd, 0, 0);
+        return 0;
+    }
+
+    memzero(&addr, sizeof(addr));
+    addr.sin6_family = AF_INET6;
+    put_be16((uint8_t*)&addr.sin6_port, target_port);
+    memcopy(addr.sin6_addr, target_ip6, 16);
+
+    rc = syscall3(SYS_CONNECT, fd, (long)&addr, sizeof(addr));
+    if (rc < 0) {
+        write_cstr("tcp: IPv6 connect failed\n");
+        syscall3(SYS_CLOSE, fd, 0, 0);
+        return 0;
+    }
+
+    write_cstr("tcp: open ");
+    write_ipv6(target_ip6);
+    write_cstr(":");
+    write_u64(target_port);
+    write_cstr("\n");
+    syscall3(SYS_CLOSE, fd, 0, 0);
+    return 1;
+}
+
+static int tcp6_httpget(void) {
+    struct sockaddr_in6 addr;
+    uint16_t req_len;
+    uint32_t got_payload = 0;
+    int fd;
+
+    fd = (int)syscall3(SYS_SOCKET, AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+    if (fd < 0) {
+        write_cstr("httpget: IPv6 socket failed\n");
+        return 0;
+    }
+    if (syscall3(AOS_SYS_SOCKET_BIND_NETDEV, fd, (long)iface_index, 0) < 0) {
+        write_cstr("httpget: IPv6 bind interface failed\n");
+        syscall3(SYS_CLOSE, fd, 0, 0);
+        return 0;
+    }
+
+    memzero(&addr, sizeof(addr));
+    addr.sin6_family = AF_INET6;
+    put_be16((uint8_t*)&addr.sin6_port, target_port);
+    memcopy(addr.sin6_addr, target_ip6, 16);
+
+    if (syscall3(SYS_CONNECT, fd, (long)&addr, sizeof(addr)) < 0) {
+        write_cstr("httpget: IPv6 connect failed\n");
+        syscall3(SYS_CLOSE, fd, 0, 0);
+        return 0;
+    }
+
+    req_len = build_http_request(target_name, path_arg);
+    if (syscall3(SYS_SENDTO, fd, (long)http_req, req_len) < 0) {
+        write_cstr("httpget: IPv6 request send failed\n");
+        syscall3(SYS_CLOSE, fd, 0, 0);
+        return 0;
+    }
+
+    write_cstr("httpget: GET ");
+    write_cstr(target_name);
+    write_cstr(path_arg);
+    write_cstr(" via IPv6\n");
+
+    for (int i = 0; i < 256; i++) {
+        long n = syscall3(SYS_RECVFROM, fd, (long)rx_frame, RX_SIZE);
+        if (n > 0) {
+            syscall3(SYS_WRITE, 1, (long)rx_frame, n);
+            got_payload = 1;
+            continue;
+        }
+        break;
+    }
+
+    syscall3(SYS_CLOSE, fd, 0, 0);
+    if (got_payload) write_cstr("\n");
+    if (!got_payload) write_cstr("httpget: no IPv6 response payload\n");
+    return got_payload ? 1 : 0;
 }
 
 static uint16_t build_tcp_payload(uint8_t flags,
@@ -608,19 +834,34 @@ void aos_main(uint64_t argc, char** argv) {
     uint64_t arg = 1;
 
     iface_index = 0;
-    if (argc >= 4 && is_dash_i(argv[arg])) {
-        if (!parse_iface_index(argv[arg + 1], &iface_index)) {
-            write_cstr(http_mode ?
-                       "usage: httpget [-i IFACE] HOST [PATH]\n" :
-                       "usage: tcp [-i IFACE] HOST PORT\n");
-            exit_code(1);
+    ipv6_mode = 0;
+    while (arg < argc) {
+        if (is_dash4(argv[arg])) {
+            ipv6_mode = 0;
+            arg++;
+            continue;
         }
-        arg += 2;
+        if (is_dash6(argv[arg])) {
+            ipv6_mode = 1;
+            arg++;
+            continue;
+        }
+        if (is_dash_i(argv[arg])) {
+            if (arg + 1 >= argc || !parse_iface_index(argv[arg + 1], &iface_index)) {
+                write_cstr(http_mode ?
+                           "usage: httpget [-i IFACE] HOST [PATH]\n" :
+                           "usage: tcp [-4|-6] [-i IFACE] HOST PORT\n");
+                exit_code(1);
+            }
+            arg += 2;
+            continue;
+        }
+        break;
     }
 
     if (http_mode) {
         if (argc - arg < 1) {
-            write_cstr("usage: httpget [-i IFACE] HOST [PATH]\nexample: httpget -i 1 oppeku.org /\n");
+            write_cstr("usage: httpget [-4|-6] [-i IFACE] HOST [PATH]\nexample: httpget -6 -i 0 oppeku.org /\n");
             exit_code(1);
         }
         host_arg = argv[arg];
@@ -628,13 +869,13 @@ void aos_main(uint64_t argc, char** argv) {
         target_port = 80;
     } else {
         if (argc - arg < 2) {
-            write_cstr("usage: tcp [-i IFACE] HOST PORT\nexample: tcp -i 1 oppeku.org 80\n");
+            write_cstr("usage: tcp [-4|-6] [-i IFACE] HOST PORT\nexample: tcp -6 google.com 80\n");
             exit_code(1);
         }
         host_arg = argv[arg];
         port_arg = argv[arg + 1];
         if (!parse_u16(port_arg, &target_port)) {
-            write_cstr("usage: tcp [-i IFACE] HOST PORT\nexample: tcp -i 1 oppeku.org 80\n");
+            write_cstr("usage: tcp [-4|-6] [-i IFACE] HOST PORT\nexample: tcp -i 1 oppeku.org 80\n");
             exit_code(1);
         }
     }
@@ -642,6 +883,27 @@ void aos_main(uint64_t argc, char** argv) {
     if (syscall3(AOS_SYS_NETDEV_INFO, (long)iface_index, (long)&netdev, 0) < 0) {
         write_cstr("tcp: no network interface is registered\n");
         exit_code(1);
+    }
+    if (ipv6_mode) {
+        if (!netdev.link_up || !netdev.ipv6_configured) {
+            write_cstr("tcp: interface is not IPv6-ready\n");
+            exit_code(1);
+        }
+        if (!parse_ipv6(host_arg, target_ip6) && !resolve_name6(host_arg)) {
+            write_cstr("tcp: AAAA lookup failed\n");
+            exit_code(1);
+        }
+        write_cstr("tcp: connecting ");
+        write_cstr(target_name);
+        write_cstr(":");
+        write_u64(target_port);
+        write_cstr(" from ");
+        write_cstr(netdev.name);
+        write_cstr(" via IPv6\n");
+        if (http_mode) {
+            exit_code(tcp6_httpget() ? 0 : 1);
+        }
+        exit_code(tcp6_connect_only() ? 0 : 1);
     }
     if (!netdev.link_up || !netdev.ipv4_configured) {
         write_cstr("tcp: interface is not IPv4-ready\n");

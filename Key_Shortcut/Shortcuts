@@ -1,0 +1,13 @@
+Cntrl+C =Copy
+Cntrl+V =Paste
+Superkey+t =Open Terminal 
+PrintScreen=Selected area ScreenShot 
+SuperKey+S=Settings
+F7+SuperKey=Launch TTY 
+Superkey+Alt+F1=Instant Restart
+Superkey+F=File Manager 
+Superkey+U+F5+0+1=launch recovery mode 
+Superkey+A= About System 
+Superkey+P=System Monitor 
+Superkey =App Menu 
+

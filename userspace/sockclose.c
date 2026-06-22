@@ -87,9 +87,24 @@ static int parse_iface_index(const char* s, uint64_t* out) {
     return 1;
 }
 
+static int parse_u16(const char* s, uint16_t* out) {
+    uint32_t v = 0;
+
+    if (!s || !*s) return 0;
+    while (*s) {
+        if (*s < '0' || *s > '9') return 0;
+        v = v * 10U + (uint32_t)(*s - '0');
+        if (v > 65535U) return 0;
+        s++;
+    }
+    *out = (uint16_t)v;
+    return 1;
+}
+
 void aos_main(uint64_t argc, char** argv) {
     struct sockaddr_in addr;
     const char* host;
+    uint16_t port = 80;
     uint64_t iface_index = 0;
     uint64_t arg = 1;
     uint8_t parsed_ip[4];
@@ -104,12 +119,16 @@ void aos_main(uint64_t argc, char** argv) {
         arg += 2;
     }
 
-    if (argc - arg < 1) {
-        write_cstr("usage: sockclose [-i IFACE] HOST\n");
-        write_cstr("example: sockclose -i 1 oppeku.org\n");
+    if (argc - arg < 1 || argc - arg > 2) {
+        write_cstr("usage: sockclose [-i IFACE] HOST [PORT]\n");
+        write_cstr("example: sockclose -i 1 oppeku.org 80\n");
         exit_code(1);
     }
     host = argv[arg];
+    if (argc - arg == 2 && !parse_u16(argv[arg + 1], &port)) {
+        write_cstr("sockclose: bad port\n");
+        exit_code(1);
+    }
 
     fd = (int)syscall3(SYS_SOCKET, AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (fd < 0) {
@@ -127,7 +146,7 @@ void aos_main(uint64_t argc, char** argv) {
         ((uint8_t*)&addr)[i] = 0;
     }
     addr.sin_family = AF_INET;
-    put_be16((uint8_t*)&addr.sin_port, 80);
+    put_be16((uint8_t*)&addr.sin_port, port);
     if (parse_ipv4(host, parsed_ip)) {
         for (uint64_t i = 0; i < sizeof(parsed_ip); i++) {
             addr.sin_addr[i] = parsed_ip[i];

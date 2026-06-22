@@ -146,6 +146,18 @@ int netdev_get_stats(size_t index, struct netdev_stats* out) {
     out->rx_errors = dev->rx_errors;
     out->tx_dropped = dev->tx_dropped;
     out->rx_dropped = dev->rx_dropped;
+    out->tx_arp = dev->tx_arp;
+    out->rx_arp = dev->rx_arp;
+    out->tx_ipv4 = dev->tx_ipv4;
+    out->rx_ipv4 = dev->rx_ipv4;
+    out->tx_ipv6 = dev->tx_ipv6;
+    out->rx_ipv6 = dev->rx_ipv6;
+    out->tx_icmp = dev->tx_icmp;
+    out->rx_icmp = dev->rx_icmp;
+    out->tx_udp = dev->tx_udp;
+    out->rx_udp = dev->rx_udp;
+    out->tx_tcp = dev->tx_tcp;
+    out->rx_tcp = dev->rx_tcp;
     return 0;
 }
 
@@ -218,6 +230,49 @@ int netdev_configure_ipv6_link_local(size_t index) {
     return netdev_configure_ipv6(index, addr, 64, empty, empty);
 }
 
+static void netdev_account_frame(struct netdev* dev,
+                                 const uint8_t* frame,
+                                 uint16_t length,
+                                 int tx) {
+    uint16_t ethertype;
+    uint8_t proto = 0;
+
+    if (!dev || !frame || length < 14) return;
+
+    ethertype = (uint16_t)(((uint16_t)frame[12] << 8) | frame[13]);
+    if (ethertype == 0x0806U) {
+        if (tx) dev->tx_arp++;
+        else dev->rx_arp++;
+        return;
+    }
+    if (ethertype == 0x0800U) {
+        if (tx) dev->tx_ipv4++;
+        else dev->rx_ipv4++;
+        if (length >= 34) {
+            proto = frame[23];
+        }
+    } else if (ethertype == 0x86ddU) {
+        if (tx) dev->tx_ipv6++;
+        else dev->rx_ipv6++;
+        if (length >= 54) {
+            proto = frame[20];
+        }
+    } else {
+        return;
+    }
+
+    if (proto == 1 || proto == 58) {
+        if (tx) dev->tx_icmp++;
+        else dev->rx_icmp++;
+    } else if (proto == 6) {
+        if (tx) dev->tx_tcp++;
+        else dev->rx_tcp++;
+    } else if (proto == 17) {
+        if (tx) dev->tx_udp++;
+        else dev->rx_udp++;
+    }
+}
+
 int netdev_send(size_t index, const uint8_t* frame, uint16_t length) {
     struct netdev* dev;
     int rc;
@@ -237,6 +292,7 @@ int netdev_send(size_t index, const uint8_t* frame, uint16_t length) {
     }
     dev->tx_packets++;
     dev->tx_bytes += length;
+    netdev_account_frame(dev, frame, length, 1);
     return rc;
 }
 
@@ -260,6 +316,7 @@ int netdev_recv(size_t index, uint8_t* frame, uint16_t max_length) {
     if (rc > 0) {
         dev->rx_packets++;
         dev->rx_bytes += (uint64_t)rc;
+        netdev_account_frame(dev, frame, (uint16_t)rc, 0);
     }
     return rc;
 }

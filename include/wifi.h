@@ -41,6 +41,7 @@ struct wifi_data_rx_stats {
 };
 
 void wifi_register_driver(void);
+void wifi_refresh_firmware_status(void);
 int wifi_has_hardware(void);
 int wifi_register_wlan0(const uint8_t mac[6]);
 int wifi_send_management_frame(const uint8_t* frame, uint32_t length);

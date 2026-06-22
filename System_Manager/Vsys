@@ -1,0 +1,49 @@
+Vsys (Virtual System Manager)
+
+
+LETS COOOK 
+
+
+
+This is an system Manager Made for AOS 
+
+
+This System Manager Which MAnges MUI and Background Serivices 
+
+
+LETS study how this will work 
+
+This will be the first most feature of Aos to Start
+
+Vsys will start and count total amount of Services which are available once its got the info it will check thier memory requirement and how high can it go and it will check total amount of Memory Available then it will provide them 
+the amount of resources required. Imgaine it like an Pizza and amount of people then you will divide them acourding to thier requiremnet so each of them have full stomach thats how Vsys divides resourses
+
+
+
+Live Resource Updating 
+
+IF the Serivce is asking for more ram Vsys will provide it more 
+
+This will provide better utilization of memory and there will be an free block 
+
+Resiurces not being utilized will be available in the free block 
+
+
+This will also Add Services with Entering ther DEsktop entires and adding them vis the Vsys command of - Sudo Vsys /Vsys/Serivices/(desktop entire of the file) add 
+or removing will be changing the add in last to remove 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+SO BABY NOW U FELL LIKE NO. ONE (bleach) 
+

@@ -77,6 +77,16 @@ OBJECTS = $(BUILD_DIR)/boot.o \
           $(BUILD_DIR)/process.o \
           $(BUILD_DIR)/paging.o \
           $(BUILD_DIR)/syscall_c.o \
+          $(BUILD_DIR)/syscall_ipc.o \
+          $(BUILD_DIR)/syscall_process_lifecycle.o \
+          $(BUILD_DIR)/syscall_memory.o \
+          $(BUILD_DIR)/syscall_terminal_io.o \
+          $(BUILD_DIR)/syscall_fs.o \
+          $(BUILD_DIR)/syscall_process_info.o \
+          $(BUILD_DIR)/syscall_network.o \
+          $(BUILD_DIR)/syscall_linux_misc.o \
+          $(BUILD_DIR)/syscall_aos_services.o \
+          $(BUILD_DIR)/syscall_dispatch.o \
           $(BUILD_DIR)/vfs.o \
           $(BUILD_DIR)/blkdev.o \
           $(BUILD_DIR)/pci.o \
@@ -118,7 +128,7 @@ $(BUILD_DIR)/aos.iso: $(BUILD_DIR)/kernel.bin $(BUILD_DIR)/initrd.img $(BUILD_DI
 	cp $(BUILD_DIR)/aosfs.img $(ISO_DIR)/boot/aosfs.img
 	cp scripts/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
 	cp -r $(GRUB_I386_DIR)/. $(ISO_DIR)/boot/grub/i386-pc/
-	grub-mkimage -O i386-pc -o $(ISO_DIR)/boot/grub/i386-pc/core.img -p /boot/grub iso9660 biosdisk multiboot2 normal configfile
+	grub-mkimage -d $(GRUB_I386_DIR) -O i386-pc -o $(ISO_DIR)/boot/grub/i386-pc/core.img -p /boot/grub iso9660 biosdisk multiboot2 normal configfile
 	xorriso -as mkisofs -R -b boot/grub/i386-pc/eltorito.img -no-emul-boot -boot-load-size 4 -boot-info-table -o $(BUILD_DIR)/aos.iso $(ISO_DIR)
 
 $(BUILD_DIR)/BOOTX64.EFI: scripts/grub-uefi-embed.cfg
@@ -138,7 +148,7 @@ $(BUILD_DIR)/esp.img: $(BUILD_DIR)/BOOTX64.EFI $(BUILD_DIR)/kernel.bin $(BUILD_D
 	mcopy -i $@ $(BUILD_DIR)/ext4.img ::/boot/ext4.img
 	mcopy -i $@ $(BUILD_DIR)/aosfs.img ::/boot/aosfs.img
 
-$(BUILD_DIR)/initrd.img: hello.txt pakages/pakages.txt firmware/aos-wifi-placeholder.fw firmware/iwlwifi-test.fw $(BUILD_DIR)/user.elf $(BUILD_DIR)/user2.elf $(BUILD_DIR)/shell.elf $(BUILD_DIR)/filetest.elf $(BUILD_DIR)/accesstest.elf $(BUILD_DIR)/openflagstest.elf $(BUILD_DIR)/duptest.elf $(BUILD_DIR)/pipetest.elf $(BUILD_DIR)/wait4test.elf $(BUILD_DIR)/stdincat.elf $(BUILD_DIR)/argvtest.elf $(BUILD_DIR)/pathtest.elf $(BUILD_DIR)/partitions.elf $(BUILD_DIR)/mounts.elf $(BUILD_DIR)/lspci.elf $(BUILD_DIR)/drivers.elf $(BUILD_DIR)/net.elf $(BUILD_DIR)/ip.elf $(BUILD_DIR)/wifi.elf $(BUILD_DIR)/firmware.elf $(BUILD_DIR)/usb.elf $(BUILD_DIR)/ping.elf $(BUILD_DIR)/ping6.elf $(BUILD_DIR)/rdisc6.elf $(BUILD_DIR)/route.elf $(BUILD_DIR)/neigh.elf $(BUILD_DIR)/dhcp.elf $(BUILD_DIR)/tcp.elf $(BUILD_DIR)/curl.elf $(BUILD_DIR)/acur.elf $(BUILD_DIR)/kshttpget.elf $(BUILD_DIR)/wget.elf $(BUILD_DIR)/sockclose.elf $(BUILD_DIR)/gethost.elf $(BUILD_DIR)/netcache.elf $(BUILD_DIR)/netstat.elf $(BUILD_DIR)/netrawtest.elf $(BUILD_DIR)/mem.elf $(BUILD_DIR)/uptime.elf $(BUILD_DIR)/uname.elf $(BUILD_DIR)/whoami.elf $(BUILD_DIR)/id.elf $(BUILD_DIR)/aossetup.elf $(BUILD_DIR)/display.elf $(BUILD_DIR)/settings.elf $(BUILD_DIR)/shutdown.elf $(BUILD_DIR)/restart.elf $(BUILD_DIR)/date.elf $(BUILD_DIR)/touch.elf $(BUILD_DIR)/rm.elf $(BUILD_DIR)/mkdir.elf $(BUILD_DIR)/sudo.elf $(BUILD_DIR)/devtest.elf $(BUILD_DIR)/gfxdemo.elf $(BUILD_DIR)/inputtest.elf $(BUILD_DIR)/nano.elf $(BUILD_DIR)/gnu-nano $(BUILD_DIR)/busybox $(BUILD_DIR)/coreutils $(BUILD_DIR)/gnu-coreutils.stamp
+$(BUILD_DIR)/initrd.img: hello.txt pakages/pakages.txt firmware/aos-wifi-placeholder.fw firmware/iwlwifi-test.fw $(BUILD_DIR)/user.elf $(BUILD_DIR)/user2.elf $(BUILD_DIR)/shell.elf $(BUILD_DIR)/filetest.elf $(BUILD_DIR)/accesstest.elf $(BUILD_DIR)/openflagstest.elf $(BUILD_DIR)/duptest.elf $(BUILD_DIR)/pipetest.elf $(BUILD_DIR)/wait4test.elf $(BUILD_DIR)/stdincat.elf $(BUILD_DIR)/argvtest.elf $(BUILD_DIR)/pathtest.elf $(BUILD_DIR)/partitions.elf $(BUILD_DIR)/mounts.elf $(BUILD_DIR)/lspci.elf $(BUILD_DIR)/drivers.elf $(BUILD_DIR)/net.elf $(BUILD_DIR)/ip.elf $(BUILD_DIR)/wifi.elf $(BUILD_DIR)/firmware.elf $(BUILD_DIR)/usb.elf $(BUILD_DIR)/ping.elf $(BUILD_DIR)/ping6.elf $(BUILD_DIR)/rdisc6.elf $(BUILD_DIR)/route.elf $(BUILD_DIR)/neigh.elf $(BUILD_DIR)/dhcp.elf $(BUILD_DIR)/tcp.elf $(BUILD_DIR)/curl.elf $(BUILD_DIR)/acur.elf $(BUILD_DIR)/afetch.elf $(BUILD_DIR)/kshttpget.elf $(BUILD_DIR)/tcpstress.elf $(BUILD_DIR)/dlstress.elf $(BUILD_DIR)/wget.elf $(BUILD_DIR)/https.elf $(BUILD_DIR)/sockclose.elf $(BUILD_DIR)/gethost.elf $(BUILD_DIR)/netcache.elf $(BUILD_DIR)/netstat.elf $(BUILD_DIR)/netrawtest.elf $(BUILD_DIR)/mem.elf $(BUILD_DIR)/uptime.elf $(BUILD_DIR)/uname.elf $(BUILD_DIR)/whoami.elf $(BUILD_DIR)/id.elf $(BUILD_DIR)/aossetup.elf $(BUILD_DIR)/display.elf $(BUILD_DIR)/settings.elf $(BUILD_DIR)/vsys.elf $(BUILD_DIR)/shutdown.elf $(BUILD_DIR)/restart.elf $(BUILD_DIR)/date.elf $(BUILD_DIR)/touch.elf $(BUILD_DIR)/rm.elf $(BUILD_DIR)/mkdir.elf $(BUILD_DIR)/sudo.elf $(BUILD_DIR)/devtest.elf $(BUILD_DIR)/gfxdemo.elf $(BUILD_DIR)/inputtest.elf $(BUILD_DIR)/nano.elf $(BUILD_DIR)/gnu-nano $(BUILD_DIR)/busybox $(BUILD_DIR)/coreutils $(BUILD_DIR)/gnu-coreutils.stamp
 	rm -rf $(BUILD_DIR)/initrd_root
 	@mkdir -p $(BUILD_DIR)/initrd_root
 	@mkdir -p $(BUILD_DIR)/initrd_root/firmware
@@ -208,11 +218,20 @@ $(BUILD_DIR)/initrd.img: hello.txt pakages/pakages.txt firmware/aos-wifi-placeho
 	cp $(BUILD_DIR)/curl.elf $(BUILD_DIR)/initrd_root/curl
 	cp $(BUILD_DIR)/acur.elf $(BUILD_DIR)/initrd_root/acur.elf
 	cp $(BUILD_DIR)/acur.elf $(BUILD_DIR)/initrd_root/acur
+	cp $(BUILD_DIR)/afetch.elf $(BUILD_DIR)/initrd_root/afetch.elf
+	cp $(BUILD_DIR)/afetch.elf $(BUILD_DIR)/initrd_root/afetch
 	cp $(BUILD_DIR)/kshttpget.elf $(BUILD_DIR)/initrd_root/kshttpget.elf
 	cp $(BUILD_DIR)/kshttpget.elf $(BUILD_DIR)/initrd_root/kshttpget
+	cp $(BUILD_DIR)/tcpstress.elf $(BUILD_DIR)/initrd_root/tcpstress.elf
+	cp $(BUILD_DIR)/tcpstress.elf $(BUILD_DIR)/initrd_root/tcpstress
+	cp $(BUILD_DIR)/dlstress.elf $(BUILD_DIR)/initrd_root/dlstress.elf
+	cp $(BUILD_DIR)/dlstress.elf $(BUILD_DIR)/initrd_root/dlstress
 	cp $(BUILD_DIR)/wget.elf $(BUILD_DIR)/initrd_root/wget.elf
 	cp $(BUILD_DIR)/wget.elf $(BUILD_DIR)/initrd_root/wget
 	cp $(BUILD_DIR)/wget.elf $(BUILD_DIR)/initrd_root/download
+	cp $(BUILD_DIR)/https.elf $(BUILD_DIR)/initrd_root/https.elf
+	cp $(BUILD_DIR)/https.elf $(BUILD_DIR)/initrd_root/https
+	cp $(BUILD_DIR)/https.elf $(BUILD_DIR)/initrd_root/tlsprobe
 	cp $(BUILD_DIR)/sockclose.elf $(BUILD_DIR)/initrd_root/sockclose.elf
 	cp $(BUILD_DIR)/sockclose.elf $(BUILD_DIR)/initrd_root/sockclose
 	cp $(BUILD_DIR)/netrawtest.elf $(BUILD_DIR)/initrd_root/netrawtest.elf
@@ -233,6 +252,9 @@ $(BUILD_DIR)/initrd.img: hello.txt pakages/pakages.txt firmware/aos-wifi-placeho
 	cp $(BUILD_DIR)/display.elf $(BUILD_DIR)/initrd_root/display
 	cp $(BUILD_DIR)/settings.elf $(BUILD_DIR)/initrd_root/settings.elf
 	cp $(BUILD_DIR)/settings.elf $(BUILD_DIR)/initrd_root/settings
+	cp $(BUILD_DIR)/vsys.elf $(BUILD_DIR)/initrd_root/vsys.elf
+	cp $(BUILD_DIR)/vsys.elf $(BUILD_DIR)/initrd_root/vsys
+	cp $(BUILD_DIR)/vsys.elf $(BUILD_DIR)/initrd_root/Vsys
 	cp $(BUILD_DIR)/shutdown.elf $(BUILD_DIR)/initrd_root/shutdown.elf
 	cp $(BUILD_DIR)/shutdown.elf $(BUILD_DIR)/initrd_root/shutdown
 	cp $(BUILD_DIR)/restart.elf $(BUILD_DIR)/initrd_root/restart.elf
@@ -262,7 +284,7 @@ $(BUILD_DIR)/initrd.img: hello.txt pakages/pakages.txt firmware/aos-wifi-placeho
 	cp $(BUILD_DIR)/busybox $(BUILD_DIR)/initrd_root/busybox
 	if [ -f $(BUILD_DIR)/coreutils ]; then cp $(BUILD_DIR)/coreutils $(BUILD_DIR)/initrd_root/coreutils; fi
 	for prog in $(GNU_PROGRAMS); do if [ -f "$(BUILD_DIR)/gnu-coreutils/$$prog" ]; then cp "$(BUILD_DIR)/gnu-coreutils/$$prog" "$(BUILD_DIR)/initrd_root/$$prog"; fi; done
-	cd $(BUILD_DIR)/initrd_root && { printf "hello.txt\npakages/pakages.txt\npakages.txt\nfirmware/aos-wifi-placeholder.fw\nfirmware/iwlwifi-test.fw\nuser.elf\nuser2.elf\nshell.elf\nfiletest.elf\naccesstest.elf\nopenflagstest.elf\nduptest.elf\npipetest.elf\nwait4test.elf\nstdincat.elf\nargvtest.elf\npathtest.elf\npartitions.elf\npartitions\nmounts.elf\nmounts\nlspci.elf\nlspci\ndrivers.elf\ndrivers\ndriver\nnet.elf\nnet\nifconfig\nip.elf\nip\nwifi.elf\nwifi\nfirmware.elf\nfw\nusb.elf\nusb\nping.elf\nping\ndns\ngethost.elf\ngethost\nnslookup\nnetcache.elf\nnetcache\nnetstat.elf\nnetstat\nping6.elf\nping6\nrdisc6.elf\nrdisc6\nroute.elf\nroute\nneigh.elf\nneigh\ndhcp.elf\ndhcp\ntcp.elf\ntcp\nhttpget.elf\nhttpget\ncurl.elf\ncurl\nacur.elf\nacur\nkshttpget.elf\nkshttpget\nwget.elf\nwget\ndownload\nsockclose.elf\nsockclose\nnetrawtest.elf\nnetrawtest\nmem.elf\nmem\nuptime.elf\nuptime\nuname.elf\nuname\nwhoami.elf\nwhoami\nid.elf\nid\naossetup.elf\naossetup\ndisplay.elf\ndisplay\nsettings.elf\nsettings\nshutdown.elf\nshutdown\nrestart.elf\nrestart\nreboot\ndate.elf\ndate\ntouch.elf\ntouch\nrm.elf\nrm\nmkdir.elf\nmkdir\nsudo.elf\nsudo\ndevtest.elf\ndevtest\ngfxdemo.elf\ngfxdemo\ninputtest.elf\ninputtest\n"; for alias in $(PARTITION_ALIASES); do printf "%s\n" "$$alias"; done; printf "aosnano.elf\naosnano\nnano\nbusybox\n"; if [ -f gnunano ]; then printf "gnunano\n"; fi; if [ -f coreutils ]; then printf "coreutils\n"; fi; for prog in $(GNU_PROGRAMS); do if [ -f "$$prog" ]; then printf "%s\n" "$$prog"; fi; done; } | cpio -o -H newc > ../initrd.img
+	cd $(BUILD_DIR)/initrd_root && { printf "hello.txt\npakages/pakages.txt\npakages.txt\nfirmware/aos-wifi-placeholder.fw\nfirmware/iwlwifi-test.fw\nuser.elf\nuser2.elf\nshell.elf\nfiletest.elf\naccesstest.elf\nopenflagstest.elf\nduptest.elf\npipetest.elf\nwait4test.elf\nstdincat.elf\nargvtest.elf\npathtest.elf\npartitions.elf\npartitions\nmounts.elf\nmounts\nlspci.elf\nlspci\ndrivers.elf\ndrivers\ndriver\nnet.elf\nnet\nifconfig\nip.elf\nip\nwifi.elf\nwifi\nfirmware.elf\nfw\nusb.elf\nusb\nping.elf\nping\ndns\ngethost.elf\ngethost\nnslookup\nnetcache.elf\nnetcache\nnetstat.elf\nnetstat\nping6.elf\nping6\nrdisc6.elf\nrdisc6\nroute.elf\nroute\nneigh.elf\nneigh\ndhcp.elf\ndhcp\ntcp.elf\ntcp\nhttpget.elf\nhttpget\ncurl.elf\ncurl\nacur.elf\nacur\nafetch.elf\nafetch\nkshttpget.elf\nkshttpget\ntcpstress.elf\ntcpstress\ndlstress.elf\ndlstress\nwget.elf\nwget\ndownload\nhttps.elf\nhttps\ntlsprobe\nsockclose.elf\nsockclose\nnetrawtest.elf\nnetrawtest\nmem.elf\nmem\nuptime.elf\nuptime\nuname.elf\nuname\nwhoami.elf\nwhoami\nid.elf\nid\naossetup.elf\naossetup\ndisplay.elf\ndisplay\nsettings.elf\nsettings\nvsys.elf\nvsys\nVsys\nshutdown.elf\nshutdown\nrestart.elf\nrestart\nreboot\ndate.elf\ndate\ntouch.elf\ntouch\nrm.elf\nrm\nmkdir.elf\nmkdir\nsudo.elf\nsudo\ndevtest.elf\ndevtest\ngfxdemo.elf\ngfxdemo\ninputtest.elf\ninputtest\n"; for alias in $(PARTITION_ALIASES); do printf "%s\n" "$$alias"; done; printf "aosnano.elf\naosnano\nnano\nbusybox\n"; if [ -f gnunano ]; then printf "gnunano\n"; fi; if [ -f coreutils ]; then printf "coreutils\n"; fi; for prog in $(GNU_PROGRAMS); do if [ -f "$$prog" ]; then printf "%s\n" "$$prog"; fi; done; } | cpio -o -H newc > ../initrd.img
 
 $(BUILD_DIR)/busybox: scripts/build_busybox.sh scripts/prepare_busybox.py
 	@mkdir -p $(BUILD_DIR)
@@ -455,9 +477,9 @@ $(BUILD_DIR)/net.o: userspace/net.asm
 $(BUILD_DIR)/net.elf: $(BUILD_DIR)/net.o userspace/user.ld
 	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/net.o
 
-$(BUILD_DIR)/wifi.o: userspace/wifi.asm
+$(BUILD_DIR)/wifi.o: userspace/wifi.c
 	@mkdir -p $(BUILD_DIR)
-	$(AS) -f elf64 $< -o $@
+	$(CC) $(USER_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/wifi.elf: $(BUILD_DIR)/wifi.o userspace/user.ld
 	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/wifi.o
@@ -539,6 +561,13 @@ $(BUILD_DIR)/acur.o: userspace/acur.c
 $(BUILD_DIR)/acur.elf: $(BUILD_DIR)/acur.o userspace/user.ld
 	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/acur.o
 
+$(BUILD_DIR)/afetch.o: userspace/afetch.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/afetch.elf: $(BUILD_DIR)/afetch.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/afetch.o
+
 $(BUILD_DIR)/kshttpget.o: userspace/kshttpget.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(USER_CFLAGS) -c $< -o $@
@@ -546,12 +575,33 @@ $(BUILD_DIR)/kshttpget.o: userspace/kshttpget.c
 $(BUILD_DIR)/kshttpget.elf: $(BUILD_DIR)/kshttpget.o userspace/user.ld
 	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/kshttpget.o
 
+$(BUILD_DIR)/tcpstress.o: userspace/tcpstress.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/tcpstress.elf: $(BUILD_DIR)/tcpstress.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/tcpstress.o
+
+$(BUILD_DIR)/dlstress.o: userspace/dlstress.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/dlstress.elf: $(BUILD_DIR)/dlstress.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/dlstress.o
+
 $(BUILD_DIR)/wget.o: userspace/wget.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(USER_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/wget.elf: $(BUILD_DIR)/wget.o userspace/user.ld
 	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/wget.o
+
+$(BUILD_DIR)/https.o: userspace/https.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/https.elf: $(BUILD_DIR)/https.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/https.o
 
 $(BUILD_DIR)/sockclose.o: userspace/sockclose.c
 	@mkdir -p $(BUILD_DIR)
@@ -687,6 +737,13 @@ $(BUILD_DIR)/settings.o: userspace/settings.asm
 $(BUILD_DIR)/settings.elf: $(BUILD_DIR)/settings.o userspace/user.ld
 	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/settings.o
 
+$(BUILD_DIR)/vsys.o: userspace/vsys.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/vsys.elf: $(BUILD_DIR)/vsys.o userspace/user.ld
+	$(LD) -nostdlib -pie -T userspace/user.ld -o $@ $(BUILD_DIR)/vsys.o
+
 $(BUILD_DIR)/shutdown.o: userspace/shutdown.asm
 	@mkdir -p $(BUILD_DIR)
 	$(AS) -f elf64 $< -o $@
@@ -786,7 +843,37 @@ $(BUILD_DIR)/vmm.o: kernel/vmm.c
 $(BUILD_DIR)/keyboard.o: drivers/char/keyboard.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/syscall_c.o: kernel/syscall.c
+$(BUILD_DIR)/syscall_c.o: kernel/syscall.c kernel/syscall/syscall_internal.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/syscall_ipc.o: kernel/syscall/ipc.c kernel/syscall/syscall_internal.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/syscall_process_lifecycle.o: kernel/syscall/process_lifecycle.c kernel/syscall/syscall_internal.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/syscall_memory.o: kernel/syscall/memory.c kernel/syscall/syscall_internal.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/syscall_terminal_io.o: kernel/syscall/terminal_io.c kernel/syscall/syscall_internal.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/syscall_fs.o: kernel/syscall/fs.c kernel/syscall/syscall_internal.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/syscall_process_info.o: kernel/syscall/process_info.c kernel/syscall/syscall_internal.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/syscall_network.o: kernel/syscall/network.c kernel/syscall/syscall_internal.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/syscall_linux_misc.o: kernel/syscall/linux_misc.c kernel/syscall/syscall_internal.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/syscall_aos_services.o: kernel/syscall/aos_services.c kernel/syscall/syscall_internal.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/syscall_dispatch.o: kernel/syscall/dispatch.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/vfs.o: kernel/vfs.c

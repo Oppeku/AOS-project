@@ -1,0 +1,21 @@
+Fastfetch-style Command
+
+Imagine booting AOS and typing:
+
+afetch
+
+and getting:
+
+       /\
+      /  \
+     / /\ \
+    / ____ \
+   /_/    \_\
+
+OS: AOS
+Kernel: 0.1-dev
+Uptime: 
+CPU: 
+Memory: 
+Shell: 
+Packages:

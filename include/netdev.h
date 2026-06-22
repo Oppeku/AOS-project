@@ -44,6 +44,18 @@ struct netdev {
     uint64_t rx_errors;
     uint64_t tx_dropped;
     uint64_t rx_dropped;
+    uint64_t tx_arp;
+    uint64_t rx_arp;
+    uint64_t tx_ipv4;
+    uint64_t rx_ipv4;
+    uint64_t tx_ipv6;
+    uint64_t rx_ipv6;
+    uint64_t tx_icmp;
+    uint64_t rx_icmp;
+    uint64_t tx_udp;
+    uint64_t rx_udp;
+    uint64_t tx_tcp;
+    uint64_t rx_tcp;
     int (*send)(const uint8_t* frame, uint16_t length);
     int (*recv)(uint8_t* frame, uint16_t max_length);
 };
@@ -57,6 +69,18 @@ struct netdev_stats {
     uint64_t rx_errors;
     uint64_t tx_dropped;
     uint64_t rx_dropped;
+    uint64_t tx_arp;
+    uint64_t rx_arp;
+    uint64_t tx_ipv4;
+    uint64_t rx_ipv4;
+    uint64_t tx_ipv6;
+    uint64_t rx_ipv6;
+    uint64_t tx_icmp;
+    uint64_t rx_icmp;
+    uint64_t tx_udp;
+    uint64_t rx_udp;
+    uint64_t tx_tcp;
+    uint64_t rx_tcp;
 };
 
 void netdev_init(void);

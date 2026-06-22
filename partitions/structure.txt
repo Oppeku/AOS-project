@@ -1,0 +1,39 @@
+Root (AOSFS)
+
+-commands 
+-vash (our own bash)
+-bootloader
+-kernel
+-drivers
+ /video
+ /Keyboard
+ /mouse 
+ /Controlers 
+ /fingerprint scanner 
+-netowrking stack 
+ /Saved_Wifi_config
+ /drivers
+ /NetShell
+ /Commands 
+-Bluetooth
+
+
+Main (ext4)
+ 
+-Desktop (only with an desktop enviorment shoukld be set up)
+-Music
+-Photos(Only with an desktop enviorment should be set up)  
+-Video (only with an desktop enviorment should be setup)
+-MUI 
+
+
+Swap (swap)
+Do i need to explain bro 
+
+EMERGENCY REPAIR (AOSFS) 
+
+-Emergency repair 
+-netowrkign support 
+-only http 
+-can find docs about this in /recover_root 
+

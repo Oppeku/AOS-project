@@ -26,6 +26,18 @@ static void copy_string(char* dst, size_t dst_size, const char* src) {
     dst[i] = '\0';
 }
 
+static int strings_equal(const char* a, const char* b) {
+    if (!a || !b) {
+        return 0;
+    }
+
+    while (*a && *a == *b) {
+        a++;
+        b++;
+    }
+    return *a == *b;
+}
+
 void driver_init(void) {
     local_memset(g_driver_devices, 0, sizeof(g_driver_devices));
     g_driver_count = 0;
@@ -118,6 +130,21 @@ int driver_update_pci_status(uint16_t vendor_id, uint16_t device_id, const char*
         struct driver_device* dev = &g_driver_devices[i];
         if (dev->type != DRIVER_DEVICE_PCI) continue;
         if (dev->vendor_id != vendor_id || dev->device_id != device_id) continue;
+
+        copy_string(dev->status, sizeof(dev->status), status);
+        updated++;
+    }
+
+    return updated;
+}
+
+int driver_update_system_status(const char* driver, const char* status) {
+    int updated = 0;
+
+    for (size_t i = 0; i < g_driver_count; i++) {
+        struct driver_device* dev = &g_driver_devices[i];
+        if (dev->type != DRIVER_DEVICE_SYSTEM) continue;
+        if (!strings_equal(dev->driver, driver)) continue;
 
         copy_string(dev->status, sizeof(dev->status), status);
         updated++;

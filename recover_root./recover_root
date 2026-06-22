@@ -1,0 +1,27 @@
+THIS IS AN TXT NOT ACUTAL CODE 
+
+
+This is an custom shell which will check if root part s aavailable  
+
+if root is not available 
+
+This shell will launch and start downlaoding root 
+
+if available continue 
+
+
+
+This is an powerfull tool which will resetup ur pc but most of the feratrures will be gone from ur AOSFS partition but not from any other partition since this shell only restores theboot partition or root 
+so if u did not nuke your ext4 partition everything is good 
+
+default parition layout will be mentioned in /partition folder
+
+WARNING - THIS ONLY SUPPORTS ETHERNET SINCE IT WILL ONLY HAve E1000 SUPPORT WE WILL ADD WIFI LATER  \
+
+Offline Recovery
+
+If networking is unavailable,
+insert an AOS Recovery USB.
+
+The recovery environment can restore
+AOSFS from local media.

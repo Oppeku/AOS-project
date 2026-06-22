@@ -11,8 +11,10 @@
 #define AOS_SYS_NETDEV_RECV 528
 #define AOS_SYS_ARP_CACHE_INFO 539
 #define AOS_SYS_NET_CACHE_FLUSH 541
+#define AOS_SYS_NDP_CACHE_INFO 542
 
 #define AOS_NET_CACHE_ARP 1
+#define AOS_NET_CACHE_NDP 4
 #define AOS_NET_CACHE_ALL_DEVICES 255
 
 #define TX_SIZE 1518
@@ -55,8 +57,21 @@ struct aos_arp_cache_info_user {
     char dev_name[16];
 } __attribute__((packed));
 
+struct aos_ndp_cache_info_user {
+    uint8_t valid;
+    uint8_t dev_index;
+    uint8_t reserved[2];
+    uint32_t hits;
+    uint64_t ttl_ticks;
+    uint8_t ipv6[16];
+    uint8_t mac[6];
+    uint8_t reserved2[2];
+    char dev_name[16];
+} __attribute__((packed));
+
 static struct aos_netdev_info_user netdev;
 static struct aos_arp_cache_info_user cache_entry;
+static struct aos_ndp_cache_info_user ndp_entry;
 static uint8_t tx_frame[TX_SIZE];
 static uint8_t rx_frame[RX_SIZE];
 static uint8_t resolved_mac[6];
@@ -405,12 +420,36 @@ static void print_cache_entry(void) {
     write_cstr(" cache\n");
 }
 
+static void print_ndp_cache_entry(void) {
+    write_ipv6(ndp_entry.ipv6);
+    write_cstr(" dev ");
+    if (ndp_entry.dev_name[0]) {
+        write_cstr(ndp_entry.dev_name);
+    } else {
+        write_cstr("net");
+        write_u64(ndp_entry.dev_index);
+    }
+    write_cstr(" lladdr ");
+    write_mac(ndp_entry.mac);
+    write_cstr(" REACHABLE hits=");
+    write_u64(ndp_entry.hits);
+    write_cstr(" ttl_ticks=");
+    write_u64(ndp_entry.ttl_ticks);
+    write_cstr(" cache\n");
+}
+
 static int print_kernel_cache(void) {
     int shown = 0;
 
     for (uint64_t i = 0; i < 8; i++) {
         if (syscall3(AOS_SYS_ARP_CACHE_INFO, (long)i, (long)&cache_entry, 0) == 0) {
             print_cache_entry();
+            shown = 1;
+        }
+    }
+    for (uint64_t i = 0; i < 8; i++) {
+        if (syscall3(AOS_SYS_NDP_CACHE_INFO, (long)i, (long)&ndp_entry, 0) == 0) {
+            print_ndp_cache_entry();
             shown = 1;
         }
     }
@@ -421,16 +460,16 @@ static int print_kernel_cache(void) {
 void aos_main(uint64_t argc, char** argv) {
     if (argc >= 2 && cstr_eq(argv[1], "flush")) {
         long rc = syscall3(AOS_SYS_NET_CACHE_FLUSH,
-                           AOS_NET_CACHE_ARP,
+                           AOS_NET_CACHE_ARP | AOS_NET_CACHE_NDP,
                            AOS_NET_CACHE_ALL_DEVICES,
                            0);
         if (rc < 0) {
-            write_cstr("neigh: ARP cache flush failed\n");
+            write_cstr("neigh: neighbor cache flush failed\n");
             exit_code(1);
         }
         write_cstr("neigh: flushed ");
         write_u64((uint64_t)rc);
-        write_cstr(" ARP cache entries\n");
+        write_cstr(" neighbor cache entries\n");
         exit_code(0);
     }
 

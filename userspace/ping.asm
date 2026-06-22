@@ -11,6 +11,7 @@ global _start
 %define AOS_SYS_NETDEV_INFO 526
 %define AOS_SYS_NETDEV_SEND 527
 %define AOS_SYS_NETDEV_RECV 528
+%define AOS_SYS_DNS_LOOKUP 534
 
 %define NET_LINK_OFF 1
 %define NET_MAC_OFF 2
@@ -388,66 +389,13 @@ parse_ipv4:
     ret
 
 resolve_dns_name:
-    mov byte [rel dns_depth], 0
-    mov byte [rel dns_tries], 3
-.query_again:
-    lea rsi, [rel net_buf + NET_DNS_OFF]
-    lea rdi, [rel arp_ip]
-    call copy4
-    call resolve_arp
-    test eax, eax
-    jnz .fail
-
-    call build_dns_query
-    mov rax, AOS_SYS_NETDEV_SEND
-    mov rdi, [rel iface_index]
-    lea rsi, [rel tx_frame]
-    movzx rdx, word [rel tx_len]
+    mov rax, AOS_SYS_DNS_LOOKUP
+    lea rdi, [rel domain_text]
+    lea rsi, [rel target_ip]
+    mov rdx, [rel iface_index]
     syscall
     test rax, rax
     js .fail
-
-    lea rsi, [rel dns_query_msg]
-    mov rdx, dns_query_msg_end - dns_query_msg
-    call write_stdout
-    lea rsi, [rel domain_text]
-    call write_cstring_stdout
-    lea rsi, [rel newline_msg]
-    mov rdx, newline_msg_end - newline_msg
-    call write_stdout
-
-    mov ecx, 900000
-.recv_loop:
-    push rcx
-    mov rax, AOS_SYS_NETDEV_RECV
-    mov rdi, [rel iface_index]
-    lea rsi, [rel rx_frame]
-    mov rdx, RX_SIZE
-    syscall
-    pop rcx
-    test rax, rax
-    js .fail
-    cmp rax, 60
-    jb .next
-    call parse_dns_response
-    test eax, eax
-    jz .ok
-    cmp eax, 2
-    je .cname_retry
-.next:
-    loop .recv_loop
-    dec byte [rel dns_tries]
-    jnz .query_again
-.fail:
-    mov eax, 1
-    ret
-.cname_retry:
-    inc byte [rel dns_depth]
-    cmp byte [rel dns_depth], 3
-    jae .fail
-    mov byte [rel dns_tries], 3
-    jmp .query_again
-.ok:
     lea rsi, [rel dns_reply_msg]
     mov rdx, dns_reply_msg_end - dns_reply_msg
     call write_stdout
@@ -462,6 +410,9 @@ resolve_dns_name:
     mov rdx, newline_msg_end - newline_msg
     call write_stdout
     xor eax, eax
+    ret
+.fail:
+    mov eax, 1
     ret
 
 choose_ping_arp_ip:

@@ -57,6 +57,7 @@ Right now AOS can:
 - use basic TCP
 - fetch HTTP pages
 - download files with wget/download
+- show network packet/protocol counters with netstat
 - list Wi-Fi/firmware work in progress
 - load firmware blobs from initrd
 - use a basic TTY instead of only raw VGA text
@@ -80,10 +81,22 @@ Current download commands:
 ```sh
 wget oppeku.org / /tmp/oppeku.txt
 download oppeku.org / /tmp/oppeku.txt
+curl -o /tmp/oppeku.txt oppeku.org /
+acur list
+acur info testing_file
+acur install testing_file
+acur installed
+acur remove testing_file
 ```
 
 This is HTTP only for now.
 HTTPS/TLS will come later because that is a much bigger system.
+
+Live mode download rule:
+- downloads are stored in `/tmp`
+- `/tmp` is tmpfs, so it is RAM storage
+- rebooting the live system clears downloaded files
+- this keeps root, `/main`, and installed disks safe until AOS has a real installer mode
 
 
 4. What is MUI?
@@ -131,6 +144,17 @@ Package system goal:
 - install apps only with proper permission later
 - protect root/system files with sudo once full users exist
 
+Current package name style:
+- package lines use `URL --name`
+- examples: `http://pakage.oppeku.org/testing.txt --testing_file`
+- packages can optionally add `--sha256 HEX`
+- checksum example: `http://host/file --my_file --sha256 64_hex_chars`
+- in live mode `acur install testing_file` installs it into `/tmp/testing_file`
+- if a SHA-256 is present, `acur` verifies it before recording the package as installed
+- `acur installed` reads `/tmp/acur-installed.txt`
+- `acur remove testing_file` deletes the live RAM copy and updates that list
+- failed `acur` downloads clean up partial `/tmp` files so live mode does not get messy
+
 
 6. Efficiency
 
@@ -176,6 +200,20 @@ The AOS plan:
 
 Partition manager work has started, but full installer partitioning comes later.
 
+Recovery workflow:
+- normal root is `Root (AOSFS)`
+- user data stays separate in `Main (ext4)`
+- swap stays separate as `Swap`
+- emergency repair gets its own minimal `Emergency Repair (AOSFS)` environment
+- if root is missing or corrupted, emergency repair can restore root
+- online restore uses Ethernet first, starting with e1000 and HTTP
+- offline restore uses an AOS Recovery USB
+- recovery should restore root/boot only by default, not wipe `/main`
+
+This recovery idea is important because it gives AOS a way back even if the
+normal root partition gets destroyed. It should be built after the storage,
+networking, HTTP download, and installer pieces are strong enough.
+
 
 8. Network and Wi-Fi plan
 
@@ -194,16 +232,42 @@ Done:
 - TCP connect/read/write
 - HTTP GET
 - wget/download
+- Wi-Fi scan cache
+- Wi-Fi auth/association state machine
+- simulated `wlan0` bridge after `wifi connect AOS-Lab`
+- `wifi drivers` target list for Intel, Realtek, Broadcom, Atheros, Ralink, and MediaTek
+- better network stats
+- packet counters for ARP, IPv4, IPv6, ICMP, UDP, and TCP
+- stricter TCP receive ordering
+- TCP FIN close handling
+- TCP peer window tracking
+- TCP retransmit counters in socket info
+- TCP retransmission backoff
+- TCP zero-window send waiting
+- TCP MSS option advertising and peer MSS tracking
+- TCP basic congestion window and slow-start state
+- TCP window scale option advertising and peer scale tracking
+- TCP receive buffering with append/compact queue behavior
+- TCP receive-window advertising from real buffer space
+- TCP scaled peer-window send limiting
+- `tcpstress` repeated HTTP GET test command
+- `dlstress` repeated live-mode download test command
+- IPv6 NDP cache with `netcache`, `ip neigh`, and `neigh` visibility
+- `netstat -c` cache summary for DNS, ARP, and NDP
+- `netstat -r` route summary for IPv4 and IPv6 routes
+- `netstat -s` protocol totals for ARP, IPv4, IPv6, ICMP, UDP, and TCP
+- IPv4/IPv6 route filtering with `route -4`, `route -6`, `ip -4 route`, and `ip -6 route`
+- TCP connect reset/off-link failure cleanup, plus `sockclose HOST [PORT]` testing
 
 Next:
-- better network stats
-- packet counters
-- better TCP handling
-- more IPv6 work
-- Wi-Fi scan/auth/association layers
+- more IPv6 socket work
+- real Wi-Fi chipset RX/TX path
+- Intel `aos-iwlwifi` first real Wi-Fi family
+- Realtek/others after the shared stack is stronger
 
-Wi-Fi is still planned.
-But real Wi-Fi is hard because it needs:
+Wi-Fi is started now.
+The shared AOS Wi-Fi stack exists first, then real chip drivers plug into it.
+Real Wi-Fi is hard because it needs:
 - PCI/USB device support
 - firmware loading
 - MAC layer

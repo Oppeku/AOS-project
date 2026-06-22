@@ -1,4 +1,6 @@
-# AOS package fetch list
-# format: name|host|path|outfile|description
-oppeku-home|oppeku.org|/|/tmp/acur-oppeku.txt|Oppeko homepage test package
-aos-site|aos.oppeku.org|/|/tmp/acur-aos.txt|AOS site test package
+=-------------------AOS---PAKAGE---LIST--------------------= 
+#format is  URL --PAKAGE NAME (this will be the name AOS will fetch pakage 
+
+---------NOW ROCK------------------------------------------------------------
+
+http://pakage.oppeku.org/testing.txt --testing_file

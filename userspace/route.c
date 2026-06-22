@@ -64,6 +64,16 @@ static void write_cstr(const char* s) {
     write_buf(s, cstrlen(s));
 }
 
+static int cstr_eq(const char* a, const char* b) {
+    uint64_t i = 0;
+    if (!a || !b) return 0;
+    while (a[i] && b[i]) {
+        if (a[i] != b[i]) return 0;
+        i++;
+    }
+    return a[i] == b[i];
+}
+
 static void write_u64(uint64_t v) {
     char* p = &num_buf[20];
     *p = 0;
@@ -118,8 +128,8 @@ static int ipv6_is_zero(const uint8_t ip[16]) {
     return 1;
 }
 
-static void print_ipv4_routes(void) {
-    if (!netdev.ipv4_configured) return;
+static int print_ipv4_routes(void) {
+    if (!netdev.ipv4_configured) return 0;
 
     write_cstr("inet  ");
     write_ipv4(netdev.ipv4_addr);
@@ -136,10 +146,11 @@ static void print_ipv4_routes(void) {
         write_cstr(netdev.name);
         write_cstr(" proto ipv4\n");
     }
+    return 1;
 }
 
-static void print_ipv6_routes(void) {
-    if (!netdev.ipv6_configured) return;
+static int print_ipv6_routes(void) {
+    if (!netdev.ipv6_configured) return 0;
 
     write_cstr("inet6 ");
     write_ipv6(netdev.ipv6_addr);
@@ -156,27 +167,64 @@ static void print_ipv6_routes(void) {
         write_cstr(netdev.name);
         write_cstr(" proto ipv6\n");
     }
+    return 1;
 }
 
-void aos_main(void) {
+static void usage(void) {
+    write_cstr("usage: route [-4|-6]\n");
+    write_cstr("  no args  show IPv4 and IPv6 routes\n");
+    write_cstr("  -4       show IPv4 routes only\n");
+    write_cstr("  -6       show IPv6 routes only\n");
+}
+
+void aos_main(uint64_t argc, char** argv) {
     uint64_t index = 0;
     uint64_t printed = 0;
+    int show_ipv4 = 1;
+    int show_ipv6 = 1;
+
+    if (argc > 2) {
+        usage();
+        exit_code(1);
+    }
+    if (argc == 2) {
+        if (cstr_eq(argv[1], "-4")) {
+            show_ipv6 = 0;
+        } else if (cstr_eq(argv[1], "-6")) {
+            show_ipv4 = 0;
+        } else if (cstr_eq(argv[1], "-h") || cstr_eq(argv[1], "--help")) {
+            usage();
+            exit_code(0);
+        } else {
+            usage();
+            exit_code(1);
+        }
+    }
 
     while (syscall3(AOS_SYS_NETDEV_INFO, (long)index, (long)&netdev, 0) >= 0) {
         if (netdev.link_up) {
-            print_ipv4_routes();
-            print_ipv6_routes();
-            printed = 1;
+            if (show_ipv4) printed += (uint64_t)print_ipv4_routes();
+            if (show_ipv6) printed += (uint64_t)print_ipv6_routes();
         }
         index++;
     }
 
     if (!printed) {
-        write_cstr("route: no active network routes\n");
+        if (show_ipv4 && !show_ipv6) {
+            write_cstr("route: no active IPv4 routes\n");
+        } else if (!show_ipv4 && show_ipv6) {
+            write_cstr("route: no active IPv6 routes\n");
+        } else {
+            write_cstr("route: no active network routes\n");
+        }
     }
     exit_code(0);
 }
 
 __attribute__((naked)) void _start(void) {
-    __asm__ volatile("call aos_main\n");
+    __asm__ volatile(
+        "mov (%rsp), %rdi\n"
+        "lea 8(%rsp), %rsi\n"
+        "call aos_main\n"
+    );
 }

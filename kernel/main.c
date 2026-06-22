@@ -108,6 +108,25 @@ static void boot_log_status(const char* message, const char* tag, unsigned char 
     vga_write(tag, tag_color);
     vga_write("\n", 0x07);
 }
+static void boot_logo(void) {
+    static const char* const lines[] = {
+        "  █████╗  ██████╗ ███████╗",
+        "  ██╔══██╗██╔═══██╗██╔════╝",
+        "  ███████║██║   ██║███████╗",
+        "  ██╔══██║██║   ██║╚════██║",
+        "  ██║  ██║╚██████╔╝███████║",
+        "  ╚═╝  ╚═╝ ╚═════╝ ╚══════╝",
+        " Created by Abhigyan Narayan  ",
+        ""
+    };
+
+    for (size_t i = 0; lines[i][0] != '\0'; i++) {
+        serial_print(lines[i]);
+        serial_print("\n");
+        vga_write(lines[i], i < 5 ? 0x0B : 0x07);
+        vga_write("\n", 0x07);
+    }
+}
 
 static void boot_log_started(const char* message) {
     if (!aos_boot_verbose) return;
@@ -247,6 +266,7 @@ static void init_pic() {
 void kernel_main(uint64_t magic, uint64_t mb_info) {
     (void)magic;
     vga_clear(0x07);
+    boot_logo();
     if (aos_boot_verbose) {
         serial_print("AOS: Kernel Main Started\n");
     }
@@ -343,6 +363,7 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
                 initrd_ready = 1;
                 driver_register_system(DRIVER_CLASS_FILESYSTEM, "aos-initrd", "ready: cpio boot archive");
                 firmware_init();
+                wifi_refresh_firmware_status();
                 if (firmware_count() > 0) {
                     driver_register_system(DRIVER_CLASS_NETWORK, "aos-firmware", "ready: firmware blobs discovered");
                 } else {
