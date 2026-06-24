@@ -1,0 +1,128 @@
+# Ashare
+
+Ashare is AOS’s own nearby sharing feature.
+
+It lets AOS devices send files directly to each other using Wi-Fi. No cloud upload, no email, no cable, and no typing IP addresses.
+
+## How it works
+
+All AOS devices connected to the same Wi-Fi network can appear in the Ashare area automatically.
+
+User opens Ashare, selects the device, selects the file, and sends it.
+
+The other device gets a notification:
+
+> **Ashare transfer request**
+> Oppeko Desktop wants to send `AOS_Project.zip`
+> Accept / Decline
+
+After accepting, the file transfers directly between both devices through the local network.
+
+## Remembered devices
+
+Ashare can remember **multiple trusted devices**.
+
+For example, a user can remember:
+
+* Oppeko Desktop
+* Oppeko Laptop
+* AOS Phone
+* Family AOS PC
+* AOS Server
+
+After the first accepted transfer, the device can be saved as trusted.
+
+When any remembered device is connected to the same Wi-Fi, it automatically appears in Ashare. Users do not need to pair, type an IP address, or reconnect every time.
+
+Example:
+
+> **Oppeko Laptop**
+> Trusted Device · Available
+
+Ashare should have a **Remember this device** option after a successful transfer.
+
+Users can manage all remembered devices inside Ashare settings:
+
+* View trusted devices
+* Rename devices
+* Remove a device
+* Disable auto-accept for one device
+* Block a device
+
+## Desktop and laptop behavior
+
+For desktops and laptops, the receiving user selects where the file should go after accepting the transfer.
+
+Example options:
+
+* Downloads
+* Documents
+* Desktop
+* Custom folder
+
+There can also be a setting:
+
+> **Always save Ashare files to Downloads**
+
+## ARM device behavior
+
+On AOS ARM devices, Ashare can decide the suggested folder based on the file type.
+
+* Images go to `Pictures/Ashare`
+* Videos go to `Videos/Ashare`
+* Music goes to `Music/Ashare`
+* Documents go to `Documents/Ashare`
+* Unknown files go to `Downloads/Ashare`
+
+AOS should still show where the file is going before the transfer starts.
+
+## Sharing multiple files
+
+Users should be able to select multiple files at once.
+
+Instead of sending many separate requests, Ashare sends them as one transfer.
+
+Example:
+
+> Sending 12 files to Oppeko Desktop
+> 3.4 GB · 58% complete · 42 MB/s
+
+## Visibility modes
+
+* **My trusted devices only**
+* **Trusted contacts**
+* **Everyone on this Wi-Fi**
+* **Hidden**
+
+Default should be **My trusted devices only**.
+
+## Privacy and security
+
+Ashare transfers stay local.
+
+Files go directly from one AOS device to another without uploading to an AOS server or cloud.
+
+Remembered devices use secure device keys, so someone else on the same Wi-Fi cannot pretend to be your trusted laptop.
+
+Users can always decline incoming transfers.
+
+## Ashare v1 goal
+
+For the first version, Ashare works when both devices are connected to the same Wi-Fi or LAN.
+
+Later, AOS can add Wi-Fi Direct so devices can share even without a router or internet.
+
+## Ashare slogan
+
+> **Ashare — share anything, nearby.**
+
+
+MAN ITS HARD TO BE FORMAL 
+
+DAN DAN KOKORO HIKARETEKU
+
+
+ohh yeah 
+
+
+if there is no wifi connected and Ashare is on Aos will use the wifi card to try to find other AOS devices then it will continue to share things 

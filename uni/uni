@@ -1,0 +1,47 @@
+uni or .uni 
+
+this is an installer translater 
+
+this supports .appimage .deb and our own .ainstall 
+
+if u install an .deb and then run it aos starts the uni backgorund service (expect .ainstall all the other file types will reuqire this)
+
+then it will unpack it and then convert it to .aintall like format so Aos can read and use it 
+
+this is an good feature since it allows multiple file types to be used eliminating the App issues 
+BTW THIS WILL ALL HAPPEN LOCALLY 
+
+
+For game there will be an live trnaslater named HHUI 
+but too heavvy we will do this later 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Tokyo Ghoul is really peak 

@@ -4,3 +4,6 @@ build/
 *.iso
 *.img
 *.log
+
+# Local MUI archives
+MUI/*.zip
