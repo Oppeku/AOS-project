@@ -56,6 +56,21 @@ void set_uts_field(char* dst, const char* src) {
     dst[i] = '\0';
 }
 
+static void copy_kernel_cstr_bounded(char* dst, size_t dst_size, const char* src) {
+    size_t i = 0;
+
+    if (!dst || dst_size == 0) return;
+    if (!src) {
+        dst[0] = '\0';
+        return;
+    }
+    while (i + 1 < dst_size && src[i] != '\0') {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
+}
+
 int64_t copy_user_cstr(const char* user, char* dst, size_t dst_size) {
     if (!user || !dst || dst_size == 0) return -(int64_t)LINUX_EFAULT;
 
@@ -541,7 +556,7 @@ int64_t open_path_with_flags(const char* path, uint64_t flags) {
     int lookup_rc = 0;
     uint64_t access_mode = flags & LINUX_O_ACCMODE;
     int mutates = (access_mode == LINUX_O_WRONLY || access_mode == LINUX_O_RDWR ||
-                   (flags & (LINUX_O_CREAT | LINUX_O_TRUNC)) != 0);
+    (flags & (LINUX_O_CREAT | LINUX_O_TRUNC)) != 0);
 
     if (!path) return -(int64_t)LINUX_EFAULT;
 
@@ -1027,6 +1042,7 @@ int64_t exec_initrd_program(
         proc->brk_mapped_end = proc->brk_base;
         proc->mmap_next = USER_MMAP_BASE;
         proc->clear_child_tid = 0;
+        copy_kernel_cstr_bounded(proc->command, sizeof(proc->command), normalized);
     }
     process_load_fs_base(0);
 

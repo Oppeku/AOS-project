@@ -9,6 +9,7 @@
 #define PROCESS_CWD_MAX 256
 #define PROCESS_FD_MAX 32
 #define PROCESS_USERNAME_MAX 32
+#define PROCESS_COMMAND_MAX 64
 
 struct fd_entry {
     uint8_t kind;
@@ -48,6 +49,7 @@ typedef struct {
     uint32_t egid;
     char username[PROCESS_USERNAME_MAX];
     char home[PROCESS_CWD_MAX];
+    char command[PROCESS_COMMAND_MAX];
 } process_t;
 
 extern process_t process_list[MAX_PROCESSES];

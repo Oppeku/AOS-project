@@ -55,6 +55,7 @@ int64_t sys_mmap(struct syscall_regs* regs);
 int64_t sys_mount_info(struct syscall_regs* regs);
 int64_t sys_mprotect(struct syscall_regs* regs);
 int64_t sys_munmap(struct syscall_regs* regs);
+int64_t sys_nanosleep(struct syscall_regs* regs);
 int64_t sys_net_cache_flush(struct syscall_regs* regs);
 int64_t sys_netdev_info(struct syscall_regs* regs);
 int64_t sys_netdev_ipv4_config(struct syscall_regs* regs);
@@ -77,6 +78,7 @@ int64_t sys_pci_info(struct syscall_regs* regs);
 int64_t sys_pipe(struct syscall_regs* regs);
 int64_t sys_poll(struct syscall_regs* regs);
 int64_t sys_prlimit64(struct syscall_regs* regs);
+int64_t sys_process_info(struct syscall_regs* regs);
 int64_t sys_read(struct syscall_regs* regs);
 int64_t sys_readv(struct syscall_regs* regs);
 int64_t sys_recvfrom(struct syscall_regs* regs);
@@ -160,6 +162,9 @@ void syscall_handler(struct syscall_regs* regs) {
             return;
         case LINUX_SYS_DUP2:
             regs->rax = (uint64_t)sys_dup2(regs);
+            return;
+        case LINUX_SYS_NANOSLEEP:
+            regs->rax = (uint64_t)sys_nanosleep(regs);
             return;
         case LINUX_SYS_SOCKET:
             regs->rax = (uint64_t)sys_socket(regs);
@@ -380,6 +385,9 @@ void syscall_handler(struct syscall_regs* regs) {
             return;
         case AOS_SYS_DNS_LOOKUP6:
             regs->rax = (uint64_t)sys_dns_lookup6(regs);
+            return;
+        case AOS_SYS_PROCESS_INFO:
+            regs->rax = (uint64_t)sys_process_info(regs);
             return;
         case LINUX_SYS_FACCESSAT:
             regs->rax = (uint64_t)sys_faccessat(regs);

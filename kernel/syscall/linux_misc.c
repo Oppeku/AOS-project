@@ -180,10 +180,55 @@ int64_t sys_uname(struct syscall_regs* regs) {
 
 int64_t sys_clock_gettime(struct syscall_regs* regs) {
     struct linux_timespec* ts = (struct linux_timespec*)(uintptr_t)regs->rsi;
+    uint64_t ticks;
+    uint32_t frequency;
+    uint64_t rem_ticks;
+
     (void)regs->rdi;
     if (!ts) return -(int64_t)LINUX_EFAULT;
-    ts->tv_sec = 0;
-    ts->tv_nsec = 0;
+
+    frequency = timer_get_frequency();
+    if (frequency == 0) frequency = 100;
+    ticks = timer_get_ticks();
+    rem_ticks = ticks % frequency;
+
+    ts->tv_sec = (int64_t)(ticks / frequency);
+    ts->tv_nsec = (int64_t)((rem_ticks * 1000000000ULL) / frequency);
+    return 0;
+}
+
+int64_t sys_nanosleep(struct syscall_regs* regs) {
+    const struct linux_timespec* req = (const struct linux_timespec*)(uintptr_t)regs->rdi;
+    struct linux_timespec* rem = (struct linux_timespec*)(uintptr_t)regs->rsi;
+    uint32_t frequency;
+    uint64_t seconds_ticks;
+    uint64_t nanos_ticks;
+    uint64_t wait_ticks;
+    uint64_t start;
+
+    if (!req) return -(int64_t)LINUX_EFAULT;
+    if (req->tv_sec < 0 || req->tv_nsec < 0 || req->tv_nsec >= 1000000000LL) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+
+    frequency = timer_get_frequency();
+    if (frequency == 0) frequency = 100;
+
+    seconds_ticks = (uint64_t)req->tv_sec * (uint64_t)frequency;
+    nanos_ticks = ((uint64_t)req->tv_nsec * (uint64_t)frequency + 999999999ULL) / 1000000000ULL;
+    wait_ticks = seconds_ticks + nanos_ticks;
+
+    if (rem) {
+        rem->tv_sec = 0;
+        rem->tv_nsec = 0;
+    }
+    if (wait_ticks == 0) return 0;
+
+    start = timer_get_ticks();
+    while (timer_get_ticks() - start < wait_ticks) {
+        asm volatile("hlt");
+    }
+
     return 0;
 }
 

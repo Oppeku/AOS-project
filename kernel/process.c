@@ -138,6 +138,7 @@ void init_process() {
     process_list[0].egid = 0;
     local_strcpy_bounded(process_list[0].username, sizeof(process_list[0].username), "root");
     local_strcpy_bounded(process_list[0].home, sizeof(process_list[0].home), "root");
+    local_strcpy_bounded(process_list[0].command, sizeof(process_list[0].command), "shell.elf");
     current_process = &process_list[0];
 }
 
@@ -184,6 +185,7 @@ int64_t sys_fork(struct syscall_regs* regs) {
     child->egid = current_process->egid;
     local_memcpy(child->username, current_process->username, sizeof(child->username));
     local_memcpy(child->home, current_process->home, sizeof(child->home));
+    local_memcpy(child->command, current_process->command, sizeof(child->command));
 
     // Child returns 0
     child->regs.rax = 0;

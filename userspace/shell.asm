@@ -23,6 +23,7 @@ global _start
 %define SYS_UNLINKAT 263
 %define SYS_GETDENTS64 217
 %define SYS_OPENAT 257
+%define AOS_SYS_PROCESS_INFO 544
 
 %define AT_FDCWD -100
 %define O_DIRECTORY 0x10000
@@ -44,7 +45,16 @@ global _start
 %define VGA_COLOR_OUTPUT 0x07
 %define COMPLETION_MODE_COLLECT 0
 %define COMPLETION_MODE_PRINT 1
-%define BUILTIN_CMD_COUNT 14
+%define BUILTIN_CMD_COUNT 15
+%define MAX_PS_PROCESSES 64
+%define PS_VALID_OFF 0
+%define PS_STATUS_OFF 1
+%define PS_PID_OFF 4
+%define PS_PPID_OFF 8
+%define PS_UID_OFF 12
+%define PS_EUID_OFF 16
+%define PS_USERNAME_OFF 40
+%define PS_COMMAND_OFF 72
 
 _start:
     xor r12, r12
@@ -1479,6 +1489,12 @@ dispatch_command:
     jz cmd_exec
 
     mov rdi, [r15]
+    lea rsi, [rel ps_cmd]
+    call strcmp
+    test eax, eax
+    jz cmd_ps
+
+    mov rdi, [r15]
     lea rsi, [rel echo_cmd]
     call strcmp
     test eax, eax
@@ -1856,6 +1872,76 @@ cmd_exec_usage:
     mov eax, 1
     ret
 
+cmd_ps:
+    lea rsi, [rel ps_header_msg]
+    mov rdx, ps_header_msg_end - ps_header_msg
+    call write_stdout
+    xor r12, r12
+
+cmd_ps_loop:
+    cmp r12, MAX_PS_PROCESSES
+    jae cmd_ps_done
+
+    mov rax, AOS_SYS_PROCESS_INFO
+    mov rdi, r12
+    lea rsi, [rel ps_info_buffer]
+    syscall
+    test rax, rax
+    js cmd_ps_next
+
+    cmp byte [rel ps_info_buffer + PS_VALID_OFF], 0
+    je cmd_ps_next
+
+    mov edi, [rel ps_info_buffer + PS_PID_OFF]
+    call write_u64_decimal
+    lea rsi, [rel space_msg]
+    mov rdx, space_msg_end - space_msg
+    call write_stdout
+
+    mov edi, [rel ps_info_buffer + PS_PPID_OFF]
+    call write_u64_decimal
+    lea rsi, [rel space_msg]
+    mov rdx, space_msg_end - space_msg
+    call write_stdout
+
+    mov edi, [rel ps_info_buffer + PS_UID_OFF]
+    call write_u64_decimal
+    lea rsi, [rel space_msg]
+    mov rdx, space_msg_end - space_msg
+    call write_stdout
+
+    mov edi, [rel ps_info_buffer + PS_EUID_OFF]
+    call write_u64_decimal
+    lea rsi, [rel space_msg]
+    mov rdx, space_msg_end - space_msg
+    call write_stdout
+
+    mov al, [rel ps_info_buffer + PS_STATUS_OFF]
+    call write_process_status
+    lea rsi, [rel space_msg]
+    mov rdx, space_msg_end - space_msg
+    call write_stdout
+
+    lea rsi, [rel ps_info_buffer + PS_USERNAME_OFF]
+    call write_cstring_or_dash
+    lea rsi, [rel space_msg]
+    mov rdx, space_msg_end - space_msg
+    call write_stdout
+
+    lea rsi, [rel ps_info_buffer + PS_COMMAND_OFF]
+    call write_cstring_or_dash
+    lea rsi, [rel newline_msg]
+    mov rdx, newline_msg_end - newline_msg
+    call write_stdout
+
+cmd_ps_next:
+    inc r12
+    jmp cmd_ps_loop
+
+cmd_ps_done:
+    xor eax, eax
+    ret
+
 cmd_echo:
     mov r14, 1
     cmp r13, 1
@@ -2096,6 +2182,70 @@ write_cstring_count_loop:
 write_cstring_emit:
     jmp write_stdout
 
+write_cstring_or_dash:
+    cmp byte [rsi], 0
+    jne write_cstring_stdout
+    lea rsi, [rel dash_msg]
+    mov rdx, dash_msg_end - dash_msg
+    jmp write_stdout
+
+write_u64_decimal:
+    push rbx
+    lea rbx, [rel decimal_buffer + 20]
+    mov byte [rbx], 0
+    mov rax, rdi
+    test rax, rax
+    jnz write_u64_decimal_convert
+    dec rbx
+    mov byte [rbx], '0'
+    jmp write_u64_decimal_emit
+
+write_u64_decimal_convert:
+    mov rcx, 10
+
+write_u64_decimal_loop:
+    xor rdx, rdx
+    div rcx
+    dec rbx
+    add dl, '0'
+    mov [rbx], dl
+    test rax, rax
+    jnz write_u64_decimal_loop
+
+write_u64_decimal_emit:
+    mov rsi, rbx
+    call write_cstring_stdout
+    pop rbx
+    ret
+
+write_process_status:
+    cmp al, 1
+    je write_status_ready
+    cmp al, 2
+    je write_status_running
+    cmp al, 3
+    je write_status_waiting
+    cmp al, 4
+    je write_status_zombie
+    lea rsi, [rel status_unknown_msg]
+    jmp write_cstring_stdout
+
+write_status_ready:
+    lea rsi, [rel status_ready_msg]
+    jmp write_cstring_stdout
+
+write_status_running:
+    lea rsi, [rel status_running_msg]
+    jmp write_cstring_stdout
+
+write_status_waiting:
+    lea rsi, [rel status_waiting_msg]
+    jmp write_cstring_stdout
+
+write_status_zombie:
+    lea rsi, [rel status_zombie_msg]
+    jmp write_cstring_stdout
+
 cstring_len:
     xor rdx, rdx
 
@@ -2193,6 +2343,10 @@ home_expansion_next:
     resq 1
 home_expansion_buffer:
     resb HOME_EXPANSION_SIZE
+ps_info_buffer:
+    resb 392
+decimal_buffer:
+    resb 21
 
 section .rodata
 welcome_msg:
@@ -2251,6 +2405,8 @@ write_cmd:
     db "write", 0
 exec_cmd:
     db "exec", 0
+ps_cmd:
+    db "ps", 0
 echo_cmd:
     db "echo", 0
 mkdir_cmd:
@@ -2271,6 +2427,7 @@ builtin_cmd_table:
     dq clear_cmd
     dq write_cmd
     dq exec_cmd
+    dq ps_cmd
     dq echo_cmd
     dq mkdir_cmd
     dq touch_cmd
@@ -2295,14 +2452,14 @@ commands_prefix:
 
 help_msg:
     db "AOS shell help", 10
-    db "Builtins: help cd home pwd clear write exec mkdir touch rm rmdir", 10
+    db "Builtins: help cd home pwd clear write exec ps mkdir touch rm rmdir", 10
     db "PartiotionMANAGAER: run partitions or PartiotionMANAGER", 10
     db "BusyBox applets: sh ash test [ env printf true false head tail uname", 10
     db "BusyBox fallback: commands not found as GNU or initrd programs retry through BusyBox", 10
     db "GNU coreutils: ls cat echo head tail true false", 10
     db "GNU priority: ls cat echo run GNU first, then BusyBox if missing", 10
     db "Per-command help: run ls --help, cat --help, echo --help, pwd --help", 10
-    db "AOS tools: afetch lspci driver/drivers net ifconfig ip netstat netcache route neigh dhcp tcp httpget curl acur kshttpget tcpstress dlstress wget download https tlsprobe sockclose gethost wifi fw usb ping ping6 rdisc6 dns nslookup netrawtest mem uptime date uname whoami id sudo aossetup settings display gfxdemo inputtest mounts partitions nano aosnano touch rm mkdir rmdir shutdown restart reboot", 10
+    db "AOS tools: afetch lspci driver/drivers net ifconfig ip netstat netcache route neigh dhcp tcp httpget curl acur kshttpget tcpstress dlstress wget download https tlsprobe sockclose gethost wifi fw usb ping ping6 rdisc6 dns nslookup netrawtest mem uptime date uname whoami id ps sudo aossetup settings display gfxdemo inputtest mounts partitions nano aosnano touch rm mkdir rmdir shutdown restart reboot", 10
     db "Redirection: < > and >> are supported", 10
     db "Pipes: cmd1 | cmd2 | cmd3", 10
     db "Quotes: 'one two' and ", 34, "one two", 34, 10
@@ -2349,6 +2506,25 @@ exec_usage_msg_end:
 exec_failed_msg:
     db "exec: failed", 10
 exec_failed_msg_end:
+
+ps_header_msg:
+    db "PID PPID UID EUID STATE USER COMMAND", 10
+ps_header_msg_end:
+
+dash_msg:
+    db "-", 0
+dash_msg_end:
+
+status_ready_msg:
+    db "ready", 0
+status_running_msg:
+    db "run", 0
+status_waiting_msg:
+    db "wait", 0
+status_zombie_msg:
+    db "zombie", 0
+status_unknown_msg:
+    db "unknown", 0
 
 path_usage_msg:
     db "usage: mkdir/touch/rm/rmdir PATH", 10
