@@ -33,6 +33,10 @@ int64_t sys_write(struct syscall_regs* regs) {
         struct pipe_object* pipe = get_pipe_for_fd(fd, FD_KIND_PIPE_WRITER);
         uint64_t bytes_written = 0;
         if (!pipe) return -(int64_t)LINUX_EBADF;
+        if (pipe->size == sizeof(pipe->buffer) && pipe->read_refs > 0) {
+            if (regs->rcx >= 2) regs->rcx -= 2;
+            schedule(regs);
+        }
         while (bytes_written < len && pipe->size < sizeof(pipe->buffer)) {
             pipe->buffer[pipe->write_pos] = (uint8_t)buf[bytes_written++];
             pipe->write_pos = (pipe->write_pos + 1) % sizeof(pipe->buffer);

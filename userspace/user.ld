@@ -6,7 +6,12 @@ ENTRY(_start)
 
 SECTIONS
 {
-    . = 0x1000;
+    /*
+     * Addresses below 1 TiB share the kernel's bootstrap page-table branch.
+     * Native programs must live above AOS_USER_SPACE_START so fork/exec can
+     * copy and destroy their mappings without changing another process.
+     */
+    . = 0x0000010000100000;
 
     .text : ALIGN(4K)
     {

@@ -27,10 +27,15 @@
 #include <firmware.h>
 #include <netdev.h>
 #include <timer.h>
+#include <thermal.h>
 #include <rtc.h>
 #include <gfx.h>
 #include <input.h>
 #include <mac80211.h>
+#include <bluetooth.h>
+#include <installer.h>
+#include <credentials.h>
+#include <session.h>
 
 extern void outb(uint16_t port, uint8_t val);
 extern void serial_print(const char* s);
@@ -71,9 +76,16 @@ static inline void io_wait(void) {
 #define LINUX_O_EXCL 128
 #define LINUX_O_TRUNC 512
 #define LINUX_O_DIRECTORY 0x10000
+#define LINUX_PROT_READ 0x1
 #define LINUX_PROT_WRITE 0x2
+#define LINUX_PROT_EXEC 0x4
+#define LINUX_MAP_SHARED 0x01
 #define LINUX_MAP_PRIVATE 0x02
+#define LINUX_MAP_FIXED 0x10
 #define LINUX_MAP_ANONYMOUS 0x20
+#define LINUX_MAP_DENYWRITE 0x0800
+#define LINUX_MAP_EXECUTABLE 0x1000
+#define LINUX_MAP_FIXED_NOREPLACE 0x100000
 #define LINUX_F_OK 0
 #define LINUX_X_OK 1
 #define LINUX_W_OK 2
@@ -166,6 +178,10 @@ enum fd_kind {
 #define SOCKET_TCP_INITIAL_SSTHRESH_SEGMENTS 8U
 #define SOCKET_TCP_LOCAL_WINDOW_SCALE 2U
 
+static inline int64_t linux_signed_int_arg(uint64_t value) {
+    return (int64_t)(int32_t)(uint32_t)value;
+}
+
 enum socket_state {
     SOCKET_STATE_FREE = 0,
     SOCKET_STATE_CREATED = 1,
@@ -256,7 +272,7 @@ struct pipe_object {
     uint32_t read_pos;
     uint32_t write_pos;
     uint32_t size;
-    uint8_t buffer[512];
+    uint8_t buffer[16384];
 };
 
 #define LINUX_POLLIN 0x0001
@@ -277,6 +293,10 @@ void halt_forever(void);
 void* local_memset(void* dst, int value, size_t n);
 void* local_memcpy(void* dst, const void* src, size_t n);
 uint64_t align_up_page(uint64_t value);
+int syscall_linux_trace_enabled(void);
+void syscall_linux_trace(const char* operation, int64_t result);
+void syscall_linux_trace_path(const char* operation, const char* path,
+                              int64_t result);
 void set_uts_field(char* dst, const char* src);
 int64_t copy_user_cstr(const char* user, char* dst, size_t dst_size);
 struct fd_entry* current_fd_table(void);

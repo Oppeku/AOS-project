@@ -1,0 +1,44 @@
+Asence (maN haRD TO TYPE)
+
+
+
+Asence is are own temprature info screen but rather than only temps it also shows you the proceeses 
+
+This screen also shows u ram usage CPU (All Cores) and GPU(If available)
+
+You can kill proceses which are heavy 
+
+To see the commands go to Commands.txt
+To see how it looks go to Screen.txt
+
+This is terminal only i will provide an app 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Unravel is peak 

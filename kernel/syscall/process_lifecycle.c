@@ -24,6 +24,7 @@ void syscall_release_fd_table_entries(struct fd_entry* table, size_t count) {
 }
 
 int64_t sys_wait4(struct syscall_regs* regs) {
+    const uint64_t wait_nohang = 1;
     int64_t requested_pid = (int64_t)regs->rdi;
     int32_t* status_ptr = (int32_t*)(uintptr_t)regs->rsi;
     uint64_t options = regs->rdx;
@@ -33,7 +34,7 @@ int64_t sys_wait4(struct syscall_regs* regs) {
     int has_matching_child = 0;
 
     if (!parent) return -(int64_t)LINUX_ECHILD;
-    if (options != 0) return -(int64_t)LINUX_EINVAL;
+    if ((options & ~wait_nohang) != 0) return -(int64_t)LINUX_EINVAL;
     if (requested_pid == 0 || requested_pid < -1) return -(int64_t)LINUX_EINVAL;
 
     for (int i = 0; i < MAX_PROCESSES; i++) {
@@ -64,6 +65,9 @@ int64_t sys_wait4(struct syscall_regs* regs) {
     if (!has_matching_child) {
         return -(int64_t)LINUX_ECHILD;
     }
+    if (options & wait_nohang) {
+        return 0;
+    }
     if (!first_ready) {
         return -(int64_t)LINUX_ECHILD;
     }
@@ -87,6 +91,43 @@ static void release_process_memory(process_t* proc) {
         pmm_free_block(proc->p4_table);
     }
     proc->p4_table = NULL;
+}
+
+static process_t* find_process_by_pid(uint32_t pid) {
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (process_list[i].status == PROCESS_STATUS_DEAD) continue;
+        if (process_list[i].pid == pid) return &process_list[i];
+    }
+    return NULL;
+}
+
+static process_t* find_parent_for(process_t* child) {
+    if (!child) return NULL;
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (process_list[i].status == PROCESS_STATUS_DEAD) continue;
+        if (process_list[i].pid == child->parent_pid) return &process_list[i];
+    }
+    return NULL;
+}
+
+static int wake_parent_if_waiting(process_t* child, int32_t raw_status) {
+    process_t* parent = find_parent_for(child);
+
+    if (!parent || parent->status != PROCESS_STATUS_WAITING) return 0;
+    if (!wait_pid_matches(parent->wait_target_pid, child->pid)) return 0;
+
+    if (parent->wait_status_ptr) {
+        switch_page_table(parent->p4_table);
+        *parent->wait_status_ptr = raw_status;
+        if (current_process && current_process->p4_table) {
+            switch_page_table(current_process->p4_table);
+        }
+    }
+    parent->regs.rax = child->pid;
+    parent->status = PROCESS_STATUS_READY;
+    parent->wait_target_pid = -1;
+    parent->wait_status_ptr = NULL;
+    return 1;
 }
 
 void process_exit_and_wake_parent(int exit_code) {
@@ -151,4 +192,68 @@ void syscall_kill_current_process(int exit_code) {
     if (current_process && current_process->pid != 1) {
         process_exit_and_wake_parent(exit_code);
     }
+}
+
+int64_t sys_process_kill(struct syscall_regs* regs) {
+    uint32_t pid = (uint32_t)regs->rdi;
+    int32_t exit_code = (int32_t)(regs->rsi & 0xFF);
+    int32_t raw_status = (exit_code & 0xFF) << 8;
+    process_t* proc = find_process_by_pid(pid);
+
+    if (!proc) return -(int64_t)LINUX_ENOENT;
+    if (proc->pid == 1 || proc == current_process) return -(int64_t)LINUX_EPERM;
+    if (!process_is_root() && proc->uid != process_get_uid()) {
+        return -(int64_t)LINUX_EPERM;
+    }
+    if (proc->status == PROCESS_STATUS_ZOMBIE) return 0;
+
+    syscall_release_fd_table_entries(proc->fd_table, PROCESS_FD_MAX);
+    release_process_memory(proc);
+    proc->exit_status = raw_status;
+    proc->status = PROCESS_STATUS_ZOMBIE;
+    if (wake_parent_if_waiting(proc, raw_status)) {
+        local_memset(proc, 0, sizeof(*proc));
+        proc->status = PROCESS_STATUS_DEAD;
+    }
+    return 0;
+}
+
+void syscall_terminate_uid_processes(uint32_t uid, uint32_t except_pid) {
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        process_t* proc = &process_list[i];
+        if (proc->status == PROCESS_STATUS_DEAD || proc->pid == except_pid ||
+            proc->uid != uid) {
+            continue;
+        }
+        syscall_release_fd_table_entries(proc->fd_table, PROCESS_FD_MAX);
+        release_process_memory(proc);
+        local_memset(proc, 0, sizeof(*proc));
+        proc->status = PROCESS_STATUS_DEAD;
+    }
+}
+
+int64_t sys_process_pause(struct syscall_regs* regs) {
+    uint32_t pid = (uint32_t)regs->rdi;
+    process_t* proc = find_process_by_pid(pid);
+
+    if (!proc) return -(int64_t)LINUX_ENOENT;
+    if (proc->pid == 1 || proc == current_process) return -(int64_t)LINUX_EPERM;
+    if (proc->status == PROCESS_STATUS_READY) {
+        proc->status = PROCESS_STATUS_PAUSED;
+        return 0;
+    }
+    if (proc->status == PROCESS_STATUS_PAUSED) return 0;
+    return -(int64_t)LINUX_EINVAL;
+}
+
+int64_t sys_process_resume(struct syscall_regs* regs) {
+    uint32_t pid = (uint32_t)regs->rdi;
+    process_t* proc = find_process_by_pid(pid);
+
+    if (!proc) return -(int64_t)LINUX_ENOENT;
+    if (proc->status == PROCESS_STATUS_PAUSED) {
+        proc->status = PROCESS_STATUS_READY;
+        return 0;
+    }
+    return -(int64_t)LINUX_EINVAL;
 }

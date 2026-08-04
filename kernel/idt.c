@@ -17,6 +17,7 @@ extern void invalid_opcode_stub();
 extern void gpf_stub();
 extern void page_fault_stub();
 extern void keyboard_stub();
+extern void mouse_stub();
 extern void timer_stub();
 
 void set_idt_gate(int n, uint64_t handler, uint16_t sel, uint8_t flags) {
@@ -80,6 +81,7 @@ void init_idt() {
     set_idt_gate(14, (uint64_t)page_fault_stub,     0x08, 0xEE);
     set_idt_gate(32, (uint64_t)timer_stub,          0x08, 0x8E); // INT 0x20 = 32
     set_idt_gate(33, (uint64_t)keyboard_stub,       0x08, 0xEE); // IRQ1 remapped to 33
+    set_idt_gate(44, (uint64_t)mouse_stub,          0x08, 0x8E); // IRQ12 remapped to 44
 
     load_idt((uint64_t)&idtp);
 }

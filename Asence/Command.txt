@@ -1,0 +1,6 @@
+Asence (Lanches it)
+Asence --Cpu (SHOWS CPU)
+Asence --GPU (SHOWS GPU)
+Asence --Ram (SHOWS RAM)
+Asence --Storage (Shows Storage)
+Asnece --Proceses (Shows Processes which are active rn)

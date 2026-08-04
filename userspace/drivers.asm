@@ -207,6 +207,8 @@ write_class:
     je .time
     cmp dil, 8
     je .usb
+    cmp dil, 9
+    je .bluetooth
     lea rsi, [rel class_unknown]
     mov rdx, class_unknown_end - class_unknown
     jmp write_stdout
@@ -241,6 +243,10 @@ write_class:
 .usb:
     lea rsi, [rel class_usb]
     mov rdx, class_usb_end - class_usb
+    jmp write_stdout
+.bluetooth:
+    lea rsi, [rel class_bluetooth]
+    mov rdx, class_bluetooth_end - class_bluetooth
     jmp write_stdout
 
 write_stdout:
@@ -334,6 +340,10 @@ class_time_end:
 class_usb:
     db "usb       "
 class_usb_end:
+
+class_bluetooth:
+    db "bluetooth "
+class_bluetooth_end:
 
 class_unknown:
     db "unknown   "

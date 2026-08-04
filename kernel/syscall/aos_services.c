@@ -66,6 +66,36 @@ struct aos_mem_info_user {
     uint64_t used;
 };
 
+struct aos_cpu_info_user {
+    uint32_t core_id;
+    uint32_t core_count;
+    uint32_t online;
+    uint32_t load_percent;
+    uint32_t load_known;
+    int32_t temp_celsius;
+    uint32_t temp_known;
+    uint32_t frequency_hz;
+    uint64_t ticks;
+};
+
+struct aos_thermal_info_user {
+    uint32_t sensor_present;
+    uint32_t temp_known;
+    uint32_t emergency_active;
+    uint32_t hardware_throttling;
+    uint32_t critical_active;
+    uint32_t package_sensor_present;
+    uint32_t throttled_processes;
+    uint32_t reserved;
+    int32_t current_celsius;
+    int32_t maximum_celsius;
+    int32_t tjmax_celsius;
+    int32_t emergency_celsius;
+    int32_t clear_celsius;
+    uint32_t reserved2;
+    uint64_t sample_ticks;
+};
+
 struct aos_uptime_info_user {
     uint64_t ticks;
     uint64_t seconds;
@@ -94,6 +124,11 @@ struct aos_input_event_user {
     uint32_t flags;
     uint32_t ascii;
     uint32_t source;
+    int32_t pointer_x;
+    int32_t pointer_y;
+    int32_t pointer_dx;
+    int32_t pointer_dy;
+    uint32_t pointer_buttons;
 };
 
 struct aos_time_info_user {
@@ -317,6 +352,61 @@ struct aos_wifi_state_info_user {
     uint8_t reserved2[3];
 } __attribute__((packed));
 
+struct aos_bluetooth_info_user {
+    uint8_t present;
+    uint8_t controller_type;
+    uint8_t interface_number;
+    uint8_t interface_class;
+    uint8_t interface_subclass;
+    uint8_t interface_protocol;
+    uint8_t endpoints;
+    uint8_t hci_ready;
+    uint8_t event_endpoint;
+    uint8_t event_interval;
+    uint8_t last_event;
+    uint8_t last_status;
+    uint16_t event_max_packet;
+    uint16_t hci_revision;
+    uint16_t manufacturer;
+    uint16_t lmp_subversion;
+    uint8_t hci_version;
+    uint8_t lmp_version;
+    uint8_t scanning;
+    uint8_t pairing;
+    uint8_t discovered_count;
+    uint8_t last_scan_status;
+    uint8_t last_pair_status;
+    char driver[32];
+    char status[64];
+} __attribute__((packed));
+
+struct aos_bluetooth_device_info_user {
+    uint8_t valid;
+    uint8_t address[6];
+    uint8_t page_scan_repetition_mode;
+    uint8_t has_rssi;
+    int8_t rssi;
+    uint8_t has_name;
+    uint8_t name_status;
+    uint8_t connected;
+    uint8_t link_type;
+    uint8_t encryption_enabled;
+    uint8_t pair_status;
+    uint8_t bonded;
+    uint16_t connection_handle;
+    char name[64];
+} __attribute__((packed));
+
+struct aos_bluetooth_bond_info_user {
+    uint8_t valid;
+    uint8_t address[6];
+    uint8_t key_type;
+    uint8_t authenticated;
+    uint8_t has_name;
+    uint8_t reserved[3];
+    char name[64];
+} __attribute__((packed));
+
 static void copy_cstr_bounded(char* dst, size_t dst_size, const char* src) {
     size_t i = 0;
 
@@ -365,6 +455,159 @@ int64_t sys_mem_info(struct syscall_regs* regs) {
     out->total = pmm_total_memory();
     out->free = pmm_free_memory();
     out->used = pmm_used_memory();
+    return 0;
+}
+
+int64_t sys_cpu_info(struct syscall_regs* regs) {
+    uint64_t index = regs->rdi;
+    struct aos_cpu_info_user* out = (struct aos_cpu_info_user*)(uintptr_t)regs->rsi;
+    struct thermal_cpu_sample thermal;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+    if (index >= 1) return -(int64_t)LINUX_ENOENT;
+
+    local_memset(out, 0, sizeof(*out));
+    out->core_id = 0;
+    out->core_count = 1;
+    out->online = 1;
+    out->load_known = 0;
+    out->load_percent = 0;
+    if (thermal_cpu_read((uint32_t)index, &thermal) == 0) {
+        out->temp_known = thermal.temp_known;
+        out->temp_celsius = thermal.temp_celsius;
+    } else {
+        out->temp_known = 0;
+        out->temp_celsius = 0;
+    }
+    out->frequency_hz = timer_get_frequency();
+    out->ticks = timer_get_ticks();
+    return 0;
+}
+
+int64_t sys_thermal_info(struct syscall_regs* regs) {
+    struct aos_thermal_info_user* out =
+        (struct aos_thermal_info_user*)(uintptr_t)regs->rdi;
+    struct thermal_status status;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+    if (thermal_get_status(&status) != 0) return -(int64_t)LINUX_EIO;
+
+    local_memset(out, 0, sizeof(*out));
+    out->sensor_present = status.sensor_present;
+    out->temp_known = status.temp_known;
+    out->emergency_active = status.emergency_active;
+    out->hardware_throttling = status.hardware_throttling;
+    out->critical_active = status.critical_active;
+    out->package_sensor_present = status.package_sensor_present;
+    out->throttled_processes = process_thermal_throttled_count();
+    out->current_celsius = status.current_celsius;
+    out->maximum_celsius = status.maximum_celsius;
+    out->tjmax_celsius = status.tjmax_celsius;
+    out->emergency_celsius = status.emergency_celsius;
+    out->clear_celsius = status.clear_celsius;
+    out->sample_ticks = status.sample_ticks;
+    return 0;
+}
+
+int64_t sys_bluetooth_info(struct syscall_regs* regs) {
+    struct aos_bluetooth_info_user* out =
+        (struct aos_bluetooth_info_user*)(uintptr_t)regs->rdi;
+    struct bluetooth_status status;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+    if (bluetooth_get_status(&status) != 0) return -(int64_t)LINUX_ENODEV;
+
+    local_memset(out, 0, sizeof(*out));
+    out->present = status.present;
+    out->controller_type = status.controller_type;
+    out->interface_number = status.interface_number;
+    out->interface_class = status.interface_class;
+    out->interface_subclass = status.interface_subclass;
+    out->interface_protocol = status.interface_protocol;
+    out->endpoints = status.endpoints;
+    out->hci_ready = status.hci_ready;
+    out->event_endpoint = status.event_endpoint;
+    out->event_interval = status.event_interval;
+    out->last_event = status.last_event;
+    out->last_status = status.last_status;
+    out->event_max_packet = status.event_max_packet;
+    out->hci_revision = status.hci_revision;
+    out->manufacturer = status.manufacturer;
+    out->lmp_subversion = status.lmp_subversion;
+    out->hci_version = status.hci_version;
+    out->lmp_version = status.lmp_version;
+    out->scanning = status.scanning;
+    out->pairing = status.pairing;
+    out->discovered_count = status.discovered_count;
+    out->last_scan_status = status.last_scan_status;
+    out->last_pair_status = status.last_pair_status;
+    copy_cstr_bounded(out->driver, sizeof(out->driver), status.driver);
+    copy_cstr_bounded(out->status, sizeof(out->status), status.status);
+    return 0;
+}
+
+int64_t sys_bluetooth_control(struct syscall_regs* regs) {
+    uint64_t command = regs->rdi;
+
+    if (command == BLUETOOTH_CONTROL_SCAN) {
+        if (bluetooth_start_scan() != 0) return -(int64_t)LINUX_ENODEV;
+        return 0;
+    }
+    if (command == BLUETOOTH_CONTROL_PAIR) {
+        if (bluetooth_pair_device((size_t)regs->rsi) != 0) return -(int64_t)LINUX_ENODEV;
+        return 0;
+    }
+
+    return -(int64_t)LINUX_EINVAL;
+}
+
+int64_t sys_bluetooth_device_info(struct syscall_regs* regs) {
+    uint64_t index = regs->rdi;
+    struct aos_bluetooth_device_info_user* out =
+        (struct aos_bluetooth_device_info_user*)(uintptr_t)regs->rsi;
+    struct bluetooth_discovered_device dev;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+    if (bluetooth_get_discovered((size_t)index, &dev) != 0) return -(int64_t)LINUX_ENOENT;
+
+    local_memset(out, 0, sizeof(*out));
+    out->valid = dev.valid;
+    for (size_t i = 0; i < 6; i++) {
+        out->address[i] = dev.address[i];
+    }
+    out->page_scan_repetition_mode = dev.page_scan_repetition_mode;
+    out->has_rssi = dev.has_rssi;
+    out->rssi = dev.rssi;
+    out->has_name = dev.has_name;
+    out->name_status = dev.name_status;
+    out->connected = dev.connected;
+    out->link_type = dev.link_type;
+    out->encryption_enabled = dev.encryption_enabled;
+    out->pair_status = dev.pair_status;
+    out->bonded = dev.bonded;
+    out->connection_handle = dev.connection_handle;
+    copy_cstr_bounded(out->name, sizeof(out->name), dev.name);
+    return 0;
+}
+
+int64_t sys_bluetooth_bond_info(struct syscall_regs* regs) {
+    uint64_t index = regs->rdi;
+    struct aos_bluetooth_bond_info_user* out =
+        (struct aos_bluetooth_bond_info_user*)(uintptr_t)regs->rsi;
+    struct bluetooth_bond_info bond;
+
+    if (!out) return -(int64_t)LINUX_EFAULT;
+    if (bluetooth_get_bond((size_t)index, &bond) != 0) return -(int64_t)LINUX_ENOENT;
+
+    local_memset(out, 0, sizeof(*out));
+    out->valid = bond.valid;
+    for (size_t i = 0; i < 6; i++) {
+        out->address[i] = bond.address[i];
+    }
+    out->key_type = bond.key_type;
+    out->authenticated = bond.authenticated;
+    out->has_name = bond.has_name;
+    copy_cstr_bounded(out->name, sizeof(out->name), bond.name);
     return 0;
 }
 
@@ -457,6 +700,103 @@ int64_t sys_gfx_present(struct syscall_regs* regs) {
     return 0;
 }
 
+int64_t sys_gfx_blit_rgb565(struct syscall_regs* regs) {
+    const uint16_t* pixels = (const uint16_t*)(uintptr_t)regs->rdi;
+    uint32_t width = (uint32_t)regs->rsi;
+    uint32_t height = (uint32_t)regs->rdx;
+
+    if (!gfx_is_ready()) return -(int64_t)LINUX_ENODEV;
+    if (!pixels) return -(int64_t)LINUX_EFAULT;
+    if (gfx_blit_rgb565_scaled(pixels, width, height) != 0) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    return 0;
+}
+
+int64_t sys_gfx_blend_round_rect(struct syscall_regs* regs) {
+    uint64_t style = regs->r8;
+    uint32_t radius = (uint32_t)((style >> 32) & 0xffU);
+    uint8_t alpha = (uint8_t)((style >> 24) & 0xffU);
+    uint32_t rgb = (uint32_t)(style & 0xffffffU);
+
+    if (!gfx_is_ready()) return -(int64_t)LINUX_ENODEV;
+    gfx_blend_round_rect((int32_t)regs->rdi, (int32_t)regs->rsi,
+                         (uint32_t)regs->rdx, (uint32_t)regs->r10,
+                         radius, rgb, alpha);
+    return 0;
+}
+
+int64_t sys_gfx_cursor(struct syscall_regs* regs) {
+    if (!gfx_is_ready()) return -(int64_t)LINUX_ENODEV;
+    gfx_set_cursor((int32_t)regs->rdi, (int32_t)regs->rsi,
+                   (uint32_t)regs->rdx, regs->r10 ? 1U : 0U);
+    return 0;
+}
+
+int64_t sys_gfx_aa_line(struct syscall_regs* regs) {
+    uint64_t style = regs->r8;
+    uint32_t thickness = (uint32_t)((style >> 24) & 0xffU);
+    uint32_t rgb = (uint32_t)(style & 0xffffffU);
+
+    if (!gfx_is_ready()) return -(int64_t)LINUX_ENODEV;
+    if (thickness == 0) return -(int64_t)LINUX_EINVAL;
+    gfx_aa_line((int32_t)regs->rdi, (int32_t)regs->rsi,
+                (int32_t)regs->rdx, (int32_t)regs->r10,
+                thickness, rgb);
+    return 0;
+}
+
+int64_t sys_gfx_aa_circle(struct syscall_regs* regs) {
+    if (!gfx_is_ready()) return -(int64_t)LINUX_ENODEV;
+    gfx_aa_circle((int32_t)regs->rdi, (int32_t)regs->rsi,
+                  (uint32_t)regs->rdx, (uint32_t)regs->r10,
+                  (uint32_t)regs->r8);
+    return 0;
+}
+
+int64_t sys_gfx_blit_rgb565_rect(struct syscall_regs* regs) {
+    const uint16_t* pixels = (const uint16_t*)(uintptr_t)regs->rdi;
+    uint64_t source = regs->rsi;
+    uint64_t position = regs->rdx;
+    uint64_t destination = regs->r10;
+    uint32_t source_width = (uint32_t)(source >> 32);
+    uint32_t source_height = (uint32_t)source;
+    int32_t x = (int32_t)(position >> 32);
+    int32_t y = (int32_t)position;
+    uint32_t width = (uint32_t)(destination >> 32);
+    uint32_t height = (uint32_t)destination;
+
+    if (!gfx_is_ready()) return -(int64_t)LINUX_ENODEV;
+    if (!pixels) return -(int64_t)LINUX_EFAULT;
+    if (gfx_blit_rgb565_rect(pixels, source_width, source_height,
+                             x, y, width, height) != 0) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    return 0;
+}
+
+int64_t sys_gfx_blit_alpha_mask(struct syscall_regs* regs) {
+    const uint8_t* alpha = (const uint8_t*)(uintptr_t)regs->rdi;
+    uint64_t source = regs->rsi;
+    uint64_t position = regs->rdx;
+    uint64_t destination = regs->r10;
+    uint32_t source_width = (uint32_t)(source >> 32);
+    uint32_t source_height = (uint32_t)source;
+    int32_t x = (int32_t)(position >> 32);
+    int32_t y = (int32_t)position;
+    uint32_t width = (uint32_t)(destination >> 32);
+    uint32_t height = (uint32_t)destination;
+    uint32_t rgb = (uint32_t)regs->r8;
+
+    if (!gfx_is_ready()) return -(int64_t)LINUX_ENODEV;
+    if (!alpha) return -(int64_t)LINUX_EFAULT;
+    if (gfx_blit_alpha_mask(alpha, source_width, source_height,
+                            x, y, width, height, rgb) != 0) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    return 0;
+}
+
 int64_t sys_input_poll(struct syscall_regs* regs) {
     struct aos_input_event_user* out = (struct aos_input_event_user*)(uintptr_t)regs->rdi;
     struct aos_input_event event;
@@ -465,10 +805,7 @@ int64_t sys_input_poll(struct syscall_regs* regs) {
 
     keyboard_handler_main();
     if (!input_pop_event(&event)) {
-        out->key = 0;
-        out->flags = 0;
-        out->ascii = 0;
-        out->source = 0;
+        local_memset(out, 0, sizeof(*out));
         return 0;
     }
 
@@ -476,6 +813,11 @@ int64_t sys_input_poll(struct syscall_regs* regs) {
     out->flags = ((uint32_t)event.pressed) | ((uint32_t)event.modifiers << 8);
     out->ascii = (uint8_t)event.ascii;
     out->source = event.source;
+    out->pointer_x = event.pointer_x;
+    out->pointer_y = event.pointer_y;
+    out->pointer_dx = event.pointer_dx;
+    out->pointer_dy = event.pointer_dy;
+    out->pointer_buttons = event.pointer_buttons;
     return 1;
 }
 
@@ -512,79 +854,6 @@ int64_t sys_user_info(struct syscall_regs* regs) {
     return 0;
 }
 
-static int cstr_equals_n(const char* a, const char* b, size_t b_len) {
-    size_t i = 0;
-
-    if (!a || !b) return 0;
-    while (i < b_len) {
-        if (a[i] == '\0' || a[i] != b[i]) {
-            return 0;
-        }
-        i++;
-    }
-    return a[i] == '\0';
-}
-
-static int shadow_password_matches(const char* username, const char* password) {
-    struct vfs_node node;
-    char shadow[1024];
-    uint64_t size;
-    uint64_t pos = 0;
-
-    if (!username || !password) {
-        return 0;
-    }
-    if (vfs_lookup("etc/shadow", &node) != 0 || node.type != VFS_NODE_TYPE_REGULAR) {
-        return 0;
-    }
-
-    size = node.size;
-    if (size >= sizeof(shadow)) {
-        size = sizeof(shadow) - 1;
-    }
-    if (vfs_read_node(&node, 0, (uint8_t*)shadow, size) != 0) {
-        return 0;
-    }
-    shadow[size] = '\0';
-
-    while (pos < size) {
-        uint64_t line_start = pos;
-        uint64_t name_start = pos;
-        uint64_t name_len = 0;
-        uint64_t pass_start = 0;
-        uint64_t pass_len = 0;
-
-        while (pos < size && shadow[pos] != ':' && shadow[pos] != '\n') {
-            pos++;
-        }
-        name_len = pos - name_start;
-        if (pos >= size || shadow[pos] != ':') {
-            while (pos < size && shadow[pos] != '\n') pos++;
-            if (pos < size) pos++;
-            continue;
-        }
-        pos++;
-        pass_start = pos;
-        while (pos < size && shadow[pos] != ':' && shadow[pos] != '\n') {
-            pos++;
-        }
-        pass_len = pos - pass_start;
-
-        if (cstr_equals_n(username, &shadow[name_start], (size_t)name_len)) {
-            if (pass_len == 0) {
-                return 1;
-            }
-            return cstr_equals_n(password, &shadow[pass_start], (size_t)pass_len);
-        }
-
-        (void)line_start;
-        while (pos < size && shadow[pos] != '\n') pos++;
-        if (pos < size) pos++;
-    }
-
-    return 0;
-}
-
 int64_t sys_sudo_auth(struct syscall_regs* regs) {
     char password[128];
     int64_t rc;
@@ -594,15 +863,57 @@ int64_t sys_sudo_auth(struct syscall_regs* regs) {
         return 0;
     }
 
+    if (!session_user_is_administrator(process_get_username())) {
+        return -(int64_t)LINUX_EPERM;
+    }
+
     rc = copy_user_cstr((const char*)(uintptr_t)regs->rdi, password, sizeof(password));
     if (rc < 0) return rc;
 
-    if (!shadow_password_matches(process_get_username(), password)) {
+    if (!session_verify_user_password(process_get_username(), password)) {
+        credentials_wipe(password, sizeof(password));
         return -(int64_t)LINUX_EACCES;
     }
 
+    credentials_wipe(password, sizeof(password));
     process_become_root();
     return 0;
+}
+
+int64_t sys_session(struct syscall_regs* regs) {
+    uint32_t action = (uint32_t)regs->rdi;
+    const struct aos_session_request* user_request =
+        (const struct aos_session_request*)(uintptr_t)regs->rsi;
+    struct aos_session_status* user_status =
+        (struct aos_session_status*)(uintptr_t)regs->rdx;
+    struct aos_session_request request;
+    struct aos_session_status status;
+    int rc;
+
+    if (!user_status) return -(int64_t)LINUX_EFAULT;
+    local_memset(&request, 0, sizeof(request));
+    local_memset(&status, 0, sizeof(status));
+    if (action == AOS_SESSION_LOGIN) {
+        if (!user_request) return -(int64_t)LINUX_EFAULT;
+        local_memcpy(&request, user_request, sizeof(request));
+        request.username[sizeof(request.username) - 1U] = 0;
+        request.password[sizeof(request.password) - 1U] = 0;
+    }
+
+    if (action == AOS_SESSION_QUERY) {
+        rc = session_query(&status);
+    } else if (action == AOS_SESSION_LOGIN) {
+        rc = session_login(&request, &status);
+    } else if (action == AOS_SESSION_AUTOLOGIN) {
+        rc = session_autologin(&status);
+    } else if (action == AOS_SESSION_LOGOUT) {
+        rc = session_logout(&status);
+    } else {
+        rc = -(int)LINUX_EINVAL;
+    }
+    local_memcpy(user_status, &status, sizeof(status));
+    credentials_wipe(&request, sizeof(request));
+    return rc;
 }
 
 int64_t sys_pci_info(struct syscall_regs* regs) {
@@ -1370,4 +1681,30 @@ int64_t sys_partition_layout(struct syscall_regs* regs) {
     }
 
     return 0;
+}
+
+int64_t sys_installer(struct syscall_regs* regs) {
+    uint32_t action = (uint32_t)regs->rdi;
+    void* arg = (void*)(uintptr_t)regs->rsi;
+    int rc;
+
+    switch (action) {
+        case AOS_INSTALL_QUERY:
+            if (!arg) return -(int64_t)LINUX_EFAULT;
+            rc = installer_get_status((struct aos_install_status*)arg);
+            break;
+        case AOS_INSTALL_BEGIN:
+            if (!arg) return -(int64_t)LINUX_EFAULT;
+            rc = installer_begin((const struct aos_install_config*)arg);
+            break;
+        case AOS_INSTALL_ADVANCE:
+            rc = installer_advance();
+            break;
+        case AOS_INSTALL_CANCEL:
+            rc = installer_cancel();
+            break;
+        default:
+            return -(int64_t)LINUX_EINVAL;
+    }
+    return rc < 0 ? -(int64_t)LINUX_EIO : rc;
 }

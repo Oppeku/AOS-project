@@ -5,7 +5,11 @@
 #ifndef XHCI_H
 #define XHCI_H
 
+#include <stddef.h>
+
 void xhci_register_driver(void);
 void xhci_poll_keyboard(void);
+int xhci_bluetooth_scan(void);
+int xhci_bluetooth_pair(size_t index);
 
 #endif

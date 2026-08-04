@@ -74,6 +74,19 @@ auth_failed:
     mov rdi, 1
     syscall
 
+not_allowed:
+    lea rsi, [rel not_allowed_prefix]
+    mov rdx, not_allowed_prefix_end - not_allowed_prefix
+    call write_stdout
+    lea rsi, [rel user_info + USER_INFO_USERNAME]
+    call write_cstring_stdout
+    lea rsi, [rel not_allowed_suffix]
+    mov rdx, not_allowed_suffix_end - not_allowed_suffix
+    call write_stdout
+    mov rax, SYS_EXIT
+    mov rdi, 1
+    syscall
+
 authenticate:
     mov rax, AOS_SYS_USER_INFO
     lea rdi, [rel user_info]
@@ -94,6 +107,14 @@ authenticate:
     ret
 
 .need_password:
+    mov rax, AOS_SYS_SUDO_AUTH
+    lea rdi, [rel empty_password]
+    syscall
+    test rax, rax
+    jz .authenticated
+    cmp rax, -1
+    je not_allowed
+
     lea rsi, [rel password_prefix]
     mov rdx, password_prefix_end - password_prefix
     call write_stdout
@@ -103,22 +124,24 @@ authenticate:
     mov rdx, password_suffix_end - password_suffix
     call write_stdout
 
-    mov rax, SYS_READ
-    xor rdi, rdi
-    lea rsi, [rel password_buffer]
-    mov rdx, 127
-    syscall
+    call read_password_line
     test rax, rax
-    jle .read_failed
+    js .read_failed
 
-    mov rdi, rax
-    call trim_password
     mov rax, AOS_SYS_SUDO_AUTH
     lea rdi, [rel password_buffer]
     syscall
+    mov r15, rax
+    call clear_password
+    mov rax, r15
+    ret
+
+.authenticated:
+    xor rax, rax
     ret
 
 .read_failed:
+    call clear_password
     mov rax, -1
     ret
 
@@ -185,25 +208,50 @@ write_cstring_stdout:
 .done:
     ret
 
-trim_password:
-    lea rsi, [rel password_buffer]
-    xor rcx, rcx
+read_password_line:
+    xor r14, r14
+    lea rbx, [rel password_buffer]
 
-.loop:
-    cmp rcx, rdi
-    jae .terminate
-    mov al, [rsi + rcx]
+.read:
+    mov rax, SYS_READ
+    xor rdi, rdi
+    lea rsi, [rbx + r14]
+    mov rdx, 1
+    syscall
+    test rax, rax
+    js .failed
+    jz .read
+
+    mov al, [rbx + r14]
     cmp al, 10
     je .terminate
     cmp al, 13
     je .terminate
     test al, al
     je .terminate
-    inc rcx
-    jmp .loop
+    inc r14
+    cmp r14, 127
+    jb .read
 
 .terminate:
-    mov byte [rsi + rcx], 0
+    mov byte [rbx + r14], 0
+    xor rax, rax
+    ret
+
+.failed:
+    mov byte [rbx + r14], 0
+    mov rax, -1
+    ret
+
+clear_password:
+    lea rdi, [rel password_buffer]
+    mov rcx, 128
+    xor eax, eax
+
+.clear:
+    mov [rdi], al
+    inc rdi
+    loop .clear
     ret
 
 section .bss
@@ -230,6 +278,14 @@ fail_msg_end:
 auth_failed_msg:
     db "sudo: authentication failed", 10
 auth_failed_msg_end:
+
+not_allowed_prefix:
+    db "sudo: "
+not_allowed_prefix_end:
+
+not_allowed_suffix:
+    db " is not an administrator", 10
+not_allowed_suffix_end:
 
 password_prefix:
     db "[sudo] password for "

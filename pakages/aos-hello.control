@@ -1,0 +1,6 @@
+Package: aos-hello
+Name: AOS Hello
+Version: 1.0.0
+Architecture: amd64
+Description: Uni Debian package integration test
+X-AOS-Entry: usr/bin/aos-hello

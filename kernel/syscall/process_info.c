@@ -20,7 +20,8 @@ int64_t sys_getppid(struct syscall_regs* regs) {
 struct aos_process_info_user {
     uint8_t valid;
     uint8_t status;
-    uint16_t reserved;
+    uint8_t thermal_throttled;
+    uint8_t reserved;
     uint32_t pid;
     uint32_t parent_pid;
     uint32_t uid;
@@ -31,6 +32,7 @@ struct aos_process_info_user {
     char username[PROCESS_USERNAME_MAX];
     char command[PROCESS_COMMAND_MAX];
     char cwd[PROCESS_CWD_MAX];
+    uint64_t cpu_ticks;
 } __attribute__((packed));
 
 static void copy_process_string(char* dst, size_t dst_size, const char* src) {
@@ -64,6 +66,7 @@ int64_t sys_process_info(struct syscall_regs* regs) {
 
     out->valid = 1;
     out->status = (uint8_t)proc->status;
+    out->thermal_throttled = proc->thermal_throttled;
     out->pid = proc->pid;
     out->parent_pid = proc->parent_pid;
     out->uid = proc->uid;
@@ -71,6 +74,7 @@ int64_t sys_process_info(struct syscall_regs* regs) {
     out->exit_status = proc->exit_status;
     out->brk_current = proc->brk_current;
     out->mmap_next = proc->mmap_next;
+    out->cpu_ticks = proc->cpu_ticks;
     copy_process_string(out->username, sizeof(out->username), proc->username);
     copy_process_string(out->command, sizeof(out->command), proc->command);
     copy_process_string(out->cwd, sizeof(out->cwd), proc->cwd);

@@ -82,7 +82,7 @@ int64_t sys_access(struct syscall_regs* regs) {
 }
 
 int64_t sys_openat(struct syscall_regs* regs) {
-    int64_t dirfd = (int64_t)regs->rdi;
+    int64_t dirfd = linux_signed_int_arg(regs->rdi);
     char path_buf[MAX_EXEC_STRING];
     char resolved_path[MAX_EXEC_STRING];
     int64_t rc = copy_user_cstr((const char*)(uintptr_t)regs->rsi, path_buf, sizeof(path_buf));
@@ -91,11 +91,13 @@ int64_t sys_openat(struct syscall_regs* regs) {
     rc = resolve_path_from_dirfd(dirfd, path_buf, resolved_path, sizeof(resolved_path));
     if (rc < 0) return rc;
 
-    return open_path_with_flags(resolved_path, regs->rdx);
+    rc = open_path_with_flags(resolved_path, regs->rdx);
+    syscall_linux_trace_path("openat", resolved_path, rc);
+    return rc;
 }
 
 int64_t sys_mkdirat(struct syscall_regs* regs) {
-    int64_t dirfd = (int64_t)regs->rdi;
+    int64_t dirfd = linux_signed_int_arg(regs->rdi);
     char path_buf[MAX_EXEC_STRING];
     char resolved_path[MAX_EXEC_STRING];
     struct vfs_node existing;
@@ -127,7 +129,7 @@ int64_t sys_mkdir(struct syscall_regs* regs) {
 }
 
 int64_t sys_unlinkat(struct syscall_regs* regs) {
-    int64_t dirfd = (int64_t)regs->rdi;
+    int64_t dirfd = linux_signed_int_arg(regs->rdi);
     char path_buf[MAX_EXEC_STRING];
     char resolved_path[MAX_EXEC_STRING];
     int64_t rc;
@@ -158,7 +160,7 @@ int64_t sys_unlinkat(struct syscall_regs* regs) {
 }
 
 int64_t sys_faccessat(struct syscall_regs* regs) {
-    int64_t dirfd = (int64_t)regs->rdi;
+    int64_t dirfd = linux_signed_int_arg(regs->rdi);
     char path_buf[MAX_EXEC_STRING];
     char resolved_path[MAX_EXEC_STRING];
     int64_t rc = copy_user_cstr((const char*)(uintptr_t)regs->rsi, path_buf, sizeof(path_buf));
@@ -189,11 +191,17 @@ int64_t sys_read(struct syscall_regs* regs) {
     uint64_t len = regs->rdx;
 
     if (!buf) return -(int64_t)LINUX_EFAULT;
-    if (!entry) return -(int64_t)LINUX_EBADF;
+    if (!entry) {
+        syscall_linux_trace("read bad fd", (int64_t)fd);
+        return -(int64_t)LINUX_EBADF;
+    }
 
     if (entry->kind == FD_KIND_VNODE) {
         struct file_handle* file = get_file_handle_by_index(entry->handle_index);
-        if (!file) return -(int64_t)LINUX_EBADF;
+        if (!file) {
+            syscall_linux_trace("read bad handle", entry->handle_index);
+            return -(int64_t)LINUX_EBADF;
+        }
         if (file->node.type != VFS_NODE_TYPE_REGULAR) return -(int64_t)LINUX_EISDIR;
 
         if (file->offset >= file->node.size) {
@@ -215,6 +223,10 @@ int64_t sys_read(struct syscall_regs* regs) {
         struct pipe_object* pipe = get_pipe_for_fd(fd, FD_KIND_PIPE_READER);
         uint64_t bytes_read = 0;
         if (!pipe) return -(int64_t)LINUX_EBADF;
+        if (pipe->size == 0 && pipe->write_refs > 0) {
+            if (regs->rcx >= 2) regs->rcx -= 2;
+            schedule(regs);
+        }
         while (bytes_read < len && pipe->size > 0) {
             buf[bytes_read++] = pipe->buffer[pipe->read_pos];
             pipe->read_pos = (pipe->read_pos + 1) % sizeof(pipe->buffer);
@@ -232,6 +244,37 @@ int64_t sys_read(struct syscall_regs* regs) {
     if (len == 0) return 0;
 
     return (int64_t)tty_read(buf, len);
+}
+
+int64_t sys_pread64(struct syscall_regs* regs) {
+    uint64_t fd = regs->rdi;
+    struct fd_entry* entry = get_fd_entry(fd);
+    uint8_t* buffer = (uint8_t*)(uintptr_t)regs->rsi;
+    uint64_t length = regs->rdx;
+    uint64_t offset = regs->r10;
+    struct file_handle* file;
+    uint64_t available;
+
+    if (!buffer && length != 0) return -(int64_t)LINUX_EFAULT;
+    if (!entry || entry->kind != FD_KIND_VNODE) {
+        syscall_linux_trace("pread64 bad fd", (int64_t)fd);
+        return -(int64_t)LINUX_EBADF;
+    }
+    file = get_file_handle_by_index(entry->handle_index);
+    if (!file) {
+        syscall_linux_trace("pread64 bad handle", entry->handle_index);
+        return -(int64_t)LINUX_EBADF;
+    }
+    if (file->node.type != VFS_NODE_TYPE_REGULAR) {
+        return -(int64_t)LINUX_EISDIR;
+    }
+    if (offset >= file->node.size) return 0;
+    available = (uint64_t)file->node.size - offset;
+    if (length > available) length = available;
+    if (vfs_read_node(&file->node, offset, buffer, length) != 0) {
+        return -(int64_t)LINUX_EIO;
+    }
+    return (int64_t)length;
 }
 
 int64_t sys_readv(struct syscall_regs* regs) {
@@ -300,12 +343,18 @@ int64_t sys_fstat(struct syscall_regs* regs) {
     struct fd_entry* entry = get_fd_entry(regs->rdi);
     struct linux_stat* st = (struct linux_stat*)(uintptr_t)regs->rsi;
 
-    if (!entry) return -(int64_t)LINUX_EBADF;
+    if (!entry) {
+        syscall_linux_trace("fstat bad fd", (int64_t)regs->rdi);
+        return -(int64_t)LINUX_EBADF;
+    }
     if (!st) return -(int64_t)LINUX_EFAULT;
 
     if (entry->kind == FD_KIND_VNODE) {
         struct file_handle* file = get_file_handle_by_index(entry->handle_index);
-        if (!file) return -(int64_t)LINUX_EBADF;
+        if (!file) {
+            syscall_linux_trace("fstat bad handle", entry->handle_index);
+            return -(int64_t)LINUX_EBADF;
+        }
         if (file->node.type == VFS_NODE_TYPE_DIRECTORY) {
             uint64_t inode_seed = file->node.inode;
             fill_linux_stat(st, inode_seed, 0, LINUX_S_IFDIR | LINUX_S_IRUSR | LINUX_S_IWUSR | LINUX_S_IRGRP | LINUX_S_IROTH);
@@ -333,7 +382,7 @@ int64_t sys_stat(struct syscall_regs* regs) {
 }
 
 int64_t sys_newfstatat(struct syscall_regs* regs) {
-    int64_t dirfd = (int64_t)regs->rdi;
+    int64_t dirfd = linux_signed_int_arg(regs->rdi);
     const char* path = (const char*)(uintptr_t)regs->rsi;
     struct linux_stat* st = (struct linux_stat*)(uintptr_t)regs->rdx;
     uint64_t flags = regs->r10;
@@ -442,7 +491,11 @@ int64_t sys_getdents64(struct syscall_regs* regs) {
 
 int64_t sys_close(struct syscall_regs* regs) {
     uint64_t fd = regs->rdi;
-    if (!get_fd_entry(fd)) return -(int64_t)LINUX_EBADF;
+    if (!get_fd_entry(fd)) {
+        syscall_linux_trace("close bad fd", (int64_t)fd);
+        return -(int64_t)LINUX_EBADF;
+    }
     close_fd_internal(fd);
+    syscall_linux_trace("close", (int64_t)fd);
     return 0;
 }

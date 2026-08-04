@@ -424,6 +424,8 @@ void vfs_init_mounts(void) {
     aosfs_init();
     (void)vfs_mount("/", VFS_BACKEND_AOSFS, "/");
     (void)vfs_mount("commands", VFS_BACKEND_INITRD, "/");
+    (void)vfs_mount("lib", VFS_BACKEND_AOSFS, "lib");
+    (void)vfs_mount("lib64", VFS_BACKEND_AOSFS, "lib64");
     (void)vfs_mount("main", VFS_BACKEND_AOSFS, "main");
     (void)vfs_mount("etc", VFS_BACKEND_AOSFS, "etc");
     (void)vfs_mount("tmp", VFS_BACKEND_TMPFS, "tmp");
@@ -547,11 +549,6 @@ static int lookup_initrd_node(const char* normalized, struct vfs_node* out) {
         copy_path_string(out->path, sizeof(out->path), "");
         return 0;
     }
-    for (size_t i = 0; normalized[i]; i++) {
-        if (normalized[i] == '/') {
-            return -1;
-        }
-    }
     if (initrd_get_file(normalized, &data, &size) != 0) {
         return -1;
     }
@@ -651,6 +648,9 @@ int vfs_read_node(const struct vfs_node* node, uint64_t offset, uint8_t* buffer,
     if (!node || !buffer || node->type != VFS_NODE_TYPE_REGULAR) {
         return -1;
     }
+    if (offset > node->size || len > (uint64_t)node->size - offset) {
+        return -1;
+    }
 
     if (node->backend == VFS_BACKEND_FAT32) {
         return fat32_read_file(node->u.first_cluster, node->size, offset, buffer, len);
@@ -661,12 +661,18 @@ int vfs_read_node(const struct vfs_node* node, uint64_t offset, uint8_t* buffer,
     if (node->backend == VFS_BACKEND_TMPFS) {
         return tmpfs_read_path(node->path, offset, buffer, len);
     }
-    if (node->backend != VFS_BACKEND_AOSFS && node->backend != VFS_BACKEND_INITRD) {
-        return -1;
+    if (node->backend == VFS_BACKEND_AOSFS) {
+        if (node->u.data) {
+            local_memcpy(buffer, node->u.data + offset, (size_t)len);
+            return 0;
+        }
+        return aosfs_read_path(node->path, offset, buffer, len);
     }
-
-    local_memcpy(buffer, node->u.data + offset, (size_t)len);
-    return 0;
+    if (node->backend == VFS_BACKEND_INITRD) {
+        local_memcpy(buffer, node->u.data + offset, (size_t)len);
+        return 0;
+    }
+    return -1;
 }
 
 int vfs_write_node(const struct vfs_node* node, uint64_t offset, const uint8_t* buffer, uint64_t len, uint64_t* written, uint32_t* new_size) {

@@ -15,12 +15,17 @@ int64_t sys_access(struct syscall_regs* regs);
 int64_t sys_arch_prctl(struct syscall_regs* regs);
 int64_t sys_arp_cache_info(struct syscall_regs* regs);
 int64_t sys_blkdev_info(struct syscall_regs* regs);
+int64_t sys_bluetooth_info(struct syscall_regs* regs);
+int64_t sys_bluetooth_control(struct syscall_regs* regs);
+int64_t sys_bluetooth_device_info(struct syscall_regs* regs);
+int64_t sys_bluetooth_bond_info(struct syscall_regs* regs);
 int64_t sys_brk(struct syscall_regs* regs);
 int64_t sys_chdir(struct syscall_regs* regs);
 int64_t sys_clock_gettime(struct syscall_regs* regs);
 int64_t sys_clone(struct syscall_regs* regs);
 int64_t sys_close(struct syscall_regs* regs);
 int64_t sys_connect(struct syscall_regs* regs);
+int64_t sys_cpu_info(struct syscall_regs* regs);
 int64_t sys_display_info(struct syscall_regs* regs);
 int64_t sys_display_set(struct syscall_regs* regs);
 int64_t sys_dns_cache_info(struct syscall_regs* regs);
@@ -41,6 +46,13 @@ int64_t sys_getpid(struct syscall_regs* regs);
 int64_t sys_getppid(struct syscall_regs* regs);
 int64_t sys_getrandom(struct syscall_regs* regs);
 int64_t sys_gfx_clear(struct syscall_regs* regs);
+int64_t sys_gfx_blit_rgb565(struct syscall_regs* regs);
+int64_t sys_gfx_blend_round_rect(struct syscall_regs* regs);
+int64_t sys_gfx_cursor(struct syscall_regs* regs);
+int64_t sys_gfx_aa_line(struct syscall_regs* regs);
+int64_t sys_gfx_aa_circle(struct syscall_regs* regs);
+int64_t sys_gfx_blit_rgb565_rect(struct syscall_regs* regs);
+int64_t sys_gfx_blit_alpha_mask(struct syscall_regs* regs);
 int64_t sys_gfx_info(struct syscall_regs* regs);
 int64_t sys_gfx_pixel(struct syscall_regs* regs);
 int64_t sys_gfx_present(struct syscall_regs* regs);
@@ -77,12 +89,17 @@ int64_t sys_partition_write(struct syscall_regs* regs);
 int64_t sys_pci_info(struct syscall_regs* regs);
 int64_t sys_pipe(struct syscall_regs* regs);
 int64_t sys_poll(struct syscall_regs* regs);
+int64_t sys_pread64(struct syscall_regs* regs);
 int64_t sys_prlimit64(struct syscall_regs* regs);
 int64_t sys_process_info(struct syscall_regs* regs);
+int64_t sys_process_kill(struct syscall_regs* regs);
+int64_t sys_process_pause(struct syscall_regs* regs);
+int64_t sys_process_resume(struct syscall_regs* regs);
 int64_t sys_read(struct syscall_regs* regs);
 int64_t sys_readv(struct syscall_regs* regs);
 int64_t sys_recvfrom(struct syscall_regs* regs);
 int64_t sys_restart(struct syscall_regs* regs);
+int64_t sys_session(struct syscall_regs* regs);
 int64_t sys_rt_sigaction(struct syscall_regs* regs);
 int64_t sys_rt_sigprocmask(struct syscall_regs* regs);
 int64_t sys_sendto(struct syscall_regs* regs);
@@ -94,6 +111,8 @@ int64_t sys_socket_info(struct syscall_regs* regs);
 int64_t sys_stat(struct syscall_regs* regs);
 int64_t sys_sudo_auth(struct syscall_regs* regs);
 int64_t sys_time_info(struct syscall_regs* regs);
+int64_t sys_thermal_info(struct syscall_regs* regs);
+int64_t sys_installer(struct syscall_regs* regs);
 int64_t sys_uname(struct syscall_regs* regs);
 int64_t sys_unlinkat(struct syscall_regs* regs);
 int64_t sys_uptime_info(struct syscall_regs* regs);
@@ -129,6 +148,7 @@ static void serial_print_u64(uint64_t value) {
 }
 
 void syscall_handler(struct syscall_regs* regs) {
+    process_thermal_gate_current();
     switch (regs->rax) {
         case LINUX_SYS_READ:
             regs->rax = (uint64_t)sys_read(regs);
@@ -141,6 +161,9 @@ void syscall_handler(struct syscall_regs* regs) {
             return;
         case LINUX_SYS_IOCTL:
             regs->rax = (uint64_t)sys_ioctl(regs);
+            return;
+        case LINUX_SYS_PREAD64:
+            regs->rax = (uint64_t)sys_pread64(regs);
             return;
         case LINUX_SYS_READV:
             regs->rax = (uint64_t)sys_readv(regs);
@@ -329,6 +352,27 @@ void syscall_handler(struct syscall_regs* regs) {
         case AOS_SYS_GFX_PRESENT:
             regs->rax = (uint64_t)sys_gfx_present(regs);
             return;
+        case AOS_SYS_GFX_BLIT_RGB565:
+            regs->rax = (uint64_t)sys_gfx_blit_rgb565(regs);
+            return;
+        case AOS_SYS_GFX_BLEND_ROUND_RECT:
+            regs->rax = (uint64_t)sys_gfx_blend_round_rect(regs);
+            return;
+        case AOS_SYS_GFX_CURSOR:
+            regs->rax = (uint64_t)sys_gfx_cursor(regs);
+            return;
+        case AOS_SYS_GFX_AA_LINE:
+            regs->rax = (uint64_t)sys_gfx_aa_line(regs);
+            return;
+        case AOS_SYS_GFX_AA_CIRCLE:
+            regs->rax = (uint64_t)sys_gfx_aa_circle(regs);
+            return;
+        case AOS_SYS_GFX_BLIT_RGB565_RECT:
+            regs->rax = (uint64_t)sys_gfx_blit_rgb565_rect(regs);
+            return;
+        case AOS_SYS_GFX_BLIT_ALPHA_MASK:
+            regs->rax = (uint64_t)sys_gfx_blit_alpha_mask(regs);
+            return;
         case AOS_SYS_INPUT_POLL:
             regs->rax = (uint64_t)sys_input_poll(regs);
             return;
@@ -377,6 +421,18 @@ void syscall_handler(struct syscall_regs* regs) {
         case AOS_SYS_WIFI_CONTROL:
             regs->rax = (uint64_t)sys_wifi_control(regs);
             return;
+        case AOS_SYS_BLUETOOTH_INFO:
+            regs->rax = (uint64_t)sys_bluetooth_info(regs);
+            return;
+        case AOS_SYS_BLUETOOTH_CONTROL:
+            regs->rax = (uint64_t)sys_bluetooth_control(regs);
+            return;
+        case AOS_SYS_BLUETOOTH_DEVICE_INFO:
+            regs->rax = (uint64_t)sys_bluetooth_device_info(regs);
+            return;
+        case AOS_SYS_BLUETOOTH_BOND_INFO:
+            regs->rax = (uint64_t)sys_bluetooth_bond_info(regs);
+            return;
         case AOS_SYS_SOCKET_BIND_NETDEV:
             regs->rax = (uint64_t)sys_socket_bind_netdev(regs);
             return;
@@ -388,6 +444,31 @@ void syscall_handler(struct syscall_regs* regs) {
             return;
         case AOS_SYS_PROCESS_INFO:
             regs->rax = (uint64_t)sys_process_info(regs);
+            return;
+        case AOS_SYS_CPU_INFO:
+            regs->rax = (uint64_t)sys_cpu_info(regs);
+            return;
+        case AOS_SYS_PROCESS_KILL:
+            regs->rax = (uint64_t)sys_process_kill(regs);
+            return;
+        case AOS_SYS_PROCESS_PAUSE:
+            regs->rax = (uint64_t)sys_process_pause(regs);
+            return;
+        case AOS_SYS_PROCESS_RESUME:
+            regs->rax = (uint64_t)sys_process_resume(regs);
+            return;
+        case AOS_SYS_PROCESS_YIELD:
+            regs->rax = 0;
+            schedule(regs);
+            return;
+        case AOS_SYS_THERMAL_INFO:
+            regs->rax = (uint64_t)sys_thermal_info(regs);
+            return;
+        case AOS_SYS_INSTALLER:
+            regs->rax = (uint64_t)sys_installer(regs);
+            return;
+        case AOS_SYS_SESSION:
+            regs->rax = (uint64_t)sys_session(regs);
             return;
         case LINUX_SYS_FACCESSAT:
             regs->rax = (uint64_t)sys_faccessat(regs);

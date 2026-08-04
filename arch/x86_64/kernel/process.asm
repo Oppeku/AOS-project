@@ -26,6 +26,11 @@ switch_to_process:
     mov rax, [rdi + 16]
     mov cr3, rax
 
+    ; SYSRET does not reload DS/ES, so leave them as user data selectors.
+    mov ax, 0x1B
+    mov ds, ax
+    mov es, ax
+
     ; 2. Restore all registers from the process struct
     ; We'll use RDI as base, then restore it last.
     
@@ -44,9 +49,8 @@ switch_to_process:
     mov rcx, [rdi + 24 + 104] ; User RIP
     mov r11, [rdi + 24 + 112] ; User RFLAGS
     
-    ; Save User RSP into GS:0x08 so it can be restored or used later
+    ; Save user RSP while GS still points at the kernel cpu_context.
     mov rbx, [rdi + 24 + 120]
-    swapgs
     mov [gs:0x08], rbx
     
     ; Now we need to actually set RSP to the user stack pointer
@@ -57,6 +61,9 @@ switch_to_process:
 
     ; Restore RDI last
     mov rdi, [rdi + 24 + 24]
+
+    ; Return GS to the user value immediately before SYSRET.
+    swapgs
 
     ; SYSRET enters user mode using:
     ; RIP = RCX

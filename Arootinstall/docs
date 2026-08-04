@@ -1,11 +1,87 @@
-Arootinstall is an installer command which is an Installer to install the Aos kernel 
+Arootinstall
+============
 
+Arootinstall is the AOS live-system installer. It is exposed through the native
+MUI Install AOS application and through the `arootinstall` command. Both front
+ends use the same kernel installer transaction and report the same progress.
 
+Availability
+------------
 
-This can install Your OS 
+- Installation is available from live media only.
+- The live ISO must contain both installer boot payload modules.
+- The selected target must be a writable hardware block device of at least
+  32 MiB.
+- Installed systems reject a second installer run.
 
-Fix if Aos is booted in Recovvery mode you can selct recovery option 
+MUI
+---
 
+Open Activities, then select Install AOS. The wizard covers the eleven sections
+defined in `Installations_Options`: account, partitioning, language, region,
+timezone, Wi-Fi profile, driver scan, applications, keyboard, hostname, and
+final review.
 
+Text mode
+---------
 
-  
+Run the interactive installer:
+
+    arootinstall
+
+Useful non-interactive commands:
+
+    arootinstall --status
+    arootinstall --dry-run
+    arootinstall --install-defaults --target 0 --password 'StrongPass1' --confirm AOS
+    arootinstall --install-defaults --target 0 --password 'StrongPass1' \
+        --username explorer --standard --autologin --confirm AOS
+
+`Arootinstall` and `install-aos` are aliases. Unattended installation requires
+`--install-defaults`, a password of at least eight characters, and the exact
+`--confirm AOS` argument. `--standard` creates a non-administrator account;
+the default is administrator. `--autologin` skips the password screen after
+boot. Replace the example password before using these commands.
+
+Disk layout and boot
+--------------------
+
+Automatic mode erases the selected disk and creates:
+
+- a 16 MiB FAT boot partition beginning at 1 MiB;
+- an AOSFS system partition beginning at 17 MiB and using the remaining space;
+- GRUB boot support for legacy BIOS and x86_64 UEFI.
+
+Manual mode opens or directs the user to the `partition` command. The installer
+does not erase a disk from manual mode until a FAT boot plus AOSFS root layout
+can be validated; unsupported manual layouts are rejected instead of guessed.
+
+Safety and completion
+---------------------
+
+The final review names the target disk and requires the user to type `AOS`.
+Cancellation is accepted only before disk modification starts. The transaction
+writes the boot payload, formats AOSFS, writes account and system settings,
+installs GRUB, creates `logs/install.log`, and verifies the MBR, FAT boot sector,
+AOSFS superblock, and completion marker. The completion marker is written last.
+
+Remove the live media before rebooting into the installed system.
+
+First boot and accounts
+-----------------------
+
+Installed systems start at the native MUI sign-in screen unless autologin was
+selected. Passwords are stored as salted PBKDF2-HMAC-SHA256 records with 12,000
+iterations; plaintext passwords are never written to disk. Existing legacy
+`$aos$` records remain readable for migration, but new installations never
+create them.
+
+Use the top-bar power menu to sign out, or press Ctrl+Alt+L. Signing out stops
+the account's child processes and returns the desktop manager to the restricted
+login identity.
+
+Administrator accounts may use `sudo COMMAND` and must enter their password.
+Standard accounts cannot use sudo. Installed user processes can write under
+`/main`, `/tmp`, and their trash area; protected system paths require sudo.
+
+See `docs/session-manager.md` for the kernel/MUI session contract.

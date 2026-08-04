@@ -76,9 +76,18 @@ This is where syscall code lives after the feature split.
   - partition manager syscalls
   - block-device info
   - memory/uptime/display/time/user info
+  - sudo authentication and session management
   - PCI/driver/netdev/firmware/wifi info
   - raw netdev send/recv
   - shutdown/restart
+
+### Session syscall
+
+`AOS_SYS_SESSION` (`563`) uses the versioned structures in
+`include/aos_session.h`. Its actions are query, login, autologin, and logout.
+Only PID 1 may change the desktop session; other processes may query status.
+Installed systems begin with UID/GID 65534 and enter the configured user
+session as UID/GID 1000 only after successful authentication.
 
 ## Rule
 

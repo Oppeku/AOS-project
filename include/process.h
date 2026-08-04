@@ -23,6 +23,7 @@ typedef enum {
     PROCESS_STATUS_RUNNING,
     PROCESS_STATUS_WAITING,
     PROCESS_STATUS_ZOMBIE,
+    PROCESS_STATUS_PAUSED,
 } process_status_t;
 
 typedef struct {
@@ -43,6 +44,7 @@ typedef struct {
     uint64_t brk_mapped_end;
     uint64_t mmap_next;
     uint64_t clear_child_tid;
+    uint64_t cpu_ticks;
     uint32_t uid;
     uint32_t gid;
     uint32_t euid;
@@ -50,6 +52,10 @@ typedef struct {
     char username[PROCESS_USERNAME_MAX];
     char home[PROCESS_CWD_MAX];
     char command[PROCESS_COMMAND_MAX];
+    uint64_t thermal_delay_events;
+    uint8_t thermal_throttled;
+    uint8_t thermal_skip_phase;
+    uint8_t reserved_process[6];
 } process_t;
 
 extern process_t process_list[MAX_PROCESSES];
@@ -72,5 +78,10 @@ const char* process_get_username(void);
 const char* process_get_home(void);
 int process_is_root(void);
 void process_become_root(void);
+void process_set_identity(uint32_t uid, uint32_t gid,
+                          const char* username, const char* home);
+void process_update_thermal_policy(int emergency_active);
+void process_thermal_gate_current(void);
+uint32_t process_thermal_throttled_count(void);
 
 #endif

@@ -14,11 +14,13 @@
 #define PROCESS_STATUS_RUNNING 2
 #define PROCESS_STATUS_WAITING 3
 #define PROCESS_STATUS_ZOMBIE 4
+#define PROCESS_STATUS_PAUSED 5
 
 struct aos_process_info_user {
     uint8_t valid;
     uint8_t status;
-    uint16_t reserved;
+    uint8_t thermal_throttled;
+    uint8_t reserved;
     uint32_t pid;
     uint32_t parent_pid;
     uint32_t uid;
@@ -29,6 +31,7 @@ struct aos_process_info_user {
     char username[32];
     char command[64];
     char cwd[256];
+    uint64_t cpu_ticks;
 } __attribute__((packed));
 
 static struct aos_process_info_user proc;
@@ -101,6 +104,8 @@ static const char* status_name(uint8_t status) {
             return "wait";
         case PROCESS_STATUS_ZOMBIE:
             return "zombie";
+        case PROCESS_STATUS_PAUSED:
+            return "pause";
         default:
             return "unknown";
     }
@@ -113,7 +118,7 @@ static const char* fallback_empty(const char* s, const char* fallback) {
 void aos_main(void) {
     uint64_t shown = 0;
 
-    write_cstr(" PID  PPID  UID  EUID  STATE   USER      COMMAND\n");
+    write_cstr(" PID  PPID  UID  EUID  STATE   THERMAL  TICKS  USER      COMMAND\n");
 
     for (uint64_t i = 0; i < MAX_PROCESSES; i++) {
         long rc = syscall3(AOS_SYS_PROCESS_INFO, (long)i, (long)&proc, 0);
@@ -131,6 +136,10 @@ void aos_main(void) {
         write_cstr(status_name(proc.status));
         write_spaces(proc.status == PROCESS_STATUS_ZOMBIE ? 2 : 7 - cstrlen(status_name(proc.status)));
         write_cstr(" ");
+        write_cstr(proc.thermal_throttled ? "limited" : "normal ");
+        write_cstr("  ");
+        write_u64_width(proc.cpu_ticks, 5);
+        write_cstr("  ");
         write_cstr(fallback_empty(proc.username, "-"));
         write_cstr("      ");
         write_cstr(fallback_empty(proc.command, "-"));

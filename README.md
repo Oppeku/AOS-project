@@ -31,7 +31,7 @@ Right now AOS can:
 - boot into its own kernel
 - start an interactive shell
 - run custom userspace programs
-- run BusyBox
+- run Asheel, the AOS-native command box
 - run some GNU coreutils
 - load ELF64 userspace binaries
 - use a Linux-style syscall path
@@ -44,7 +44,8 @@ Right now AOS can:
 - show uptime
 - show uname and uname -a
 - show user identity with whoami and id
-- use a small sudo command for now
+- use password-authenticated sudo for installed administrator accounts
+- use native MUI login, autologin, sign-out, and standard-user sessions
 - use shutdown, restart and reboot commands
 - show PCI devices with lspci
 - show drivers with driver and drivers
@@ -65,16 +66,15 @@ Right now AOS can:
 This means AOS already has a real booting system, real files, real commands and real networking.
 
 
-3. Downloadable items
+3. Applications and downloadable packages
 
-In future AOS will have a list of downloadable items.
+AOS now has two cooperating package tools:
+- `acur` reads the network package catalog, downloads files, and verifies SHA-256
+- `uni` inspects, installs, lists, launches, and removes local application packages
 
-The idea:
-- packages.txt will contain package/download entries
-- command line can download them
-- later the MUI download app can show them nicely
-
-We already started this.
+MUI Files can install a supported package from Downloads. MUI Software reads the
+same persistent Uni database and provides Open, Remove, Refresh, filtering, and a
+shortcut back to Downloads.
 
 Current download commands:
 
@@ -87,16 +87,23 @@ acur info testing_file
 acur install testing_file
 acur installed
 acur remove testing_file
+uni inspect /main/Downloads/application.deb
+uni install /main/Downloads/application.deb
+uni list
+uni run application
+uni remove application
 ```
 
-This is HTTP only for now.
-HTTPS/TLS will come later because that is a much bigger system.
+The Acur catalog transport is HTTP only for now. Verified archives are kept in
+`/main/Downloads`, and Uni installs applications under `/main/Applications`.
+Uni's installed database is `/main/Applications/installed.db`, so Acur, MUI,
+and the terminal all see one package state.
 
-Live mode download rule:
-- downloads are stored in `/tmp`
-- `/tmp` is tmpfs, so it is RAM storage
-- rebooting the live system clears downloaded files
-- this keeps root, `/main`, and installed disks safe until AOS has a real installer mode
+Supported local containers are `.deb`, `.ainstall`, and `.AppImage`. Debian
+members may use uncompressed tar, gzip, or XZ. This does not mean arbitrary
+Linux applications run yet: AOS-native ELF64 programs work, while dynamically
+linked Linux applications still need a Linux ABI/runtime and MUI integration.
+See `docs/uni.md` for the exact compatibility boundary.
 
 
 4. What is MUI?
@@ -109,7 +116,7 @@ I just wanted a cooler AOS name for it.
 The name is inspired from Dragon Ball.
 Thank you Akira Toriyama.
 
-MUI will be the AOS-native interface system.
+MUI is the AOS-native interface system.
 
 The plan:
 - desktop
@@ -123,37 +130,28 @@ The plan:
 - widgets
 - smooth graphics
 
-Right now MUI is not complete.
-We have started graphics/input foundations, but the full interface comes later.
+MUI now provides the native desktop, launcher, dock, windows, Files, Settings,
+Terminal, Text Editor, System Monitor, Calculator, installer, and installed
+system sign-in screen. Hardware acceleration and broader hardware coverage can
+still be improved.
 
 
-5. Packages lists
-
-The future package list should live in:
+5. Package catalog
 
 ```txt
 pakages/pakages.txt
 ```
-
-Yeah the spelling is funny right now, but we can keep it AOS style or fix it later.
-
-Package system goal:
-- read package list
-- show available downloads
-- download selected items
-- install apps only with proper permission later
-- protect root/system files with sudo once full users exist
 
 Current package name style:
 - package lines use `URL --name`
 - examples: `http://pakage.oppeku.org/testing.txt --testing_file`
 - packages can optionally add `--sha256 HEX`
 - checksum example: `http://host/file --my_file --sha256 64_hex_chars`
-- in live mode `acur install testing_file` installs it into `/tmp/testing_file`
-- if a SHA-256 is present, `acur` verifies it before recording the package as installed
-- `acur installed` reads `/tmp/acur-installed.txt`
-- `acur remove testing_file` deletes the live RAM copy and updates that list
-- failed `acur` downloads clean up partial `/tmp` files so live mode does not get messy
+- `acur fetch NAME` verifies and saves the package without installing it
+- `acur install NAME` verifies the archive and delegates installation to Uni
+- `acur installed` and `acur remove NAME` delegate to Uni
+- failed downloads remove partial files
+- a verified package rejected by Uni remains in Downloads for inspection
 
 
 6. Efficiency
@@ -169,8 +167,9 @@ The goal is:
 - fast networking
 
 Current measured boot environment:
-- QEMU test RAM: 128 MiB
-- memory before shell: about 63 MiB used, 66 MiB free
+- QEMU test RAM: 256 MiB
+- MUI desktop after boot: about 92.5 MiB used
+- most measured use is the kernel plus the approximately 71 MiB initrd/module set
 
 This can still be optimized a lot.
 The target is to make AOS feel instant.
@@ -189,16 +188,31 @@ The AOS plan:
 
 ```txt
 /        = AOSFS root
-/boot    = boot/kernel files inside root
+/bootloader = bootloader configuration inside root
 /kernel  = kernel files
-/drivers = driver files
-/commands = commands
-/mui     = Mastered User Interface files
+/drivers = video, keyboard, mouse, controller, and device drivers
+/commands = native commands, including vash
+/networking-stack = network drivers, commands, NetShell, and saved Wi-Fi data
+/Bluetooth = Bluetooth system data
 /tmp     = temporary files
-/main    = user area later
+/main    = user data, with Desktop, Music, Photos, Video, and MUI folders
 ```
 
-Partition manager work has started, but full installer partitioning comes later.
+The current live/development disk keeps `/main` in the persistent AOSFS root as
+a compatibility fallback. A separately provisioned Main partition will use ext4;
+the bundled ext4 image is prepared with the same directory hierarchy.
+
+The live system now includes Arootinstall. Its automatic layout creates a FAT
+boot partition and an AOSFS system partition, then installs GRUB for legacy BIOS
+and x86_64 UEFI. Run `arootinstall` in text mode or open Install AOS in MUI; see
+`Arootinstall/docs` for the destructive-install safeguards and command options.
+
+Installed systems use a kernel-owned session manager. A password screen appears
+before the desktop unless autologin was selected during installation. New
+passwords use salted PBKDF2-HMAC-SHA256 records, administrator accounts can
+authenticate through `sudo`, and standard accounts are denied elevation.
+Sign out from the MUI power menu or with Ctrl+Alt+L. The detailed contract is in
+`docs/session-manager.md`.
 
 Recovery workflow:
 - normal root is `Root (AOSFS)`

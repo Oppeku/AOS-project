@@ -9,8 +9,12 @@
 #define SYS_CLOSE 3
 #define SYS_SOCKET 41
 #define SYS_CONNECT 42
+#define SYS_FORK 57
+#define SYS_EXECVE 59
 #define SYS_EXIT 60
+#define SYS_WAIT4 61
 #define SYS_OPENAT 257
+#define SYS_MKDIRAT 258
 #define SYS_UNLINKAT 263
 #define AOS_SYS_DNS_LOOKUP 534
 #define AOS_SYS_SOCKET_BIND_NETDEV 538
@@ -50,22 +54,19 @@ struct sha256_ctx {
 };
 
 static char db[4096];
-static char installed_db[4096];
 static char req[512];
 static char rx[512];
 static char header[1024];
 static char parsed_path[256];
 static char num_buf[21];
 static char live_outfile[160];
-static char remove_path[160];
-static char installed_path[160];
 static char current_host_buf[128];
 static char current_path_buf[256];
 static char redirect_host_buf[128];
 static char redirect_path_buf[256];
 static char digest_hex[65];
 
-static const char installed_db_path[] = "/tmp/acur-installed.txt";
+static const char download_dir[] = "/main/Downloads";
 
 static const uint32_t sha256_k[64] = {
     0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U,
@@ -343,6 +344,14 @@ static int starts_with(const char* s, const char* prefix) {
     return 1;
 }
 
+static int ends_with(const char* value, const char* suffix) {
+    uint64_t value_len = cstrlen(value);
+    uint64_t suffix_len = cstrlen(suffix);
+
+    if (suffix_len > value_len) return 0;
+    return streq(value + value_len - suffix_len, suffix);
+}
+
 static int contains_text(const char* text, const char* needle) {
     if (!text || !needle || !needle[0]) return 1;
     for (uint64_t i = 0; text[i]; i++) {
@@ -387,194 +396,77 @@ static int hex_digest_matches(const char* a, const char* b) {
     return a[64] == 0 && b[64] == 0;
 }
 
-static const char* live_download_path(const char* requested) {
+static const char* package_suffix(const char* path) {
+    if (ends_with(path, ".deb")) return ".deb";
+    if (ends_with(path, ".ainstall")) return ".ainstall";
+    if (ends_with(path, ".AppImage")) return ".AppImage";
+    if (ends_with(path, ".appimage")) return ".appimage";
+    return (const char*)0;
+}
+
+static void ensure_download_dir(void) {
+    syscall3(SYS_MKDIRAT, AT_FDCWD, (long)"/main", 0755);
+    syscall3(SYS_MKDIRAT, AT_FDCWD, (long)download_dir, 0755);
+}
+
+static const char* live_download_path(const char* requested,
+                                      const char* source_path) {
     const char* leaf = requested;
+    const char* suffix;
     uint64_t n = 0;
 
-    if (!requested || !requested[0]) return "/tmp/aos-download";
-    if (starts_with(requested, "/tmp/") || starts_with(requested, "tmp/")) return requested;
+    ensure_download_dir();
+    if (!requested || !requested[0]) requested = "aos-download";
 
     for (uint64_t i = 0; requested[i]; i++) {
         if (requested[i] == '/') leaf = &requested[i + 1];
     }
     if (!leaf[0]) leaf = "aos-download";
 
-    n = append(live_outfile, n, sizeof(live_outfile), "/tmp/");
+    n = append(live_outfile, n, sizeof(live_outfile), download_dir);
+    n = append(live_outfile, n, sizeof(live_outfile), "/");
     n = append(live_outfile, n, sizeof(live_outfile), leaf);
-    if (n <= 5) return "/tmp/aos-download";
+    suffix = package_suffix(leaf);
+    if (!suffix && source_path) {
+        suffix = package_suffix(source_path);
+        if (suffix) n = append(live_outfile, n, sizeof(live_outfile), suffix);
+    }
+    if (n <= cstrlen(download_dir) + 1) {
+        return "/main/Downloads/aos-download";
+    }
     return live_outfile;
 }
 
-static const char* live_package_path(const char* name) {
-    uint64_t n = 0;
-    n = append(remove_path, n, sizeof(remove_path), "/tmp/");
-    n = append(remove_path, n, sizeof(remove_path), name);
-    if (n <= 5) return "/tmp/aos-download";
-    return remove_path;
-}
+static int run_uni(const char* action, const char* argument) {
+    char* argv[4];
+    int status = 0;
+    long pid;
+    long waited;
 
-static int load_installed_db(void) {
-    int fd = (int)syscall4(SYS_OPENAT, AT_FDCWD, (long)installed_db_path, O_RDONLY, 0);
-    long total = 0;
-    long rc;
+    argv[0] = (char*)"uni";
+    argv[1] = (char*)action;
+    argv[2] = (char*)argument;
+    argv[3] = (char*)0;
+    if (!argument) argv[2] = (char*)0;
 
-    installed_db[0] = 0;
-    if (fd < 0) return 0;
-
-    while (total + 1 < (long)sizeof(installed_db)) {
-        rc = syscall3(SYS_READ,
-                      fd,
-                      (long)(installed_db + total),
-                      (long)(sizeof(installed_db) - 1 - (uint64_t)total));
-        if (rc < 0) {
-            syscall3(SYS_CLOSE, fd, 0, 0);
-            installed_db[0] = 0;
-            return -1;
-        }
-        if (rc == 0) break;
-        total += rc;
-    }
-    syscall3(SYS_CLOSE, fd, 0, 0);
-    installed_db[total] = 0;
-    return 0;
-}
-
-static int installed_line_name_matches(const char* line, const char* name) {
-    uint64_t i = 0;
-    while (name[i]) {
-        if (line[i] != name[i]) return 0;
-        i++;
-    }
-    return line[i] == ' ' || line[i] == '\t' || line[i] == 0 || line[i] == '\n' || line[i] == '\r';
-}
-
-static int rewrite_installed_db_without(const char* name) {
-    char next_db[4096];
-    uint64_t in = 0;
-    uint64_t out = 0;
-    int removed = 0;
-    int fd;
-
-    if (load_installed_db() != 0) return -1;
-
-    while (installed_db[in]) {
-        uint64_t start = in;
-        uint64_t end;
-        while (installed_db[in] && installed_db[in] != '\n' && installed_db[in] != '\r') in++;
-        end = in;
-        while (installed_db[in] == '\n' || installed_db[in] == '\r') in++;
-
-        if (installed_line_name_matches(&installed_db[start], name)) {
-            removed = 1;
-            continue;
-        }
-
-        for (uint64_t i = start; i < end && out + 2 < sizeof(next_db); i++) {
-            next_db[out++] = installed_db[i];
-        }
-        if (out + 2 < sizeof(next_db)) next_db[out++] = '\n';
-    }
-    next_db[out] = 0;
-
-    fd = (int)syscall4(SYS_OPENAT,
-                       AT_FDCWD,
-                       (long)installed_db_path,
-                       O_WRONLY | O_CREAT | O_TRUNC,
-                       0);
-    if (fd < 0) return -1;
-    write_buf_fd(fd, next_db, out);
-    syscall3(SYS_CLOSE, fd, 0, 0);
-    return removed;
-}
-
-static int copy_installed_path_from_line(const char* line, const char* name, char* out, uint64_t cap) {
-    uint64_t i = 0;
-    uint64_t out_i = 0;
-
-    if (!installed_line_name_matches(line, name)) return 0;
-    while (name[i] && line[i]) i++;
-    while (line[i] == ' ' || line[i] == '\t') i++;
-    if (!line[i] || line[i] == '\n' || line[i] == '\r') return 0;
-
-    while (line[i] && line[i] != '\n' && line[i] != '\r' && line[i] != ' ' && line[i] != '\t') {
-        if (out_i + 1 >= cap) return 0;
-        out[out_i++] = line[i++];
-    }
-    out[out_i] = 0;
-    return out_i > 0;
-}
-
-static int find_installed_package_path(const char* name, char* out, uint64_t cap) {
-    uint64_t in = 0;
-
-    if (load_installed_db() != 0) return -1;
-    while (installed_db[in]) {
-        uint64_t start = in;
-        while (installed_db[in] && installed_db[in] != '\n' && installed_db[in] != '\r') in++;
-        if (copy_installed_path_from_line(&installed_db[start], name, out, cap)) return 0;
-        while (installed_db[in] == '\n' || installed_db[in] == '\r') in++;
-    }
-    return -1;
-}
-
-static int record_installed_package(const char* name, const char* path) {
-    int fd;
-    uint64_t len = 0;
-
-    if (rewrite_installed_db_without(name) < 0) return -1;
-    if (load_installed_db() != 0) return -1;
-    while (installed_db[len]) len++;
-
-    fd = (int)syscall4(SYS_OPENAT,
-                       AT_FDCWD,
-                       (long)installed_db_path,
-                       O_WRONLY | O_CREAT | O_TRUNC,
-                       0);
-    if (fd < 0) return -1;
-
-    if (len) write_buf_fd(fd, installed_db, len);
-    write_buf_fd(fd, name, cstrlen(name));
-    write_buf_fd(fd, " ", 1);
-    write_buf_fd(fd, path, cstrlen(path));
-    write_buf_fd(fd, "\n", 1);
-    syscall3(SYS_CLOSE, fd, 0, 0);
-    return 0;
-}
-
-static void list_installed_packages(void) {
-    if (load_installed_db() != 0 || !installed_db[0]) {
-        write_cstr("installed packages:\n");
-        write_cstr("(none)\n");
-        return;
-    }
-    write_cstr("installed packages:\n");
-    write_cstr(installed_db);
-    if (installed_db[cstrlen(installed_db) - 1] != '\n') write_cstr("\n");
-}
-
-static int remove_installed_package(const char* name) {
-    const char* path = live_package_path(name);
-    int have_installed_path = find_installed_package_path(name, installed_path, sizeof(installed_path)) == 0;
-    int removed_record;
-    long rc;
-
-    if (have_installed_path) {
-        path = installed_path;
-    }
-    removed_record = rewrite_installed_db_without(name);
-    rc = syscall3(SYS_UNLINKAT, AT_FDCWD, (long)path, 0);
-
-    if (rc < 0 && removed_record <= 0) {
-        write_cstr("acur: package is not installed: ");
-        write_cstr(name);
-        write_cstr("\n");
+    pid = syscall3(SYS_FORK, 0, 0, 0);
+    if (pid < 0) {
+        write_cstr("acur: could not start Uni\n");
         return -1;
     }
+    if (pid == 0) {
+        syscall3(SYS_EXECVE, (long)"/uni", (long)argv, 0);
+        syscall3(SYS_EXECVE, (long)"/uni.elf", (long)argv, 0);
+        write_cstr("acur: Uni executable is unavailable\n");
+        exit_code(127);
+    }
 
-    write_cstr("removed ");
-    write_cstr(name);
-    write_cstr(" from live mode\n");
-    return 0;
+    waited = syscall4(SYS_WAIT4, pid, (long)&status, 0, 0);
+    if (waited != pid) {
+        write_cstr("acur: waiting for Uni failed\n");
+        return -1;
+    }
+    return ((status >> 8) & 0xff) == 0 ? 0 : -1;
 }
 
 static void cleanup_failed_fetch(int sock_fd, int out_fd, const char* outfile) {
@@ -845,8 +737,8 @@ static int next_line(uint64_t* pos, char** line) {
 
 static void print_entry(const struct package_entry* entry) {
     write_cstr(entry->name);
-    write_cstr(" -> /tmp/");
-    write_cstr(entry->name);
+    write_cstr(" -> ");
+    write_cstr(live_download_path(entry->outfile, entry->path));
     write_cstr("\n    http://");
     write_cstr(entry->host);
     write_cstr(entry->path);
@@ -919,8 +811,8 @@ static void info_entry(const struct package_entry* entry) {
     write_cstr(entry->host);
     write_cstr("\npath: ");
     write_cstr(entry->path);
-    write_cstr("\nout:  /tmp/");
-    write_cstr(entry->name);
+    write_cstr("\nout:  ");
+    write_cstr(live_download_path(entry->outfile, entry->path));
     write_cstr("\nsha256: ");
     write_cstr(entry->sha256_hex ? entry->sha256_hex : "(none)");
     write_cstr("\n");
@@ -934,7 +826,7 @@ static int fetch_entry(const struct package_entry* entry, uint64_t iface_index, 
     uint64_t req_len;
     uint64_t header_len = 0;
     uint64_t saved = 0;
-    const char* outfile = live_download_path(entry->outfile);
+    const char* outfile = live_download_path(entry->outfile, entry->path);
     int body_started = 0;
     int first_arg_is_ip;
     uint64_t redirects = 0;
@@ -943,7 +835,7 @@ static int fetch_entry(const struct package_entry* entry, uint64_t iface_index, 
     long rc;
 
     if (install_mode) {
-        write_cstr("installing ");
+        write_cstr("downloading ");
         write_cstr(entry->name);
         write_cstr("...\n");
     }
@@ -1125,18 +1017,23 @@ retry_request:
     }
 
     if (install_mode) {
-        if (record_installed_package(entry->name, outfile) != 0) {
-            write_cstr("acur: install database update failed\n");
-            syscall3(SYS_UNLINKAT, AT_FDCWD, (long)outfile, 0);
-            return -1;
-        }
-        write_cstr("installed ");
+        write_cstr("acur: downloaded ");
         write_cstr(entry->name);
-        write_cstr(" to ");
+        write_cstr(" -> ");
         write_cstr(outfile);
         write_cstr(" (");
         write_u64(saved);
         write_cstr(" bytes)\n");
+        write_cstr("acur: installing with Uni\n");
+        if (run_uni("install", outfile) != 0) {
+            write_cstr("acur: Uni rejected the package; verified archive kept at ");
+            write_cstr(outfile);
+            write_cstr("\n");
+            return -1;
+        }
+        write_cstr("acur: installed ");
+        write_cstr(entry->name);
+        write_cstr("\n");
     } else {
         write_cstr("acur: fetched ");
         write_cstr(entry->name);
@@ -1152,7 +1049,7 @@ retry_request:
 static void usage(void) {
     write_cstr("usage: acur list | acur search TEXT | acur installed | acur info NAME | acur fetch NAME | acur install NAME | acur remove NAME | acur sha256 TEXT [--iface N]\n");
     write_cstr("package format: http://host/path --name [--sha256 HEX]\n");
-    write_cstr("live mode: installed packages are saved in /tmp only\n");
+    write_cstr("verified downloads are saved in /main/Downloads; Uni manages installed applications\n");
 }
 
 static void print_sha256_text(const char* text) {
@@ -1191,8 +1088,7 @@ void aos_main(uint64_t argc, char** argv) {
     }
 
     if (argc == 2 && streq(argv[1], "installed")) {
-        list_installed_packages();
-        exit_code(0);
+        exit_code(run_uni("list", (const char*)0) == 0 ? 0 : 1);
     }
 
     if (argc == 2 && (streq(argv[1], "-h") || streq(argv[1], "--help"))) {
@@ -1217,7 +1113,7 @@ void aos_main(uint64_t argc, char** argv) {
     }
 
     if (streq(argv[1], "remove")) {
-        exit_code(remove_installed_package(argv[2]) == 0 ? 0 : 1);
+        exit_code(run_uni("remove", argv[2]) == 0 ? 0 : 1);
     }
 
     if (load_db() != 0) {

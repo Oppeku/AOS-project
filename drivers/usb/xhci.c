@@ -3,6 +3,8 @@
  */
 
 #include <driver.h>
+#include <bluetooth.h>
+#include <gfx.h>
 #include <input.h>
 #include <pci.h>
 #include <pmm.h>
@@ -56,8 +58,10 @@ extern uint64_t p4_table[];
 #define XHCI_TRB_LINK_TOGGLE_CYCLE (1U << 1)
 #define XHCI_TRB_TYPE_SHIFT 10
 #define XHCI_TRB_SETUP_TRT_NO_DATA (0U << 16)
+#define XHCI_TRB_SETUP_TRT_OUT_DATA (2U << 16)
 #define XHCI_TRB_SETUP_TRT_IN_DATA (3U << 16)
 #define XHCI_COMPLETION_SUCCESS 1U
+#define XHCI_COMPLETION_SHORT_PACKET 13U
 #define XHCI_HCCPARAMS1_CSZ (1U << 2)
 #define XHCI_SLOT_CTX_ENTRIES_SHIFT 27
 #define XHCI_SLOT_CTX_SPEED_SHIFT 20
@@ -69,6 +73,10 @@ extern uint64_t p4_table[];
 #define XHCI_EP_CTX_INTERVAL_SHIFT 16
 #define XHCI_EP_CTX_MAX_PACKET_SHIFT 16
 #define XHCI_ADDRESS_DEVICE_BSR (1U << 9)
+#define XHCI_INTERRUPT_OWNER_NONE 0
+#define XHCI_INTERRUPT_OWNER_KEYBOARD 1
+#define XHCI_INTERRUPT_OWNER_BLUETOOTH 2
+#define XHCI_INTERRUPT_OWNER_MOUSE 3
 static volatile uint8_t* g_xhci_mmio;
 
 struct xhci_trb {
@@ -106,6 +114,7 @@ static uint8_t g_first_connected_speed;
 static uint8_t g_interrupt_in_endpoint;
 static uint16_t g_interrupt_in_max_packet;
 static uint8_t g_interrupt_in_interval;
+static uint8_t g_interrupt_in_owner;
 static struct xhci_trb* g_interrupt_in_ring;
 static uint8_t g_interrupt_in_cycle;
 static uint32_t g_interrupt_in_enqueue;
@@ -114,6 +123,18 @@ static uint32_t g_keyboard_slot_id;
 static uint8_t* g_keyboard_report;
 static uint64_t g_keyboard_pending_trb;
 static uint8_t g_keyboard_last_keys[6];
+static uint32_t g_mouse_slot_id;
+static uint8_t* g_mouse_report;
+static uint64_t g_mouse_pending_trb;
+static int32_t g_mouse_x = 512;
+static int32_t g_mouse_y = 384;
+static uint32_t g_mouse_buttons;
+static uint32_t g_bluetooth_slot_id;
+static uint8_t g_bluetooth_interface_number;
+static uint8_t* g_bluetooth_command_buffer;
+static uint8_t* g_bluetooth_event_buffer;
+static uint16_t g_bluetooth_event_buffer_len;
+static uint64_t g_bluetooth_pending_trb;
 
 struct xhci_command_result {
     uint32_t completion_code;
@@ -166,6 +187,14 @@ static void local_memset(void* dst, int value, uint64_t n) {
     uint8_t* d = (uint8_t*)dst;
     while (n--) {
         *d++ = (uint8_t)value;
+    }
+}
+
+static void local_memcpy(void* dst, const void* src, uint64_t n) {
+    uint8_t* d = (uint8_t*)dst;
+    const uint8_t* s = (const uint8_t*)src;
+    while (n--) {
+        *d++ = *s++;
     }
 }
 
@@ -727,6 +756,72 @@ static int xhci_control_set_configuration(uint32_t slot_id, uint8_t configuratio
     return 0;
 }
 
+static int xhci_control_class_out(uint32_t slot_id, uint8_t request, uint16_t value,
+                                  uint16_t index, const uint8_t* payload, uint16_t length) {
+    struct xhci_trb* setup;
+    struct xhci_trb* data;
+    struct xhci_trb* status;
+    struct xhci_transfer_result result;
+    uint64_t status_phys;
+    uint64_t data_phys = (uint64_t)payload;
+
+    if (!g_ep0_ring || slot_id == 0 || !payload || length == 0) {
+        return -1;
+    }
+
+    setup = xhci_next_ep0_trb();
+    setup->parameter_lo = 0x00000020U |
+        ((uint32_t)request << 8) |
+        ((uint32_t)value << 16);
+    setup->parameter_hi = ((uint32_t)index) | ((uint32_t)length << 16);
+    setup->status = 8;
+    setup->control = g_ep0_cycle |
+        XHCI_TRB_IDT |
+        XHCI_TRB_SETUP_TRT_OUT_DATA |
+        (XHCI_TRB_TYPE_SETUP_STAGE << XHCI_TRB_TYPE_SHIFT);
+
+    data = xhci_next_ep0_trb();
+    data->parameter_lo = (uint32_t)(data_phys & 0xFFFFFFFFU);
+    data->parameter_hi = (uint32_t)(data_phys >> 32);
+    data->status = length;
+    data->control = g_ep0_cycle |
+        (XHCI_TRB_TYPE_DATA_STAGE << XHCI_TRB_TYPE_SHIFT);
+
+    status = xhci_next_ep0_trb();
+    status_phys = (uint64_t)status;
+    status->parameter_lo = 0;
+    status->parameter_hi = 0;
+    status->status = 0;
+    status->control = g_ep0_cycle |
+        XHCI_TRB_IOC |
+        XHCI_TRB_STATUS_DIR_IN |
+        (XHCI_TRB_TYPE_STATUS_STAGE << XHCI_TRB_TYPE_SHIFT);
+
+    serial_print("xhci: control CLASS OUT request=0x");
+    serial_print_hex8(request);
+    serial_print(" index=0x");
+    serial_print_hex16(index);
+    serial_print(" len=0x");
+    serial_print_hex16(length);
+    serial_print(" slot=0x");
+    serial_print_hex8((uint8_t)slot_id);
+    serial_print("\n");
+    xhci_ring_doorbell(slot_id, 1);
+
+    if (xhci_wait_transfer_event(status_phys, &result) < 0) {
+        serial_print("xhci: class out timeout\n");
+        return -1;
+    }
+    if (result.completion_code != XHCI_COMPLETION_SUCCESS) {
+        serial_print("xhci: class out failed cc=0x");
+        serial_print_hex8((uint8_t)result.completion_code);
+        serial_print("\n");
+        return -1;
+    }
+
+    return 0;
+}
+
 static int xhci_get_device_descriptor(uint32_t slot_id) {
     if (xhci_control_get_descriptor(slot_id, 1, 0, g_device_descriptor, 18) < 0) {
         return -1;
@@ -757,6 +852,10 @@ static int xhci_get_device_descriptor(uint32_t slot_id) {
 static void xhci_parse_config_descriptor(uint8_t* buffer, uint16_t total_length) {
     uint16_t off = 0;
     uint8_t interfaces;
+    uint8_t current_interface_number = 0;
+    uint8_t current_interface_class = 0;
+    uint8_t current_interface_subclass = 0;
+    uint8_t current_interface_protocol = 0;
 
     if (!buffer || total_length < 9) {
         return;
@@ -780,19 +879,33 @@ static void xhci_parse_config_descriptor(uint8_t* buffer, uint16_t total_length)
         }
 
         if (type == 4 && len >= 9) {
+            uint8_t interface_number = buffer[off + 2];
+            uint8_t endpoint_count = buffer[off + 4];
+            uint8_t interface_class = buffer[off + 5];
+            uint8_t interface_subclass = buffer[off + 6];
+            uint8_t interface_protocol = buffer[off + 7];
+
+            current_interface_number = interface_number;
+            current_interface_class = interface_class;
+            current_interface_subclass = interface_subclass;
+            current_interface_protocol = interface_protocol;
+
             serial_print("xhci: interface ");
-            serial_print_hex8(buffer[off + 2]);
+            serial_print_hex8(interface_number);
             serial_print(" alt=0x");
             serial_print_hex8(buffer[off + 3]);
             serial_print(" eps=0x");
-            serial_print_hex8(buffer[off + 4]);
+            serial_print_hex8(endpoint_count);
             serial_print(" class=0x");
-            serial_print_hex8(buffer[off + 5]);
+            serial_print_hex8(interface_class);
             serial_print(" subclass=0x");
-            serial_print_hex8(buffer[off + 6]);
+            serial_print_hex8(interface_subclass);
             serial_print(" protocol=0x");
-            serial_print_hex8(buffer[off + 7]);
+            serial_print_hex8(interface_protocol);
             serial_print("\n");
+            bluetooth_usb_interface_seen(interface_number, interface_class,
+                                         interface_subclass, interface_protocol,
+                                         endpoint_count);
         } else if (type == 5 && len >= 7) {
             uint8_t endpoint_addr = buffer[off + 2];
             uint8_t attrs = buffer[off + 3];
@@ -810,9 +923,35 @@ static void xhci_parse_config_descriptor(uint8_t* buffer, uint16_t total_length)
             serial_print("\n");
 
             if ((endpoint_addr & 0x80U) && ((attrs & 0x03U) == 0x03U) && g_interrupt_in_endpoint == 0) {
-                g_interrupt_in_endpoint = endpoint_addr;
-                g_interrupt_in_max_packet = max_packet;
-                g_interrupt_in_interval = interval;
+                if (current_interface_class == 0x03U &&
+                    current_interface_subclass == 0x01U &&
+                    current_interface_protocol == 0x01U) {
+                    g_interrupt_in_endpoint = endpoint_addr;
+                    g_interrupt_in_max_packet = max_packet;
+                    g_interrupt_in_interval = interval;
+                    g_interrupt_in_owner = XHCI_INTERRUPT_OWNER_KEYBOARD;
+                } else if (current_interface_class == 0x03U &&
+                           current_interface_subclass == 0x01U &&
+                           current_interface_protocol == 0x02U) {
+                    g_interrupt_in_endpoint = endpoint_addr;
+                    g_interrupt_in_max_packet = max_packet;
+                    g_interrupt_in_interval = interval;
+                    g_interrupt_in_owner = XHCI_INTERRUPT_OWNER_MOUSE;
+                } else if (current_interface_class == 0x03U) {
+                    g_interrupt_in_endpoint = endpoint_addr;
+                    g_interrupt_in_max_packet = max_packet;
+                    g_interrupt_in_interval = interval;
+                    g_interrupt_in_owner = XHCI_INTERRUPT_OWNER_MOUSE;
+                } else if (current_interface_class == 0xe0U &&
+                           current_interface_subclass == 0x01U &&
+                           current_interface_protocol == 0x01U) {
+                    g_interrupt_in_endpoint = endpoint_addr;
+                    g_interrupt_in_max_packet = max_packet;
+                    g_interrupt_in_interval = interval;
+                    g_interrupt_in_owner = XHCI_INTERRUPT_OWNER_BLUETOOTH;
+                    g_bluetooth_interface_number = current_interface_number;
+                    bluetooth_usb_event_endpoint_seen(endpoint_addr, max_packet, interval);
+                }
             }
         }
 
@@ -826,6 +965,8 @@ static int xhci_get_config_descriptor(uint32_t slot_id) {
     g_interrupt_in_endpoint = 0;
     g_interrupt_in_max_packet = 0;
     g_interrupt_in_interval = 0;
+    g_interrupt_in_owner = XHCI_INTERRUPT_OWNER_NONE;
+    g_bluetooth_interface_number = 0;
 
     if (xhci_control_get_descriptor(slot_id, 2, 0, g_config_descriptor, 9) < 0) {
         return -1;
@@ -862,16 +1003,779 @@ static struct xhci_trb* xhci_next_interrupt_in_trb(void) {
     struct xhci_trb* trb = &g_interrupt_in_ring[g_interrupt_in_enqueue];
     g_interrupt_in_enqueue++;
     if (g_interrupt_in_enqueue >= (XHCI_TRB_COUNT - 1)) {
+        g_interrupt_in_ring[XHCI_TRB_COUNT - 1].control =
+            g_interrupt_in_cycle |
+            XHCI_TRB_LINK_TOGGLE_CYCLE |
+            (XHCI_TRB_TYPE_LINK << XHCI_TRB_TYPE_SHIFT);
         g_interrupt_in_enqueue = 0;
         g_interrupt_in_cycle ^= 1;
     }
     return trb;
 }
 
+static int xhci_submit_bluetooth_event_transfer(void) {
+    struct xhci_trb* trb;
+    uint64_t event_phys;
+    uint32_t len;
+    uint8_t cycle;
+
+    if (!g_interrupt_in_ring || !g_bluetooth_event_buffer ||
+        g_bluetooth_slot_id == 0 || g_interrupt_in_dci == 0 ||
+        g_interrupt_in_owner != XHCI_INTERRUPT_OWNER_BLUETOOTH) {
+        return -1;
+    }
+    if (g_bluetooth_pending_trb != 0) {
+        return 0;
+    }
+
+    len = g_bluetooth_event_buffer_len;
+    if (len == 0) {
+        len = 16;
+    }
+
+    local_memset(g_bluetooth_event_buffer, 0, len);
+    event_phys = (uint64_t)g_bluetooth_event_buffer;
+    cycle = g_interrupt_in_cycle;
+    trb = xhci_next_interrupt_in_trb();
+    g_bluetooth_pending_trb = (uint64_t)trb;
+
+    trb->parameter_lo = (uint32_t)(event_phys & 0xFFFFFFFFU);
+    trb->parameter_hi = (uint32_t)(event_phys >> 32);
+    trb->status = len;
+    trb->control =
+        cycle |
+        XHCI_TRB_IOC |
+        (XHCI_TRB_TYPE_NORMAL << XHCI_TRB_TYPE_SHIFT);
+
+    xhci_ring_doorbell(g_bluetooth_slot_id, g_interrupt_in_dci);
+    return 0;
+}
+
+static int xhci_wait_bluetooth_command_complete(uint16_t expected_opcode, uint32_t* out_len) {
+    for (uint32_t tries = 0; tries < 1000000; tries++) {
+        struct xhci_trb* event = &g_event_ring[g_event_dequeue];
+        uint32_t type;
+        uint64_t event_trb_phys;
+        uint32_t completion;
+        uint32_t residue;
+        uint32_t endpoint_id;
+        uint32_t actual_len;
+        uint16_t opcode;
+
+        if ((event->control & XHCI_TRB_CYCLE) != g_event_cycle) {
+            continue;
+        }
+
+        type = (event->control >> XHCI_TRB_TYPE_SHIFT) & 0x3FU;
+        if (type != XHCI_TRB_TYPE_TRANSFER_EVENT) {
+            xhci_advance_event();
+            continue;
+        }
+
+        event_trb_phys = ((uint64_t)event->parameter_hi << 32) | event->parameter_lo;
+        completion = (event->status >> 24) & 0xFFU;
+        residue = event->status & 0x00FFFFFFU;
+        endpoint_id = (event->control >> 16) & 0x1FU;
+        xhci_advance_event();
+
+        if (event_trb_phys != g_bluetooth_pending_trb || endpoint_id != g_interrupt_in_dci) {
+            continue;
+        }
+
+        g_bluetooth_pending_trb = 0;
+        if (completion != XHCI_COMPLETION_SUCCESS) {
+            serial_print("xhci: bluetooth event transfer failed cc=0x");
+            serial_print_hex8((uint8_t)completion);
+            serial_print("\n");
+            return -1;
+        }
+
+        actual_len = g_bluetooth_event_buffer_len;
+        if (residue < actual_len) {
+            actual_len -= residue;
+        }
+        if (out_len) {
+            *out_len = actual_len;
+        }
+        if (actual_len < 6 ||
+            g_bluetooth_event_buffer[0] != 0x0eU ||
+            g_bluetooth_event_buffer[1] < 4U) {
+            serial_print("xhci: bluetooth unexpected HCI event\n");
+            return -1;
+        }
+
+        opcode = (uint16_t)g_bluetooth_event_buffer[3] |
+                 ((uint16_t)g_bluetooth_event_buffer[4] << 8);
+        if (opcode != expected_opcode) {
+            serial_print("xhci: bluetooth unexpected opcode=0x");
+            serial_print_hex16(opcode);
+            serial_print("\n");
+            return -1;
+        }
+        return 0;
+    }
+
+    serial_print("xhci: bluetooth command complete timeout\n");
+    return -1;
+}
+
+static int xhci_wait_bluetooth_event(uint32_t* out_len) {
+    for (uint32_t tries = 0; tries < 1000000; tries++) {
+        struct xhci_trb* event = &g_event_ring[g_event_dequeue];
+        uint32_t type;
+        uint64_t event_trb_phys;
+        uint32_t completion;
+        uint32_t residue;
+        uint32_t endpoint_id;
+        uint32_t actual_len;
+
+        if ((event->control & XHCI_TRB_CYCLE) != g_event_cycle) {
+            continue;
+        }
+
+        type = (event->control >> XHCI_TRB_TYPE_SHIFT) & 0x3FU;
+        if (type != XHCI_TRB_TYPE_TRANSFER_EVENT) {
+            xhci_advance_event();
+            continue;
+        }
+
+        event_trb_phys = ((uint64_t)event->parameter_hi << 32) | event->parameter_lo;
+        completion = (event->status >> 24) & 0xFFU;
+        residue = event->status & 0x00FFFFFFU;
+        endpoint_id = (event->control >> 16) & 0x1FU;
+        xhci_advance_event();
+
+        if (event_trb_phys != g_bluetooth_pending_trb || endpoint_id != g_interrupt_in_dci) {
+            continue;
+        }
+
+        g_bluetooth_pending_trb = 0;
+        if (completion != XHCI_COMPLETION_SUCCESS) {
+            serial_print("xhci: bluetooth event transfer failed cc=0x");
+            serial_print_hex8((uint8_t)completion);
+            serial_print("\n");
+            return -1;
+        }
+
+        actual_len = g_bluetooth_event_buffer_len;
+        if (residue < actual_len) {
+            actual_len -= residue;
+        }
+        if (out_len) {
+            *out_len = actual_len;
+        }
+        return 0;
+    }
+
+    return -1;
+}
+
+static int xhci_wait_bluetooth_command_status(uint16_t expected_opcode) {
+    uint32_t event_len = 0;
+    uint16_t opcode;
+    uint8_t status;
+
+    if (xhci_wait_bluetooth_event(&event_len) < 0) {
+        serial_print("xhci: bluetooth command status timeout\n");
+        return -1;
+    }
+    if (event_len < 6 || g_bluetooth_event_buffer[0] != 0x0fU || g_bluetooth_event_buffer[1] < 4U) {
+        serial_print("xhci: bluetooth expected command status event\n");
+        return -1;
+    }
+
+    status = g_bluetooth_event_buffer[2];
+    opcode = (uint16_t)g_bluetooth_event_buffer[4] |
+             ((uint16_t)g_bluetooth_event_buffer[5] << 8);
+    if (opcode != expected_opcode) {
+        serial_print("xhci: bluetooth unexpected status opcode=0x");
+        serial_print_hex16(opcode);
+        serial_print("\n");
+        return -1;
+    }
+    if (status != 0) {
+        serial_print("xhci: bluetooth command status failed=0x");
+        serial_print_hex8(status);
+        serial_print("\n");
+        return -1;
+    }
+    return 0;
+}
+
+static int xhci_bluetooth_send_hci_command(uint16_t opcode, const uint8_t* command,
+                                           uint16_t command_len, uint32_t* event_len) {
+    if (!g_bluetooth_command_buffer || !command || command_len == 0 || command_len > 256) {
+        return -1;
+    }
+
+    local_memset(g_bluetooth_command_buffer, 0, 256);
+    local_memcpy(g_bluetooth_command_buffer, command, command_len);
+    if (xhci_submit_bluetooth_event_transfer() < 0) {
+        return -1;
+    }
+    if (xhci_control_class_out(g_bluetooth_slot_id, 0, 0,
+                               g_bluetooth_interface_number,
+                               g_bluetooth_command_buffer, command_len) < 0) {
+        g_bluetooth_pending_trb = 0;
+        return -1;
+    }
+    return xhci_wait_bluetooth_command_complete(opcode, event_len);
+}
+
+static int xhci_bluetooth_send_hci_command_status(uint16_t opcode, const uint8_t* command,
+                                                  uint16_t command_len) {
+    if (!g_bluetooth_command_buffer || !command || command_len == 0 || command_len > 256) {
+        return -1;
+    }
+
+    local_memset(g_bluetooth_command_buffer, 0, 256);
+    local_memcpy(g_bluetooth_command_buffer, command, command_len);
+    if (xhci_submit_bluetooth_event_transfer() < 0) {
+        return -1;
+    }
+    if (xhci_control_class_out(g_bluetooth_slot_id, 0, 0,
+                               g_bluetooth_interface_number,
+                               g_bluetooth_command_buffer, command_len) < 0) {
+        g_bluetooth_pending_trb = 0;
+        return -1;
+    }
+    return xhci_wait_bluetooth_command_status(opcode);
+}
+
+static int xhci_bluetooth_hci_init(void) {
+    static const uint8_t hci_reset[] = {0x03, 0x0c, 0x00};
+    static const uint8_t hci_write_event_mask[] = {
+        0x01, 0x0c, 0x08, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x3f
+    };
+    static const uint8_t hci_write_simple_pairing_mode[] = {0x56, 0x0c, 0x01, 0x01};
+    static const uint8_t hci_read_local_version[] = {0x01, 0x10, 0x00};
+    uint32_t event_len = 0;
+    uint8_t status;
+    uint8_t hci_version;
+    uint16_t hci_revision;
+    uint8_t lmp_version;
+    uint16_t manufacturer;
+    uint16_t lmp_subversion;
+
+    if (g_interrupt_in_owner != XHCI_INTERRUPT_OWNER_BLUETOOTH || g_bluetooth_slot_id == 0) {
+        return -1;
+    }
+
+    serial_print("xhci: bluetooth HCI Reset\n");
+    if (xhci_bluetooth_send_hci_command(0x0c03U, hci_reset, sizeof(hci_reset), &event_len) < 0) {
+        bluetooth_hci_transport_error("warn: HCI reset transport failed");
+        return -1;
+    }
+    status = g_bluetooth_event_buffer[5];
+    bluetooth_hci_reset_complete(status);
+    if (status != 0) {
+        return -1;
+    }
+
+    serial_print("xhci: bluetooth Write Event Mask\n");
+    if (xhci_bluetooth_send_hci_command(0x0c01U, hci_write_event_mask,
+                                        sizeof(hci_write_event_mask),
+                                        &event_len) == 0 &&
+        event_len >= 6 && g_bluetooth_event_buffer[5] == 0) {
+        serial_print("xhci: bluetooth pairing events enabled\n");
+    } else {
+        serial_print("xhci: bluetooth event mask setup skipped\n");
+    }
+
+    serial_print("xhci: bluetooth Write Simple Pairing Mode\n");
+    if (xhci_bluetooth_send_hci_command(0x0c56U, hci_write_simple_pairing_mode,
+                                        sizeof(hci_write_simple_pairing_mode),
+                                        &event_len) == 0 &&
+        event_len >= 6 && g_bluetooth_event_buffer[5] == 0) {
+        serial_print("xhci: bluetooth simple pairing enabled\n");
+    } else {
+        serial_print("xhci: bluetooth simple pairing unavailable\n");
+    }
+
+    serial_print("xhci: bluetooth Read Local Version Information\n");
+    if (xhci_bluetooth_send_hci_command(0x1001U, hci_read_local_version,
+                                        sizeof(hci_read_local_version),
+                                        &event_len) < 0) {
+        bluetooth_hci_transport_error("warn: HCI version transport failed");
+        return -1;
+    }
+    if (event_len < 14) {
+        bluetooth_hci_transport_error("warn: short HCI version event");
+        return -1;
+    }
+
+    status = g_bluetooth_event_buffer[5];
+    hci_version = g_bluetooth_event_buffer[6];
+    hci_revision = read_le16(&g_bluetooth_event_buffer[7]);
+    lmp_version = g_bluetooth_event_buffer[9];
+    manufacturer = read_le16(&g_bluetooth_event_buffer[10]);
+    lmp_subversion = read_le16(&g_bluetooth_event_buffer[12]);
+    bluetooth_hci_version_complete(status, hci_version, hci_revision,
+                                   lmp_version, manufacturer, lmp_subversion);
+    return status == 0 ? 0 : -1;
+}
+
+static void xhci_bluetooth_parse_inquiry_result(uint8_t event_code, uint32_t event_len) {
+    uint8_t count;
+    uint32_t off;
+    uint32_t stride;
+
+    if (event_len < 3) {
+        return;
+    }
+
+    count = g_bluetooth_event_buffer[2];
+    off = 3;
+    if (event_code == 0x02U) {
+        stride = 14;
+    } else if (event_code == 0x22U) {
+        stride = 15;
+    } else {
+        return;
+    }
+
+    for (uint8_t i = 0; i < count; i++) {
+        const uint8_t* record;
+        uint8_t has_rssi = 0;
+        int8_t rssi = 0;
+
+        if (off + stride > event_len) {
+            return;
+        }
+
+        record = &g_bluetooth_event_buffer[off];
+        if (event_code == 0x22U) {
+            has_rssi = 1;
+            rssi = (int8_t)record[14];
+        }
+        bluetooth_discovery_add(record, record[6], has_rssi, rssi);
+        off += stride;
+    }
+}
+
+static void xhci_bluetooth_parse_extended_inquiry_result(uint32_t event_len) {
+    const uint8_t* record;
+
+    if (event_len < 17 || g_bluetooth_event_buffer[2] == 0) {
+        return;
+    }
+
+    record = &g_bluetooth_event_buffer[3];
+    bluetooth_discovery_add(record, record[6], 1, (int8_t)record[13]);
+}
+
+static int xhci_bluetooth_address_match(const uint8_t* event_address,
+                                        const uint8_t address[6]) {
+    if (!event_address || !address) {
+        return 0;
+    }
+    return event_address[0] == address[0] &&
+           event_address[1] == address[1] &&
+           event_address[2] == address[2] &&
+           event_address[3] == address[3] &&
+           event_address[4] == address[4] &&
+           event_address[5] == address[5];
+}
+
+static int xhci_bluetooth_command_complete_ok(uint16_t opcode,
+                                              const uint8_t* command,
+                                              uint16_t command_len) {
+    uint32_t event_len = 0;
+
+    if (xhci_bluetooth_send_hci_command(opcode, command, command_len, &event_len) < 0) {
+        return -1;
+    }
+    if (event_len < 6 || g_bluetooth_event_buffer[5] != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int xhci_bluetooth_reply_link_key(const uint8_t address[6]) {
+    uint8_t command[25];
+    uint8_t link_key[BLUETOOTH_LINK_KEY_SIZE];
+
+    if (bluetooth_find_link_key(address, link_key, 0) == 0) {
+        command[0] = 0x0b;
+        command[1] = 0x04;
+        command[2] = 0x16;
+        for (uint32_t i = 0; i < 6; i++) {
+            command[3 + i] = address[i];
+        }
+        for (uint32_t i = 0; i < BLUETOOTH_LINK_KEY_SIZE; i++) {
+            command[9 + i] = link_key[i];
+        }
+        bluetooth_auth_event(address, "pair: stored link key accepted");
+        return xhci_bluetooth_command_complete_ok(0x040bU, command, sizeof(command));
+    }
+
+    command[0] = 0x0c;
+    command[1] = 0x04;
+    command[2] = 0x06;
+    for (uint32_t i = 0; i < 6; i++) {
+        command[3 + i] = address[i];
+    }
+    bluetooth_auth_event(address, "pair: no stored link key, starting pairing");
+    return xhci_bluetooth_command_complete_ok(0x040cU, command, 9);
+}
+
+static int xhci_bluetooth_reply_pin_code(const uint8_t address[6]) {
+    uint8_t command[26];
+
+    local_memset(command, 0, sizeof(command));
+    command[0] = 0x0d;
+    command[1] = 0x04;
+    command[2] = 0x17;
+    for (uint32_t i = 0; i < 6; i++) {
+        command[3 + i] = address[i];
+    }
+    command[9] = 4;
+    command[10] = '0';
+    command[11] = '0';
+    command[12] = '0';
+    command[13] = '0';
+    bluetooth_auth_event(address, "pair: PIN fallback replied with 0000");
+    return xhci_bluetooth_command_complete_ok(0x040dU, command, sizeof(command));
+}
+
+static int xhci_bluetooth_reply_io_capability(const uint8_t address[6]) {
+    uint8_t command[12];
+
+    command[0] = 0x2b;
+    command[1] = 0x04;
+    command[2] = 0x09;
+    for (uint32_t i = 0; i < 6; i++) {
+        command[3 + i] = address[i];
+    }
+    command[9] = 0x03;
+    command[10] = 0x00;
+    command[11] = 0x04;
+    bluetooth_auth_event(address, "pair: SSP IO capability replied");
+    return xhci_bluetooth_command_complete_ok(0x042bU, command, sizeof(command));
+}
+
+static int xhci_bluetooth_reply_user_confirmation(const uint8_t address[6]) {
+    uint8_t command[9];
+
+    command[0] = 0x2c;
+    command[1] = 0x04;
+    command[2] = 0x06;
+    for (uint32_t i = 0; i < 6; i++) {
+        command[3 + i] = address[i];
+    }
+    bluetooth_auth_event(address, "pair: SSP user confirmation accepted");
+    return xhci_bluetooth_command_complete_ok(0x042cU, command, sizeof(command));
+}
+
+static int xhci_bluetooth_handle_pairing_event(uint8_t event_code,
+                                               uint32_t event_len,
+                                               const uint8_t target_address[6]) {
+    const uint8_t* address;
+
+    if (event_code == 0x18U) {
+        if (event_len < 25) {
+            return 1;
+        }
+        address = &g_bluetooth_event_buffer[2];
+        bluetooth_link_key_store(address, &g_bluetooth_event_buffer[8],
+                                 g_bluetooth_event_buffer[24]);
+        return 1;
+    }
+
+    if (event_code == 0x36U) {
+        if (event_len < 9) {
+            return 1;
+        }
+        address = &g_bluetooth_event_buffer[3];
+        if (!target_address || xhci_bluetooth_address_match(address, target_address)) {
+            if (g_bluetooth_event_buffer[2] == 0) {
+                bluetooth_auth_event(address, "pair: simple pairing complete");
+            } else {
+                bluetooth_auth_event(address, "warn: simple pairing failed");
+            }
+        }
+        return 1;
+    }
+
+    if (event_len < 8) {
+        return 0;
+    }
+    address = &g_bluetooth_event_buffer[2];
+    if (target_address && !xhci_bluetooth_address_match(address, target_address)) {
+        return 1;
+    }
+
+    if (event_code == 0x17U) {
+        return xhci_bluetooth_reply_link_key(address) == 0 ? 1 : -1;
+    }
+    if (event_code == 0x16U) {
+        return xhci_bluetooth_reply_pin_code(address) == 0 ? 1 : -1;
+    }
+    if (event_code == 0x31U) {
+        return xhci_bluetooth_reply_io_capability(address) == 0 ? 1 : -1;
+    }
+    if (event_code == 0x33U) {
+        return xhci_bluetooth_reply_user_confirmation(address) == 0 ? 1 : -1;
+    }
+
+    return 0;
+}
+
+static int xhci_bluetooth_wait_remote_name_complete(const uint8_t address[6]) {
+    for (uint32_t events = 0; events < 32; events++) {
+        uint32_t event_len = 0;
+        uint8_t event_code;
+        uint8_t status;
+        const char* name;
+        uint32_t name_len;
+
+        if (xhci_submit_bluetooth_event_transfer() < 0 ||
+            xhci_wait_bluetooth_event(&event_len) < 0) {
+            return -1;
+        }
+        if (event_len < 2) {
+            continue;
+        }
+
+        event_code = g_bluetooth_event_buffer[0];
+        if (event_code == 0x02U || event_code == 0x22U) {
+            xhci_bluetooth_parse_inquiry_result(event_code, event_len);
+            continue;
+        }
+        if (event_code == 0x2fU) {
+            xhci_bluetooth_parse_extended_inquiry_result(event_len);
+            continue;
+        }
+        if (event_code != 0x07U || event_len < 9) {
+            continue;
+        }
+
+        status = g_bluetooth_event_buffer[2];
+        if (!address || !((g_bluetooth_event_buffer[3] == address[0]) &&
+                          (g_bluetooth_event_buffer[4] == address[1]) &&
+                          (g_bluetooth_event_buffer[5] == address[2]) &&
+                          (g_bluetooth_event_buffer[6] == address[3]) &&
+                          (g_bluetooth_event_buffer[7] == address[4]) &&
+                          (g_bluetooth_event_buffer[8] == address[5]))) {
+            continue;
+        }
+
+        name = (const char*)&g_bluetooth_event_buffer[9];
+        name_len = event_len > 9 ? event_len - 9 : 0;
+        for (uint32_t i = 0; i < name_len; i++) {
+            if (name[i] == '\0') {
+                name_len = i;
+                break;
+            }
+        }
+        bluetooth_discovery_set_name(address, status, name, name_len);
+        return status == 0 ? 0 : -1;
+    }
+
+    return -1;
+}
+
+static void xhci_bluetooth_resolve_discovered_names(void) {
+    for (uint32_t i = 0; i < BLUETOOTH_MAX_DISCOVERED; i++) {
+        struct bluetooth_discovered_device dev;
+        uint8_t command[13];
+
+        if (bluetooth_get_discovered(i, &dev) != 0) {
+            break;
+        }
+        if (!dev.valid || dev.has_name) {
+            continue;
+        }
+
+        command[0] = 0x19;
+        command[1] = 0x04;
+        command[2] = 0x0a;
+        for (uint32_t j = 0; j < 6; j++) {
+            command[3 + j] = dev.address[j];
+        }
+        command[9] = dev.page_scan_repetition_mode;
+        command[10] = 0;
+        command[11] = 0;
+        command[12] = 0;
+
+        serial_print("xhci: bluetooth Remote Name Request\n");
+        if (xhci_bluetooth_send_hci_command_status(0x0419U, command, sizeof(command)) < 0) {
+            bluetooth_discovery_set_name(dev.address, 1, 0, 0);
+            continue;
+        }
+        if (xhci_bluetooth_wait_remote_name_complete(dev.address) != 0) {
+            bluetooth_discovery_set_name(dev.address, 1, 0, 0);
+        }
+    }
+}
+
+int xhci_bluetooth_scan(void) {
+    static const uint8_t hci_write_inquiry_mode[] = {0x45, 0x0c, 0x01, 0x01};
+    static const uint8_t hci_inquiry[] = {0x01, 0x04, 0x05, 0x33, 0x8b, 0x9e, 0x04, 0x08};
+    uint32_t event_len = 0;
+    uint8_t status;
+
+    if (g_interrupt_in_owner != XHCI_INTERRUPT_OWNER_BLUETOOTH ||
+        g_bluetooth_slot_id == 0 || !g_bluetooth_event_buffer) {
+        bluetooth_hci_transport_error("scan: Bluetooth HCI transport not ready");
+        return -1;
+    }
+
+    serial_print("xhci: bluetooth Write Inquiry Mode RSSI\n");
+    if (xhci_bluetooth_send_hci_command(0x0c45U, hci_write_inquiry_mode,
+                                        sizeof(hci_write_inquiry_mode), &event_len) < 0) {
+        bluetooth_hci_transport_error("scan: write inquiry mode failed");
+        return -1;
+    }
+    if (event_len < 6 || g_bluetooth_event_buffer[5] != 0) {
+        bluetooth_hci_transport_error("scan: inquiry mode rejected");
+        return -1;
+    }
+
+    serial_print("xhci: bluetooth Inquiry\n");
+    if (xhci_bluetooth_send_hci_command_status(0x0401U, hci_inquiry, sizeof(hci_inquiry)) < 0) {
+        bluetooth_hci_transport_error("scan: inquiry command failed");
+        return -1;
+    }
+
+    for (uint32_t events = 0; events < 64; events++) {
+        uint8_t event_code;
+
+        if (xhci_submit_bluetooth_event_transfer() < 0 ||
+            xhci_wait_bluetooth_event(&event_len) < 0) {
+            bluetooth_hci_transport_error("scan: inquiry event timeout");
+            return -1;
+        }
+        if (event_len < 2) {
+            continue;
+        }
+
+        event_code = g_bluetooth_event_buffer[0];
+        if (event_code == 0x01U) {
+            status = event_len >= 3 ? g_bluetooth_event_buffer[2] : 1U;
+            if (status == 0) {
+                xhci_bluetooth_resolve_discovered_names();
+            }
+            bluetooth_scan_complete(status);
+            return status == 0 ? 0 : -1;
+        }
+        if (event_code == 0x02U || event_code == 0x22U) {
+            xhci_bluetooth_parse_inquiry_result(event_code, event_len);
+        } else if (event_code == 0x2fU) {
+            xhci_bluetooth_parse_extended_inquiry_result(event_len);
+        }
+    }
+
+    bluetooth_hci_transport_error("scan: inquiry did not complete");
+    return -1;
+}
+
+static int xhci_bluetooth_wait_connection_complete(const uint8_t address[6]) {
+    for (uint32_t events = 0; events < 64; events++) {
+        uint32_t event_len = 0;
+        uint8_t event_code;
+        uint8_t status;
+        uint16_t handle;
+        uint8_t link_type;
+        uint8_t encryption_enabled;
+
+        if (xhci_submit_bluetooth_event_transfer() < 0 ||
+            xhci_wait_bluetooth_event(&event_len) < 0) {
+            return -1;
+        }
+        if (event_len < 2) {
+            continue;
+        }
+
+        event_code = g_bluetooth_event_buffer[0];
+        if (event_code == 0x02U || event_code == 0x22U) {
+            xhci_bluetooth_parse_inquiry_result(event_code, event_len);
+            continue;
+        }
+        if (event_code == 0x2fU) {
+            xhci_bluetooth_parse_extended_inquiry_result(event_len);
+            continue;
+        }
+        {
+            int auth_rc = xhci_bluetooth_handle_pairing_event(event_code, event_len, address);
+            if (auth_rc > 0) {
+                continue;
+            }
+            if (auth_rc < 0) {
+                return -1;
+            }
+        }
+        if (event_code != 0x03U || event_len < 13) {
+            continue;
+        }
+
+        status = g_bluetooth_event_buffer[2];
+        if (!address || !((g_bluetooth_event_buffer[5] == address[0]) &&
+                          (g_bluetooth_event_buffer[6] == address[1]) &&
+                          (g_bluetooth_event_buffer[7] == address[2]) &&
+                          (g_bluetooth_event_buffer[8] == address[3]) &&
+                          (g_bluetooth_event_buffer[9] == address[4]) &&
+                          (g_bluetooth_event_buffer[10] == address[5]))) {
+            continue;
+        }
+
+        handle = (uint16_t)g_bluetooth_event_buffer[3] |
+                 ((uint16_t)g_bluetooth_event_buffer[4] << 8);
+        link_type = g_bluetooth_event_buffer[11];
+        encryption_enabled = g_bluetooth_event_buffer[12];
+        bluetooth_pair_complete(address, status, handle, link_type, encryption_enabled);
+        return status == 0 ? 0 : 1;
+    }
+
+    return -1;
+}
+
+int xhci_bluetooth_pair(size_t index) {
+    struct bluetooth_discovered_device dev;
+    uint8_t command[16];
+
+    if (g_interrupt_in_owner != XHCI_INTERRUPT_OWNER_BLUETOOTH ||
+        g_bluetooth_slot_id == 0 || !g_bluetooth_event_buffer) {
+        bluetooth_hci_transport_error("pair: Bluetooth HCI transport not ready");
+        return -1;
+    }
+    if (bluetooth_get_discovered(index, &dev) != 0 || !dev.valid) {
+        bluetooth_hci_transport_error("pair: device index missing");
+        return -1;
+    }
+
+    command[0] = 0x05;
+    command[1] = 0x04;
+    command[2] = 0x0d;
+    for (uint32_t i = 0; i < 6; i++) {
+        command[3 + i] = dev.address[i];
+    }
+    command[9] = 0x18;
+    command[10] = 0xcc;
+    command[11] = dev.page_scan_repetition_mode;
+    command[12] = 0;
+    command[13] = 0;
+    command[14] = 0;
+    command[15] = 1;
+
+    serial_print("xhci: bluetooth Create Connection\n");
+    if (xhci_bluetooth_send_hci_command_status(0x0405U, command, sizeof(command)) < 0) {
+        bluetooth_pair_complete(dev.address, 1, 0, 0, 0);
+        return -1;
+    }
+    int wait_status = xhci_bluetooth_wait_connection_complete(dev.address);
+    if (wait_status < 0) {
+        bluetooth_pair_complete(dev.address, 1, 0, 0, 0);
+        return -1;
+    }
+    return wait_status == 0 ? 0 : -1;
+}
+
 static int xhci_submit_keyboard_transfer(void) {
     struct xhci_trb* trb;
     uint64_t report_phys;
     uint32_t len;
+    uint8_t cycle;
 
     if (!g_interrupt_in_ring || !g_keyboard_report || g_keyboard_slot_id == 0 || g_interrupt_in_dci == 0) {
         return -1;
@@ -887,6 +1791,7 @@ static int xhci_submit_keyboard_transfer(void) {
 
     local_memset(g_keyboard_report, 0, 8);
     report_phys = (uint64_t)g_keyboard_report;
+    cycle = g_interrupt_in_cycle;
     trb = xhci_next_interrupt_in_trb();
     g_keyboard_pending_trb = (uint64_t)trb;
 
@@ -894,11 +1799,47 @@ static int xhci_submit_keyboard_transfer(void) {
     trb->parameter_hi = (uint32_t)(report_phys >> 32);
     trb->status = len;
     trb->control =
-        g_interrupt_in_cycle |
+        cycle |
         XHCI_TRB_IOC |
         (XHCI_TRB_TYPE_NORMAL << XHCI_TRB_TYPE_SHIFT);
 
     xhci_ring_doorbell(g_keyboard_slot_id, g_interrupt_in_dci);
+    return 0;
+}
+
+static int xhci_submit_mouse_transfer(void) {
+    struct xhci_trb* trb;
+    uint64_t report_phys;
+    uint32_t len;
+    uint8_t cycle;
+
+    if (!g_interrupt_in_ring || !g_mouse_report || g_mouse_slot_id == 0 || g_interrupt_in_dci == 0) {
+        return -1;
+    }
+    if (g_mouse_pending_trb != 0) {
+        return 0;
+    }
+
+    len = g_interrupt_in_max_packet;
+    if (len == 0 || len > 8) {
+        len = 8;
+    }
+
+    local_memset(g_mouse_report, 0, 8);
+    report_phys = (uint64_t)g_mouse_report;
+    cycle = g_interrupt_in_cycle;
+    trb = xhci_next_interrupt_in_trb();
+    g_mouse_pending_trb = (uint64_t)trb;
+
+    trb->parameter_lo = (uint32_t)(report_phys & 0xFFFFFFFFU);
+    trb->parameter_hi = (uint32_t)(report_phys >> 32);
+    trb->status = len;
+    trb->control =
+        cycle |
+        XHCI_TRB_IOC |
+        (XHCI_TRB_TYPE_NORMAL << XHCI_TRB_TYPE_SHIFT);
+
+    xhci_ring_doorbell(g_mouse_slot_id, g_interrupt_in_dci);
     return 0;
 }
 
@@ -916,14 +1857,26 @@ static int xhci_configure_interrupt_in_endpoint(uint32_t slot_id) {
     uint32_t interval;
     uint32_t max_packet;
 
-    if (slot_id == 0 || g_interrupt_in_endpoint == 0 || g_interrupt_in_max_packet == 0) {
+    if (slot_id == 0 || g_interrupt_in_endpoint == 0 || g_interrupt_in_max_packet == 0 ||
+        g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_NONE) {
         serial_print("xhci: no interrupt IN endpoint to configure\n");
         return -1;
     }
 
     g_interrupt_in_ring = (struct xhci_trb*)alloc_zero_page();
-    g_keyboard_report = (uint8_t*)alloc_zero_page();
-    if (!input_ctx || !g_interrupt_in_ring || !g_keyboard_report) {
+    if (g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_KEYBOARD) {
+        g_keyboard_report = (uint8_t*)alloc_zero_page();
+    } else if (g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_MOUSE) {
+        g_mouse_report = (uint8_t*)alloc_zero_page();
+    } else if (g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_BLUETOOTH) {
+        g_bluetooth_command_buffer = (uint8_t*)alloc_zero_page();
+        g_bluetooth_event_buffer = (uint8_t*)alloc_zero_page();
+    }
+    if (!input_ctx || !g_interrupt_in_ring ||
+        (g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_KEYBOARD && !g_keyboard_report) ||
+        (g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_MOUSE && !g_mouse_report) ||
+        (g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_BLUETOOTH &&
+         (!g_bluetooth_command_buffer || !g_bluetooth_event_buffer))) {
         serial_print("xhci: interrupt endpoint allocation failed\n");
         return -1;
     }
@@ -943,9 +1896,21 @@ static int xhci_configure_interrupt_in_endpoint(uint32_t slot_id) {
 
     g_interrupt_in_cycle = 1;
     g_interrupt_in_enqueue = 0;
-    g_keyboard_slot_id = slot_id;
     g_keyboard_pending_trb = 0;
+    g_mouse_pending_trb = 0;
+    g_bluetooth_pending_trb = 0;
+    g_keyboard_slot_id = 0;
+    g_mouse_slot_id = 0;
+    g_bluetooth_slot_id = 0;
     local_memset(g_keyboard_last_keys, 0, sizeof(g_keyboard_last_keys));
+    if (g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_KEYBOARD) {
+        g_keyboard_slot_id = slot_id;
+    } else if (g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_MOUSE) {
+        g_mouse_slot_id = slot_id;
+    } else if (g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_BLUETOOTH) {
+        g_bluetooth_slot_id = slot_id;
+        g_bluetooth_event_buffer_len = 260;
+    }
     g_interrupt_in_ring[XHCI_TRB_COUNT - 1].parameter_lo = (uint32_t)(ring_phys & 0xFFFFFFFFU);
     g_interrupt_in_ring[XHCI_TRB_COUNT - 1].parameter_hi = (uint32_t)(ring_phys >> 32);
     g_interrupt_in_ring[XHCI_TRB_COUNT - 1].status = 0;
@@ -1001,8 +1966,14 @@ static int xhci_configure_interrupt_in_endpoint(uint32_t slot_id) {
     }
 
     serial_print("xhci: interrupt IN endpoint configured\n");
-    if (xhci_submit_keyboard_transfer() == 0) {
+    if (g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_KEYBOARD &&
+        xhci_submit_keyboard_transfer() == 0) {
         serial_print("xhci: keyboard interrupt transfer armed\n");
+    } else if (g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_MOUSE &&
+               xhci_submit_mouse_transfer() == 0) {
+        serial_print("xhci: mouse interrupt transfer armed\n");
+    } else if (g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_BLUETOOTH) {
+        serial_print("xhci: bluetooth event endpoint configured\n");
     }
     return 0;
 }
@@ -1105,6 +2076,53 @@ static void xhci_handle_keyboard_report(void) {
     }
 }
 
+static int32_t clamp_i32(int32_t value, int32_t min, int32_t max) {
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+}
+
+static int xhci_hid_transfer_ok(uint32_t completion) {
+    return completion == XHCI_COMPLETION_SUCCESS ||
+           completion == XHCI_COMPLETION_SHORT_PACKET;
+}
+
+static void xhci_handle_mouse_report(void) {
+    uint32_t buttons = 0;
+    int32_t old_x;
+    int32_t old_y;
+    int32_t max_x = gfx_is_ready() && gfx_width() > 0 ? (int32_t)gfx_width() - 1 : 1023;
+    int32_t max_y = gfx_is_ready() && gfx_height() > 0 ? (int32_t)gfx_height() - 1 : 767;
+
+    if (!g_mouse_report) {
+        return;
+    }
+
+    old_x = g_mouse_x;
+    old_y = g_mouse_y;
+    if (g_mouse_report[0] & 0x01U) buttons |= AOS_POINTER_LEFT;
+    if (g_mouse_report[0] & 0x02U) buttons |= AOS_POINTER_RIGHT;
+    if (g_mouse_report[0] & 0x04U) buttons |= AOS_POINTER_MIDDLE;
+
+    if (g_interrupt_in_max_packet >= 5) {
+        uint32_t raw_x = (uint32_t)g_mouse_report[1] | ((uint32_t)g_mouse_report[2] << 8);
+        uint32_t raw_y = (uint32_t)g_mouse_report[3] | ((uint32_t)g_mouse_report[4] << 8);
+        if (raw_x > 32767U) raw_x = 32767U;
+        if (raw_y > 32767U) raw_y = 32767U;
+        g_mouse_x = (int32_t)((raw_x * (uint32_t)max_x) / 32767U);
+        g_mouse_y = (int32_t)((raw_y * (uint32_t)max_y) / 32767U);
+    } else {
+        int32_t dx = (int8_t)g_mouse_report[1];
+        int32_t dy = (int8_t)g_mouse_report[2];
+        g_mouse_x = clamp_i32(g_mouse_x + dx, 0, max_x);
+        g_mouse_y = clamp_i32(g_mouse_y - dy, 0, max_y);
+    }
+
+    g_mouse_buttons = buttons;
+    input_push_pointer(AOS_INPUT_SOURCE_USB, g_mouse_x, g_mouse_y,
+                       g_mouse_x - old_x, g_mouse_y - old_y, g_mouse_buttons);
+}
+
 void xhci_poll_keyboard(void) {
     struct xhci_trb* event;
     uint32_t type;
@@ -1112,7 +2130,17 @@ void xhci_poll_keyboard(void) {
     uint32_t completion;
     uint32_t endpoint_id;
 
-    if (!g_interrupt_in_ring || g_keyboard_pending_trb == 0) {
+    if (g_interrupt_in_owner != XHCI_INTERRUPT_OWNER_KEYBOARD &&
+        g_interrupt_in_owner != XHCI_INTERRUPT_OWNER_MOUSE) {
+        return;
+    }
+    if (!g_interrupt_in_ring) {
+        return;
+    }
+    if (g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_KEYBOARD && g_keyboard_pending_trb == 0) {
+        return;
+    }
+    if (g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_MOUSE && g_mouse_pending_trb == 0) {
         return;
     }
 
@@ -1132,19 +2160,37 @@ void xhci_poll_keyboard(void) {
     endpoint_id = (event->control >> 16) & 0x1FU;
     xhci_advance_event();
 
-    if (event_trb_phys != g_keyboard_pending_trb || endpoint_id != g_interrupt_in_dci) {
+    if (endpoint_id != g_interrupt_in_dci) {
         return;
     }
 
-    g_keyboard_pending_trb = 0;
-    if (completion == XHCI_COMPLETION_SUCCESS) {
-        xhci_handle_keyboard_report();
+    if (g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_KEYBOARD) {
+        if (event_trb_phys != g_keyboard_pending_trb) {
+            return;
+        }
+        g_keyboard_pending_trb = 0;
+        if (xhci_hid_transfer_ok(completion)) {
+            xhci_handle_keyboard_report();
+        } else {
+            serial_print("xhci: keyboard transfer failed cc=0x");
+            serial_print_hex8((uint8_t)completion);
+            serial_print("\n");
+        }
+        xhci_submit_keyboard_transfer();
     } else {
-        serial_print("xhci: keyboard transfer failed cc=0x");
-        serial_print_hex8((uint8_t)completion);
-        serial_print("\n");
+        if (event_trb_phys != g_mouse_pending_trb) {
+            return;
+        }
+        g_mouse_pending_trb = 0;
+        if (xhci_hid_transfer_ok(completion)) {
+            xhci_handle_mouse_report();
+        } else {
+            serial_print("xhci: mouse transfer failed cc=0x");
+            serial_print_hex8((uint8_t)completion);
+            serial_print("\n");
+        }
+        xhci_submit_mouse_transfer();
     }
-    xhci_submit_keyboard_transfer();
 }
 
 void xhci_register_driver(void) {
@@ -1341,7 +2387,17 @@ void xhci_register_driver(void) {
                         xhci_get_config_descriptor((uint32_t)slot_id) == 0 &&
                         xhci_control_set_configuration((uint32_t)slot_id, 1) == 0 &&
                         xhci_configure_interrupt_in_endpoint((uint32_t)slot_id) == 0) {
-                        driver_update_pci_status(dev->vendor_id, dev->device_id, "ready: usb keyboard endpoint configured");
+                        if (g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_BLUETOOTH) {
+                            if (xhci_bluetooth_hci_init() == 0) {
+                                driver_update_pci_status(dev->vendor_id, dev->device_id, "ready: bluetooth HCI checked");
+                            } else {
+                                driver_update_pci_status(dev->vendor_id, dev->device_id, "warn: bluetooth HCI init failed");
+                            }
+                        } else if (g_interrupt_in_owner == XHCI_INTERRUPT_OWNER_MOUSE) {
+                            driver_update_pci_status(dev->vendor_id, dev->device_id, "ready: usb mouse endpoint configured");
+                        } else {
+                            driver_update_pci_status(dev->vendor_id, dev->device_id, "ready: usb keyboard endpoint configured");
+                        }
                     } else {
                         driver_update_pci_status(dev->vendor_id, dev->device_id, "warn: usb setup failed");
                     }

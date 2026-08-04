@@ -31,6 +31,7 @@ static inline uint8_t inb(uint16_t port) {
 static uint8_t key_down[128] = {0};
 static uint8_t shift_down = 0;
 static uint8_t ctrl_down = 0;
+static uint8_t alt_down = 0;
 static uint8_t extended_prefix = 0;
 
 static uint8_t keyboard_modifiers(void) {
@@ -40,6 +41,9 @@ static uint8_t keyboard_modifiers(void) {
     }
     if (shift_down) {
         modifiers |= AOS_INPUT_MOD_SHIFT;
+    }
+    if (alt_down) {
+        modifiers |= AOS_INPUT_MOD_ALT;
     }
     return modifiers;
 }
@@ -65,12 +69,23 @@ void keyboard_handler_main() {
     }
 
     if (extended_prefix) {
+        uint8_t extended_keycode = scancode & 0x7F;
+        uint8_t released = (scancode & 0x80) != 0;
+
         extended_prefix = 0;
-        if (scancode & 0x80) {
+        if (extended_keycode == 0x1D) {
+            ctrl_down = released ? 0 : 1;
+            return;
+        }
+        if (extended_keycode == 0x38) {
+            alt_down = released ? 0 : 1;
+            return;
+        }
+        if (released) {
             return;
         }
 
-        switch (scancode) {
+        switch (extended_keycode) {
             case 0x48:
                 keyboard_push_key(AOS_KEY_HISTORY_PREV, (char)AOS_KEY_HISTORY_PREV);
                 return;
@@ -108,6 +123,9 @@ void keyboard_handler_main() {
         if (keycode == 29) {
             ctrl_down = 0;
         }
+        if (keycode == 56) {
+            alt_down = 0;
+        }
         return;
     }
 
@@ -122,6 +140,10 @@ void keyboard_handler_main() {
     }
     if (keycode == 29) {
         ctrl_down = 1;
+        return;
+    }
+    if (keycode == 56) {
+        alt_down = 1;
         return;
     }
 

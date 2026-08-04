@@ -121,6 +121,13 @@ static uint16_t read_le16(const uint8_t* p) {
     return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
 }
 
+static uint32_t read_le32(const uint8_t* p) {
+    return (uint32_t)p[0] |
+           ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
+}
+
 static uint8_t detect_fs(uint32_t blkdev_id, uint64_t size) {
     uint8_t image[EXT4_MAGIC_OFFSET + 2];
     uint64_t read_len = sizeof(image);
@@ -312,6 +319,58 @@ int partition_load_table(uint32_t blkdev_id) {
     return loaded ? (int)loaded : -1;
 }
 
+int partition_load_mbr(uint32_t blkdev_id) {
+    const struct blkdev* dev = blkdev_get(blkdev_id);
+    uint8_t sector[512];
+    uint32_t loaded = 0;
+
+    if (!dev || dev->size < sizeof(sector)) {
+        return -1;
+    }
+    local_memset(sector, 0, sizeof(sector));
+    if (blkdev_read(blkdev_id, 0, sector, sizeof(sector)) != 0 ||
+        sector[510] != 0x55 || sector[511] != 0xAA) {
+        return -1;
+    }
+
+    for (uint32_t i = 0; i < 4; i++) {
+        const uint8_t* entry = sector + 446 + i * 16;
+        uint8_t type = entry[4];
+        uint64_t lba = read_le32(entry + 8);
+        uint64_t sectors = read_le32(entry + 12);
+        uint64_t offset = lba * 512ULL;
+        uint64_t size = sectors * 512ULL;
+        uint8_t fs_type = PARTITION_FS_UNKNOWN;
+        uint8_t role = PARTITION_ROLE_UNKNOWN;
+        const char* name = "mbr";
+
+        if (type == 0 || sectors == 0 || offset >= dev->size || size > dev->size - offset) {
+            continue;
+        }
+        if (type == 0x0B || type == 0x0C || type == 0xEF) {
+            fs_type = PARTITION_FS_FAT32;
+            name = "boot";
+        } else if (type == 0x7F) {
+            fs_type = PARTITION_FS_AOSFS;
+            role = PARTITION_ROLE_ROOT;
+            name = "root";
+        } else if (type == 0x82) {
+            fs_type = PARTITION_FS_SWAP;
+            role = PARTITION_ROLE_SWAP;
+            name = "swap";
+        } else if (type == 0x83) {
+            fs_type = PARTITION_FS_EXT4;
+            name = "linux";
+        }
+
+        if (append_blkdev_partition(blkdev_id, offset, size, fs_type, role, name) >= 0) {
+            loaded++;
+        }
+    }
+
+    return loaded ? (int)loaded : -1;
+}
+
 const struct partition* partition_find_by_role(uint8_t role) {
     for (size_t i = 0; i < g_partition_count; i++) {
         if (g_partitions[i].in_use && g_partitions[i].role == role) {
@@ -494,6 +553,43 @@ int partition_create_default_layout(uint32_t blkdev_id) {
         return -1;
     }
 
+    recalc_indices_and_next_offset();
+    return 0;
+}
+
+int partition_create_installed_layout(uint32_t blkdev_id, uint64_t boot_offset, uint64_t boot_size, uint64_t root_offset) {
+    const struct blkdev* dev = blkdev_get(blkdev_id);
+    size_t write_index = 0;
+
+    if (!dev || dev->read_only || boot_size == 0 ||
+        boot_offset >= dev->size || boot_size > dev->size - boot_offset ||
+        root_offset >= dev->size) {
+        return -1;
+    }
+
+    for (size_t i = 0; i < g_partition_count; i++) {
+        if (g_partitions[i].in_use && g_partitions[i].blkdev_id != blkdev_id) {
+            if (write_index != i) {
+                g_partitions[write_index] = g_partitions[i];
+            }
+            write_index++;
+        }
+    }
+    for (size_t i = write_index; i < g_partition_count; i++) {
+        local_memset(&g_partitions[i], 0, sizeof(g_partitions[i]));
+    }
+    g_partition_count = write_index;
+    recalc_indices_and_next_offset();
+
+    if (g_partition_count + 2 > PARTITION_MAX ||
+        append_blkdev_partition(blkdev_id, boot_offset, boot_size,
+                                PARTITION_FS_FAT32, PARTITION_ROLE_UNKNOWN,
+                                "boot") < 0 ||
+        append_blkdev_partition(blkdev_id, root_offset, dev->size - root_offset,
+                                PARTITION_FS_AOSFS, PARTITION_ROLE_ROOT,
+                                "root") < 0) {
+        return -1;
+    }
     recalc_indices_and_next_offset();
     return 0;
 }

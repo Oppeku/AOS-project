@@ -179,6 +179,43 @@ void vmm_free_user_space(uint64_t* pml4) {
     asm volatile("mov %%cr3, %%rax; mov %%rax, %%cr3" ::: "rax", "memory");
 }
 
+uint64_t* vmm_create_user_space(uint64_t* kernel_source) {
+    uint64_t* dst_p4;
+
+    if (!kernel_source) {
+        kernel_source = p4_table;
+    }
+
+    dst_p4 = (uint64_t*)pmm_alloc_block();
+    if (!dst_p4) {
+        return NULL;
+    }
+    memset(dst_p4, 0, 4096);
+
+    /*
+     * Kernel mappings are shared. User mappings are built privately and only
+     * published after exec has loaded every segment and constructed its stack.
+     */
+    for (int i = 0; i < 512; i++) {
+        uint64_t lower_half_base = (uint64_t)i << 39;
+
+        if (lower_half_base < AOS_USER_SPACE_START || i >= 256) {
+            dst_p4[i] = kernel_source[i];
+        }
+    }
+    return dst_p4;
+}
+
+void vmm_destroy_user_space(uint64_t* pml4) {
+    if (!pml4) {
+        return;
+    }
+    vmm_free_user_space(pml4);
+    if (pml4 != p4_table) {
+        pmm_free_block(pml4);
+    }
+}
+
 uint64_t* vmm_copy_p4(uint64_t* src_p4) {
     uint64_t* dst_p4 = (uint64_t*)pmm_alloc_block();
     if (!dst_p4) return NULL;

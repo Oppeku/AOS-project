@@ -17,6 +17,14 @@ _start:
     test rax, rax
     js .failed
 
+    cmp dword [rel user_info + 8], 0
+    jne .named_user
+    lea rsi, [rel root_name]
+    mov rdx, root_name_end - root_name
+    call write_stdout
+    jmp .done
+
+.named_user:
     lea rsi, [rel user_info + 16]
     call write_cstring_stdout
     lea rsi, [rel newline_msg]
@@ -58,6 +66,10 @@ section .rodata
 unknown_name:
     db "unknown", 10
 unknown_name_end:
+
+root_name:
+    db "root", 10
+root_name_end:
 
 newline_msg:
     db 10

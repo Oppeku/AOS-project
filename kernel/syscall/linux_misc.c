@@ -226,7 +226,7 @@ int64_t sys_nanosleep(struct syscall_regs* regs) {
 
     start = timer_get_ticks();
     while (timer_get_ticks() - start < wait_ticks) {
-        asm volatile("hlt");
+        asm volatile("sti; hlt; cli" ::: "memory");
     }
 
     return 0;

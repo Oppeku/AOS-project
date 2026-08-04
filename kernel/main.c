@@ -24,13 +24,18 @@
 #include <driver.h>
 #include <firmware.h>
 #include <input.h>
+#include <mouse.h>
 #include <mac80211.h>
 #include <netdev.h>
 #include <e1000.h>
 #include <wifi.h>
+#include <bluetooth.h>
 #include <xhci.h>
 #include <process.h>
 #include <timer.h>
+#include <thermal.h>
+#include <installer.h>
+#include <session.h>
 #include <tty.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -70,6 +75,13 @@ static size_t local_strlen(const char* s) {
         len++;
     }
     return len;
+}
+
+static int local_streq(const char* a, const char* b) {
+    size_t i = 0;
+    if (!a || !b) return 0;
+    while (a[i] && b[i] && a[i] == b[i]) i++;
+    return a[i] == '\0' && b[i] == '\0';
 }
 
 static void build_padding(char* out, size_t out_size, size_t count, char fill) {
@@ -116,7 +128,7 @@ static void boot_logo(void) {
         "  ██╔══██║██║   ██║╚════██║",
         "  ██║  ██║╚██████╔╝███████║",
         "  ╚═╝  ╚═╝ ╚═════╝ ╚══════╝",
-        " Created by Abhigyan Narayan  ",
+        " Yo, how are you lets get started ",
         ""
     };
 
@@ -196,14 +208,62 @@ static void boot_log_memory_snapshot(const char* label) {
     serial_print("\n");
 }
 
-static void ensure_default_user_layout(void) {
+static int ensure_aosfs_directory(const char* path) {
+    struct vfs_node node;
+
+    if (aosfs_lookup_path(path, &node) == 0) {
+        return node.type == VFS_NODE_TYPE_DIRECTORY ? 0 : -1;
+    }
+    return aosfs_mkdir_path(path);
+}
+
+static int ensure_default_filesystem_layout(void) {
     const char* dirs[] = {
+        "bootloader",
+        "bootloader/config",
+        "commands",
+        "kernel",
+        "kernel/modules",
+        "drivers",
+        "drivers/video",
+        "drivers/Keyboard",
+        "drivers/mouse",
+        "drivers/Controlers",
+        "drivers/fingerprint-scanner",
+        "networking-stack",
+        "networking-stack/Saved_Wifi_config",
+        "networking-stack/drivers",
+        "networking-stack/NetShell",
+        "networking-stack/Commands",
+        "Bluetooth",
+        "main",
+        "main/Desktop",
+        "main/Music",
+        "main/Photos",
+        "main/Video",
+        "main/MUI",
+        "main/Starred",
+        "main/Trash",
         "root",
+        "home",
+        "home/explorer",
+        "home/explorer/Desktop",
+        "home/explorer/Documents",
+        "home/explorer/Downloads",
+        "home/explorer/Pictures",
+        "home/explorer/Music",
+        "home/explorer/Projects",
+        "home/explorer/Starred",
+        "home/explorer/Trash",
     };
+    int failed = 0;
 
     for (size_t i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++) {
-        (void)aosfs_mkdir_path(dirs[i]);
+        if (ensure_aosfs_directory(dirs[i]) != 0) {
+            failed = 1;
+        }
     }
+    return failed ? -1 : 0;
 }
 
 static void seed_file_if_missing(const char* path, const char* data) {
@@ -221,10 +281,34 @@ static void seed_file_if_missing(const char* path, const char* data) {
 }
 
 static void seed_default_user_database(void) {
-    seed_file_if_missing("etc/passwd", "root:x:0:0:AOS Live Root:/root:/commands/shell.elf\n");
-    seed_file_if_missing("etc/group", "root:x:0:root\n");
+    seed_file_if_missing(
+        "etc/passwd",
+        "root:x:0:0:AOS Live Root:/root:/commands/vash\n"
+        "explorer:x:1000:1000:AOS User:/main:/commands/vash\n");
+    seed_file_if_missing("etc/group", "root:x:0:root\nusers:x:1000:explorer\n");
     seed_file_if_missing("etc/shadow", "root::0:0:99999:7:::\n");
     seed_file_if_missing("etc/sudoers", "root ALL=(ALL) NOPASSWD: ALL\n");
+}
+
+static void seed_default_user_files(void) {
+    seed_file_if_missing(
+        "main/welcome.txt",
+        "Welcome to AOS Text Editor\n"
+        "\n"
+        "A clean place to write, jot notes, and draft ideas.\n"
+        "\n"
+        "- Everything here runs natively in AOS\n"
+        "- This is the MUI desktop environment\n"
+        "- Try Files, Terminal and Settings apps too\n"
+        "-man its hard to be formal yk\n"
+        "still man gotta be a bit formal\n"
+        "\n"
+        "Happy exploring\n");
+    seed_file_if_missing(
+        "main/aos-notes.md",
+        "# AOS Notes\n"
+        "\n"
+        "Files saved from MUI are stored on the AOS disk.\n");
 }
 
 extern void jump_to_user(uint64_t code, uint64_t stack);
@@ -258,9 +342,9 @@ static void init_pic() {
     outb(0x21, 0x01);
     outb(0xA1, 0x01);
     
-    // Mask all but Timer (IRQ0) and Keyboard (IRQ1)
-    outb(0x21, 0xFC);
-    outb(0xA1, 0xFF);
+    // Mask all but Timer (IRQ0), Keyboard (IRQ1), cascade (IRQ2), and PS/2 Mouse (IRQ12).
+    outb(0x21, 0xF8);
+    outb(0xA1, 0xEF);
 }
 
 void kernel_main(uint64_t magic, uint64_t mb_info) {
@@ -295,6 +379,7 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
     mac80211_init();
     e1000_register_driver();
     wifi_register_driver();
+    bluetooth_register_driver();
     xhci_register_driver();
     driver_register_system(DRIVER_CLASS_NETWORK, "aos-netdev", "ready: network device registry");
     boot_log_ok("Starting driver model");
@@ -315,6 +400,8 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
         const struct blkdev* ata0 = blkdev_get(ata0_id);
         if (partition_load_table(ata0_id) > 0) {
             boot_log_ok("Loading AOS partition table from ata0");
+        } else if (partition_load_mbr(ata0_id) > 0) {
+            boot_log_ok("Loading MBR partition table from ata0");
         } else if (ata0 && ata0->size > 512) {
             (void)partition_register_blkdev(ata0_id, 512, ata0->size - 512, PARTITION_FS_AOSFS, "ata0p0");
             boot_log_warn("Loading AOS partition table from ata0");
@@ -322,19 +409,15 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
     }
     boot_log_ok("Starting PartiotionMANAGAER");
     vfs_init_mounts();
+    installer_init();
     driver_register_system(DRIVER_CLASS_FILESYSTEM, "aos-vfs", "ready: mount table and path walking");
     boot_log_ok("Starting VFS mount table");
     init_timer(100);
     driver_register_system(DRIVER_CLASS_TIME, "aos-timer", "ready: 100 Hz system timer");
     driver_register_system(DRIVER_CLASS_TIME, "aos-rtc", "ready: cmos clock");
+    thermal_init();
+    process_update_thermal_policy(thermal_emergency_active());
     boot_log_ok("Starting system timer at 100 Hz");
-    init_pic();
-    driver_register_system(DRIVER_CLASS_CORE, "aos-pic", "ready: irq remap");
-    boot_log_ok("Starting PIC remap");
-    asm volatile("sti");
-    driver_register_system(DRIVER_CLASS_CORE, "aos-interrupts", "ready: hardware interrupts");
-    driver_register_system(DRIVER_CLASS_INPUT, "aos-keyboard", "ready: ps/2 keyboard input");
-    boot_log_ok("Starting hardware interrupts");
 
     // Handle boot modules: initrd first, remaining modules as RAM-backed partitions.
     struct multiboot_tag* tag;
@@ -370,6 +453,18 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
                     driver_register_system(DRIVER_CLASS_NETWORK, "aos-firmware", "ready: no firmware blobs bundled");
                 }
                 boot_log_ok("Starting initrd mount");
+            } else if (local_streq(mod->cmdline, "aos-install-boot")) {
+                if (installer_set_payload(INSTALLER_PAYLOAD_BOOT, mod->mod_start, mod->mod_end) == 0) {
+                    boot_log_ok("Registering live installer boot payload");
+                } else {
+                    boot_log_warn("Registering live installer boot payload");
+                }
+            } else if (local_streq(mod->cmdline, "aos-install-bios")) {
+                if (installer_set_payload(INSTALLER_PAYLOAD_BIOS, mod->mod_start, mod->mod_end) == 0) {
+                    boot_log_ok("Registering live installer BIOS payload");
+                } else {
+                    boot_log_warn("Registering live installer BIOS payload");
+                }
             } else {
                 char part_name[16] = "ram0p0";
                 part_name[5] = (char)('0' + (module_index - 1));
@@ -404,6 +499,15 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
     if (aos_boot_verbose) {
         boot_log_ok("Starting TTY layer");
     }
+    init_pic();
+    mouse_init();
+    driver_register_system(DRIVER_CLASS_CORE, "aos-pic", "ready: irq remap");
+    boot_log_ok("Starting PIC remap");
+    asm volatile("sti");
+    driver_register_system(DRIVER_CLASS_CORE, "aos-interrupts", "ready: hardware interrupts");
+    driver_register_system(DRIVER_CLASS_INPUT, "aos-keyboard", "ready: ps/2 keyboard input");
+    driver_register_system(DRIVER_CLASS_INPUT, "aos-mouse", "ready: ps/2 pointer input");
+    boot_log_ok("Starting hardware interrupts");
     if (aos_boot_verbose) {
         partition_print_table();
     }
@@ -445,7 +549,7 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
     }
 
     const struct partition* fat32_part = partition_find_by_fs(PARTITION_FS_FAT32);
-    if (fat32_part) {
+    if (fat32_part && !blkdev_get(fat32_part->blkdev_id)->has_ops) {
         fat32_seen = 1;
         if (fat32_init(fat32_part->start, fat32_part->end) == 0) {
             fat32_ready = 1;
@@ -458,7 +562,7 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
     }
 
     const struct partition* ext4_part = partition_find_by_fs(PARTITION_FS_EXT4);
-    if (ext4_part) {
+    if (ext4_part && !blkdev_get(ext4_part->blkdev_id)->has_ops) {
         ext4_seen = 1;
         if (ext4_init(ext4_part->start, ext4_part->end) == 0) {
             ext4_ready = 1;
@@ -486,14 +590,22 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
         boot_log_ok("AOS layout: /trash is FAT32 recovery storage");
     }
 
-    ensure_default_user_layout();
-    boot_log_ok("Starting default user home layout");
+    if (ensure_default_filesystem_layout() == 0) {
+        boot_log_ok("Starting AOS filesystem layout");
+    } else {
+        boot_log_warn("Starting AOS filesystem layout");
+    }
     seed_default_user_database();
     boot_log_ok("Starting default user database");
+    seed_default_user_files();
+    boot_log_ok("Starting default user files");
 
     tmpfs_init();
     driver_register_system(DRIVER_CLASS_FILESYSTEM, "aos-tmpfs", "ready: mounted at /tmp");
     boot_log_ok("Starting tmpfs mount at /tmp");
+
+    session_prepare_boot_identity();
+    boot_log_ok("Starting login session manager");
 
     // Setup Kernel Stack for GS
     extern uint64_t stack_top;
@@ -506,24 +618,24 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
     driver_register_system(DRIVER_CLASS_CORE, "aos-syscall", "ready: userspace syscall entry");
     boot_log_ok("Starting syscall entry");
 
-    // Load user ELF from initrd and map PT_LOAD segments.
+    // Load the desktop manager from initrd and map PT_LOAD segments.
     extern uint64_t p4_table[];
-    boot_log_started("Starting shell.elf lookup");
+    boot_log_started("Starting desktop.elf lookup");
     uint8_t* user_elf = 0;
     uint32_t user_elf_size = 0;
-    if (initrd_get_file("shell.elf", &user_elf, &user_elf_size) != 0) {
-        boot_log_fail("Starting shell.elf lookup");
-        aos_panic("Boot failure", "shell.elf is missing from the initrd.");
+    if (initrd_get_file("desktop.elf", &user_elf, &user_elf_size) != 0) {
+        boot_log_fail("Starting desktop.elf lookup");
+        aos_panic("Boot failure", "desktop.elf is missing from the initrd.");
     }
-    boot_log_ok("Starting shell.elf lookup");
+    boot_log_ok("Starting desktop.elf lookup");
 
     uint64_t user_entry = 0;
-    boot_log_started("Starting shell.elf load");
+    boot_log_started("Starting desktop.elf load");
     if (elf64_load_image(p4_table, user_elf, user_elf_size, &user_entry) != 0) {
-        boot_log_fail("Starting shell.elf load");
-        aos_panic("Boot failure", "ELF loader rejected shell.elf.");
+        boot_log_fail("Starting desktop.elf load");
+        aos_panic("Boot failure", "ELF loader rejected desktop.elf.");
     }
-    boot_log_ok("Starting shell.elf load");
+    boot_log_ok("Starting desktop.elf load");
     if (aos_boot_verbose) {
         serial_print("AOS: user entry @ ");
         serial_print_hex64(user_entry);
@@ -542,8 +654,8 @@ void kernel_main(uint64_t magic, uint64_t mb_info) {
     vmm_map_page(p4_table, ustack_base + 0x1000, (uint64_t)ustack_page1, 0x7);
     uint64_t ustack_top = ustack_base + 0x2000;
     boot_log_ok("Starting userspace stack mapping");
-    boot_log_memory_snapshot("AOS memory before shell");
-    boot_log_ok("Starting shell.elf");
+    boot_log_memory_snapshot("AOS memory before desktop");
+    boot_log_ok("Starting desktop.elf");
 
     jump_to_user(user_entry, ustack_top);
 

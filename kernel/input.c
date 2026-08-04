@@ -31,6 +31,29 @@ static void input_queue_event(const struct aos_input_event* event) {
     }
 }
 
+static int input_coalesce_pointer(const struct aos_input_event* event) {
+    uint32_t previous_index;
+    struct aos_input_event* previous;
+
+    if (event_head == event_tail) {
+        return 0;
+    }
+
+    previous_index = (event_head + INPUT_EVENT_QUEUE_SIZE - 1) % INPUT_EVENT_QUEUE_SIZE;
+    previous = &event_queue[previous_index];
+    if (previous->key != AOS_KEY_POINTER ||
+        previous->source != event->source ||
+        previous->pointer_buttons != event->pointer_buttons) {
+        return 0;
+    }
+
+    previous->pointer_dx += event->pointer_dx;
+    previous->pointer_dy += event->pointer_dy;
+    previous->pointer_x = event->pointer_x;
+    previous->pointer_y = event->pointer_y;
+    return 1;
+}
+
 static void input_queue_tty_byte(char ascii) {
     uint32_t next = (tty_head + 1) % INPUT_TTY_QUEUE_SIZE;
 
@@ -48,6 +71,11 @@ void input_push_key(uint8_t source, uint16_t key, char ascii, uint8_t pressed, u
     event.pressed = pressed ? 1U : 0U;
     event.modifiers = modifiers;
     event.source = source;
+    event.pointer_x = 0;
+    event.pointer_y = 0;
+    event.pointer_dx = 0;
+    event.pointer_dy = 0;
+    event.pointer_buttons = 0;
     input_queue_event(&event);
 
     if (event.pressed && ascii != 0) {
@@ -57,6 +85,24 @@ void input_push_key(uint8_t source, uint16_t key, char ascii, uint8_t pressed, u
 
 void input_push_char(uint8_t source, char ascii) {
     input_push_key(source, (uint16_t)(uint8_t)ascii, ascii, 1, 0);
+}
+
+void input_push_pointer(uint8_t source, int32_t x, int32_t y, int32_t dx, int32_t dy, uint32_t buttons) {
+    struct aos_input_event event;
+
+    event.key = AOS_KEY_POINTER;
+    event.ascii = 0;
+    event.pressed = buttons ? 1U : 0U;
+    event.modifiers = 0;
+    event.source = source;
+    event.pointer_x = x;
+    event.pointer_y = y;
+    event.pointer_dx = dx;
+    event.pointer_dy = dy;
+    event.pointer_buttons = buttons;
+    if (!input_coalesce_pointer(&event)) {
+        input_queue_event(&event);
+    }
 }
 
 int input_pop_event(struct aos_input_event* out) {

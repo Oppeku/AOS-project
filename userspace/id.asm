@@ -90,6 +90,8 @@ _start:
     syscall
 
 write_name:
+    cmp rdi, 0
+    je .root
     cmp byte [rel user_info + 16], 0
     je .fallback
     lea rsi, [rel open_paren]
@@ -101,13 +103,11 @@ write_name:
     mov rdx, close_paren_end - close_paren
     jmp write_stdout
 .fallback:
-    cmp rdi, 0
-    jne .done
+    ret
+.root:
     lea rsi, [rel root_user_suffix]
     mov rdx, root_user_suffix_end - root_user_suffix
     jmp write_stdout
-.done:
-    ret
 
 write_group:
     cmp rdi, 0

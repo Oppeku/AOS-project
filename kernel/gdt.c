@@ -17,6 +17,7 @@ struct gdt_ptr {
 } __attribute__((packed));
 
 extern uint64_t stack_top;
+extern void gdt_flush(uint64_t);
 extern void load_tss(uint16_t);
 
 void init_gdt() {
@@ -53,7 +54,7 @@ void init_gdt() {
     gp.limit = (sizeof(uint64_t) * 7) - 1;
     gp.base = (uint64_t)&gdt_entries;
     
-    __asm__ volatile("lgdt %0" : : "m"(gp));
+    gdt_flush((uint64_t)&gp);
 
     // 6. Load the TSS selector (0x28 is the 5th entry)
     load_tss(0x28);

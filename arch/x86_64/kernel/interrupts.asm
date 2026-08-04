@@ -9,6 +9,7 @@ extern gpf_handler
 extern page_fault_handler
 extern timer_handler
 extern keyboard_handler_main
+extern mouse_handler_main
 
 global load_idt
 global generic_stub
@@ -16,6 +17,7 @@ global invalid_opcode_stub
 global gpf_stub
 global page_fault_stub
 global keyboard_stub
+global mouse_stub
 global timer_stub
 
 load_idt:
@@ -78,6 +80,16 @@ keyboard_stub:
     call keyboard_handler_main
     ; Send EOI
     mov al, 0x20
+    out 0x20, al
+    pop_all
+    iretq
+
+mouse_stub:
+    push_all
+    call mouse_handler_main
+    ; Send EOI to slave PIC, then master PIC cascade
+    mov al, 0x20
+    out 0xA0, al
     out 0x20, al
     pop_all
     iretq

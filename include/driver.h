@@ -23,6 +23,7 @@
 #define DRIVER_CLASS_NETWORK 6
 #define DRIVER_CLASS_TIME 7
 #define DRIVER_CLASS_USB 8
+#define DRIVER_CLASS_BLUETOOTH 9
 
 struct driver_device {
     uint8_t type;

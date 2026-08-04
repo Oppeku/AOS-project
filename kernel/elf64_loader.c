@@ -15,6 +15,8 @@
 #define ELF_MACHINE_X86_64 62
 #define ELF_PT_LOAD 1
 #define ELF_PT_DYNAMIC 2
+#define ELF_PT_INTERP 3
+#define ELF_PT_PHDR 6
 #define ELF_PF_W (1U << 1)
 #define ELF_SHT_RELA 4
 #define ELF_DT_NULL 0
@@ -23,7 +25,6 @@
 #define ELF_DT_RELAENT 9
 #define ELF_R_X86_64_RELATIVE 8
 #define ELF_R_X86_64_IRELATIVE 37
-#define USER_ELF_DYN_BASE 0x0000700001000000ULL
 #define MAX_LOADER_PAGES 8192
 
 
@@ -85,6 +86,7 @@ struct elf64_rela {
 struct mapped_page {
     uint64_t va;
     uint8_t* phys;
+    uint64_t flags;
 };
 
 static void* local_memcpy(void* dst, const void* src, size_t n) {
@@ -121,10 +123,20 @@ static int add_u64_overflow(uint64_t a, uint64_t b, uint64_t* out) {
     return *out < a;
 }
 
-static int record_page(struct mapped_page* pages, size_t* page_count, uint64_t va, uint8_t* phys) {
+static struct mapped_page* find_page(struct mapped_page* pages,
+                                     size_t page_count, uint64_t va) {
+    for (size_t i = 0; i < page_count; i++) {
+        if (pages[i].va == va) return &pages[i];
+    }
+    return NULL;
+}
+
+static int record_page(struct mapped_page* pages, size_t* page_count,
+                       uint64_t va, uint8_t* phys, uint64_t flags) {
     if (*page_count >= MAX_LOADER_PAGES) return -1;
     pages[*page_count].va = va;
     pages[*page_count].phys = phys;
+    pages[*page_count].flags = flags;
     (*page_count)++;
     return 0;
 }
@@ -300,9 +312,82 @@ static int apply_dynamic_relocations(
     return apply_rela_entries(rela_entries, rela_count, load_bias, pages, page_count);
 }
 
-int elf64_load_image(uint64_t* pml4, const uint8_t* image, size_t image_size, uint64_t* entry_out) {
-    if (!pml4 || !image || !entry_out) return -1;
+static int copy_interpreter_path(const struct elf64_phdr* phdrs,
+                                 uint16_t phnum,
+                                 const uint8_t* image,
+                                 size_t image_size,
+                                 char out[ELF64_INTERPRETER_PATH_MAX]) {
+    out[0] = '\0';
+    for (uint16_t i = 0; i < phnum; i++) {
+        const struct elf64_phdr* phdr = &phdrs[i];
+        size_t length;
+
+        if (phdr->p_type != ELF_PT_INTERP) continue;
+        if (phdr->p_filesz < 2 ||
+            phdr->p_filesz > ELF64_INTERPRETER_PATH_MAX ||
+            phdr->p_offset > image_size ||
+            phdr->p_filesz > image_size - phdr->p_offset) {
+            return -1;
+        }
+        length = (size_t)phdr->p_filesz;
+        if (image[phdr->p_offset + length - 1] != '\0') return -1;
+        for (size_t j = 0; j < length; j++) {
+            out[j] = (char)image[phdr->p_offset + j];
+        }
+        return 0;
+    }
+    return 0;
+}
+
+static int compute_program_headers(const struct elf64_ehdr* ehdr,
+                                   const struct elf64_phdr* phdrs,
+                                   uint64_t load_bias,
+                                   uint64_t* out) {
+    for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
+        const struct elf64_phdr* phdr = &phdrs[i];
+        if (phdr->p_type == ELF_PT_PHDR) {
+            return add_u64_overflow(phdr->p_vaddr, load_bias, out) ? -1 : 0;
+        }
+    }
+    for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
+        const struct elf64_phdr* phdr = &phdrs[i];
+        uint64_t segment_file_end;
+        uint64_t segment_va;
+
+        if (phdr->p_type != ELF_PT_LOAD || phdr->p_filesz == 0 ||
+            ehdr->e_phoff < phdr->p_offset) {
+            continue;
+        }
+        if (add_u64_overflow(phdr->p_offset, phdr->p_filesz,
+                             &segment_file_end) ||
+            ehdr->e_phoff >= segment_file_end) {
+            continue;
+        }
+        if (add_u64_overflow(load_bias, phdr->p_vaddr, &segment_va) ||
+            add_u64_overflow(segment_va,
+                             ehdr->e_phoff - phdr->p_offset, out)) {
+            return -1;
+        }
+        return 0;
+    }
+    *out = 0;
+    return 0;
+}
+
+int elf64_load_image_ex(uint64_t* pml4,
+                        const uint8_t* image,
+                        size_t image_size,
+                        const struct elf64_load_options* options,
+                        struct elf64_load_result* result) {
+    struct elf64_load_options defaults = {
+        .dynamic_base = ELF64_DEFAULT_DYNAMIC_BASE,
+        .apply_relocations = 1,
+    };
+
+    if (!pml4 || !image || !result) return -1;
     if (image_size < sizeof(struct elf64_ehdr)) return -1;
+    if (!options) options = &defaults;
+    local_memset(result, 0, sizeof(*result));
 
     const struct elf64_ehdr* ehdr = (const struct elf64_ehdr*)image;
     if (ehdr->e_ident[0] != 0x7F || ehdr->e_ident[1] != 'E' ||
@@ -318,6 +403,9 @@ int elf64_load_image(uint64_t* pml4, const uint8_t* image, size_t image_size, ui
     uint64_t load_bias = 0;
     if (ehdr->e_type == ELF_TYPE_DYN) {
         uint64_t min_vaddr = UINT64_MAX;
+        uint64_t dynamic_base = options->dynamic_base
+                                    ? options->dynamic_base
+                                    : ELF64_DEFAULT_DYNAMIC_BASE;
         int found_load = 0;
         for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
             const struct elf64_phdr* phdr = &phdrs[i];
@@ -327,12 +415,18 @@ int elf64_load_image(uint64_t* pml4, const uint8_t* image, size_t image_size, ui
             found_load = 1;
         }
         if (!found_load) return -1;
-        if (USER_ELF_DYN_BASE < min_vaddr) return -1;
-        load_bias = USER_ELF_DYN_BASE - min_vaddr;
+        if (dynamic_base < min_vaddr) return -1;
+        load_bias = dynamic_base - min_vaddr;
     }
 
     static struct mapped_page pages[MAX_LOADER_PAGES];
     size_t page_count = 0;
+    uint64_t image_end = 0;
+
+    if (copy_interpreter_path(phdrs, ehdr->e_phnum, image, image_size,
+                              result->interpreter) != 0) {
+        return -1;
+    }
 
     for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
         const struct elf64_phdr* phdr = &phdrs[i];
@@ -347,6 +441,7 @@ int elf64_load_image(uint64_t* pml4, const uint8_t* image, size_t image_size, ui
         if (add_u64_overflow(phdr->p_vaddr, load_bias, &seg_vaddr)) return -1;
         if (add_u64_overflow(seg_vaddr, phdr->p_filesz, &seg_file_end)) return -1;
         if (add_u64_overflow(seg_vaddr, phdr->p_memsz, &seg_mem_end)) return -1;
+        if (seg_mem_end > image_end) image_end = seg_mem_end;
 
         uint64_t seg_start = align_down_4k(seg_vaddr);
         uint64_t seg_end = align_up_4k(seg_mem_end);
@@ -357,11 +452,19 @@ int elf64_load_image(uint64_t* pml4, const uint8_t* image, size_t image_size, ui
         }
 
         for (uint64_t va = seg_start; va < seg_end; va += 4096) {
-            void* phys = pmm_alloc_block();
-            if (!phys) return -1;
-
-            local_memset(phys, 0, 4096);
-            if (record_page(pages, &page_count, va, (uint8_t*)phys) != 0) return -1;
+            struct mapped_page* page = find_page(pages, page_count, va);
+            if (!page) {
+                void* phys = pmm_alloc_block();
+                if (!phys) return -1;
+                local_memset(phys, 0, 4096);
+                if (record_page(pages, &page_count, va, (uint8_t*)phys,
+                                map_flags) != 0) {
+                    return -1;
+                }
+                page = &pages[page_count - 1];
+            } else {
+                page->flags |= map_flags;
+            }
 
             uint64_t page_start = va;
             uint64_t page_end = va + 4096;
@@ -372,24 +475,55 @@ int elf64_load_image(uint64_t* pml4, const uint8_t* image, size_t image_size, ui
                 uint64_t src_off = phdr->p_offset + (copy_start_va - seg_vaddr);
                 uint64_t dst_off = copy_start_va - page_start;
                 uint64_t copy_len = copy_end_va - copy_start_va;
-                local_memcpy((uint8_t*)phys + dst_off, image + src_off, (size_t)copy_len);
+                local_memcpy(page->phys + dst_off, image + src_off,
+                             (size_t)copy_len);
             }
 
             if (page_start >= seg_mem_end) continue;
-            vmm_map_page(pml4, va, (uint64_t)phys, map_flags);
+            vmm_map_page(pml4, va, (uint64_t)page->phys, page->flags);
         }
     }
 
-    int applied_section_relocs = 0;
-    if (apply_section_relocations(ehdr, image, image_size, load_bias, pages, page_count, &applied_section_relocs) != 0) {
-        return -1;
-    }
-    if (!applied_section_relocs) {
-        if (apply_dynamic_relocations(phdrs, ehdr->e_phnum, load_bias, pages, page_count) != 0) return -1;
+    if (options->apply_relocations && result->interpreter[0] == '\0') {
+        int applied_section_relocs = 0;
+        if (apply_section_relocations(ehdr, image, image_size, load_bias,
+                                      pages, page_count,
+                                      &applied_section_relocs) != 0) {
+            return -1;
+        }
+        if (!applied_section_relocs &&
+            apply_dynamic_relocations(phdrs, ehdr->e_phnum, load_bias,
+                                      pages, page_count) != 0) {
+            return -1;
+        }
     }
 
     uint64_t entry = 0;
     if (add_u64_overflow(ehdr->e_entry, load_bias, &entry)) return -1;
-    *entry_out = entry;
+    if (compute_program_headers(ehdr, phdrs, load_bias,
+                                &result->program_headers) != 0) {
+        return -1;
+    }
+    result->entry = entry;
+    result->load_bias = load_bias;
+    result->image_end = image_end;
+    result->program_header_size = ehdr->e_phentsize;
+    result->program_header_count = ehdr->e_phnum;
+    return 0;
+}
+
+int elf64_load_image(uint64_t* pml4, const uint8_t* image,
+                     size_t image_size, uint64_t* entry_out) {
+    const struct elf64_load_options options = {
+        .dynamic_base = ELF64_DEFAULT_DYNAMIC_BASE,
+        .apply_relocations = 1,
+    };
+    struct elf64_load_result result;
+
+    if (!entry_out ||
+        elf64_load_image_ex(pml4, image, image_size, &options, &result) != 0) {
+        return -1;
+    }
+    *entry_out = result.entry;
     return 0;
 }

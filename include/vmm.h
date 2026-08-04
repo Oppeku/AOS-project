@@ -16,6 +16,8 @@ void init_vmm();
 void vmm_map_page(uint64_t* pml4, uint64_t virt, uint64_t phys, uint64_t flags);
 uint64_t vmm_unmap_page(uint64_t* pml4, uint64_t virt);
 void vmm_free_user_space(uint64_t* pml4);
+uint64_t* vmm_create_user_space(uint64_t* kernel_source);
+void vmm_destroy_user_space(uint64_t* pml4);
 uint64_t* vmm_copy_p4(uint64_t* src_p4);
 
 #endif

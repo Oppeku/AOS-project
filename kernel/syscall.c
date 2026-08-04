@@ -47,6 +47,59 @@ uint64_t align_up_page(uint64_t value) {
     return (value + 0xFFFULL) & ~0xFFFULL;
 }
 
+static int command_has_prefix(const char* command, const char* prefix) {
+    if (!command || !prefix) return 0;
+    while (*prefix != '\0') {
+        if (*command++ != *prefix++) return 0;
+    }
+    return 1;
+}
+
+static void serial_print_i64(int64_t value) {
+    char buffer[22];
+    size_t cursor = sizeof(buffer);
+    uint64_t magnitude;
+
+    buffer[--cursor] = '\0';
+    if (value < 0) {
+        magnitude = (uint64_t)(-(value + 1)) + 1;
+    } else {
+        magnitude = (uint64_t)value;
+    }
+    do {
+        buffer[--cursor] = (char)('0' + magnitude % 10);
+        magnitude /= 10;
+    } while (magnitude != 0);
+    if (value < 0) buffer[--cursor] = '-';
+    serial_print(&buffer[cursor]);
+}
+
+int syscall_linux_trace_enabled(void) {
+    process_t* proc = get_current_process();
+    return proc && command_has_prefix(proc->command, "linux-dynamic-");
+}
+
+void syscall_linux_trace(const char* operation, int64_t result) {
+    if (!syscall_linux_trace_enabled()) return;
+    serial_print("linux-compat: ");
+    serial_print(operation);
+    serial_print(" -> ");
+    serial_print_i64(result);
+    serial_print("\n");
+}
+
+void syscall_linux_trace_path(const char* operation, const char* path,
+                              int64_t result) {
+    if (!syscall_linux_trace_enabled()) return;
+    serial_print("linux-compat: ");
+    serial_print(operation);
+    serial_print(" ");
+    serial_print(path ? path : "(null)");
+    serial_print(" -> ");
+    serial_print_i64(result);
+    serial_print("\n");
+}
+
 void set_uts_field(char* dst, const char* src) {
     uint64_t i = 0;
     while (src[i] && i < 64) {
@@ -99,7 +152,6 @@ const char* normalize_path(const char* path) {
     return path;
 }
 
-#if !AOS_LIVE_PERMISSIVE
 static int path_starts_with_component(const char* path, const char* prefix) {
     size_t i = 0;
 
@@ -114,20 +166,14 @@ static int path_starts_with_component(const char* path, const char* prefix) {
 
     return path[i] == '\0' || path[i] == '/';
 }
-#endif
 
 int user_can_mutate_path(const char* path) {
-#if AOS_LIVE_PERMISSIVE
-    (void)path;
-    return 1;
-#else
     if (process_is_root()) return 1;
     if (!path || *path == '\0') return 0;
 
     return path_starts_with_component(path, process_get_home()) ||
            path_starts_with_component(path, "tmp") ||
            path_starts_with_component(path, "trash");
-#endif
 }
 
 static int component_is_dot(const char* s, size_t len) {
@@ -760,7 +806,8 @@ static int64_t build_exec_stack(
     const char* const* envp_kernel,
     size_t envc,
     const char* fallback_argv0,
-    uint64_t entry,
+    uint64_t program_entry,
+    uint64_t interpreter_base,
     uint64_t phdr_va,
     uint64_t phent_size,
     uint64_t phnum
@@ -778,14 +825,21 @@ static int64_t build_exec_stack(
         AUXV_AT_EUID = 12,
         AUXV_AT_GID = 13,
         AUXV_AT_EGID = 14,
+        AUXV_AT_PLATFORM = 15,
+        AUXV_AT_HWCAP = 16,
+        AUXV_AT_CLKTCK = 17,
         AUXV_AT_SECURE = 23,
         AUXV_AT_RANDOM = 25,
+        AUXV_AT_HWCAP2 = 26,
         AUXV_AT_EXECFN = 31,
     };
+    const size_t aux_pair_count = 19;
+    process_t* proc = get_current_process();
     uint64_t sp = USER_STACK_BASE + USER_STACK_SIZE;
     uint64_t arg_ptrs[MAX_EXEC_ARGS];
     uint64_t env_ptrs[MAX_EXEC_ENVP];
     uint64_t random_ptr = 0;
+    uint64_t platform_ptr = 0;
 
     if (argv_kernel) {
         for (size_t i = 0; i < argc; i++) {
@@ -807,16 +861,34 @@ static int64_t build_exec_stack(
         }
     }
 
+    {
+        int64_t rc = copy_string_to_stack(stack_pages, &sp, "x86_64",
+                                          &platform_ptr);
+        if (rc < 0) return rc;
+    }
+
     if (sp < USER_STACK_BASE + 16) return -(int64_t)LINUX_E2BIG;
     sp -= 16;
-    for (size_t i = 0; i < 16; i++) {
-        uint8_t* dst = stack_va_to_ptr(stack_pages, sp + i);
-        if (!dst) return -(int64_t)LINUX_EFAULT;
-        *dst = 0;
+    {
+        uint64_t seed = timer_get_ticks() ^
+                        ((uint64_t)(proc ? proc->pid : 1U) << 32) ^
+                        0xA05C2026D15EA5E5ULL;
+        for (size_t i = 0; i < 16; i++) {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            uint8_t* dst = stack_va_to_ptr(stack_pages, sp + i);
+            if (!dst) return -(int64_t)LINUX_EFAULT;
+            *dst = (uint8_t)(seed >> ((i & 7U) * 8U));
+        }
     }
     random_ptr = sp;
 
     sp &= ~0xFULL;
+    if (((aux_pair_count * 2U + envc + argc + 3U) & 1U) != 0) {
+        int64_t rc = push_u64(stack_pages, &sp, 0);
+        if (rc < 0) return rc;
+    }
 
     int64_t rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_NULL, 0);
     if (rc < 0) return rc;
@@ -826,19 +898,32 @@ static int64_t build_exec_stack(
     if (rc < 0) return rc;
     rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_SECURE, 0);
     if (rc < 0) return rc;
-    rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_EGID, 0);
+    rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_HWCAP2, 0);
     if (rc < 0) return rc;
-    rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_GID, 0);
+    rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_CLKTCK,
+                        timer_get_frequency() ? timer_get_frequency() : 100);
     if (rc < 0) return rc;
-    rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_EUID, 0);
+    rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_HWCAP, 0);
     if (rc < 0) return rc;
-    rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_UID, 0);
+    rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_PLATFORM, platform_ptr);
     if (rc < 0) return rc;
-    rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_ENTRY, entry);
+    rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_EGID,
+                        proc ? proc->egid : 0);
+    if (rc < 0) return rc;
+    rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_GID,
+                        proc ? proc->gid : 0);
+    if (rc < 0) return rc;
+    rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_EUID,
+                        proc ? proc->euid : 0);
+    if (rc < 0) return rc;
+    rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_UID,
+                        proc ? proc->uid : 0);
+    if (rc < 0) return rc;
+    rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_ENTRY, program_entry);
     if (rc < 0) return rc;
     rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_FLAGS, 0);
     if (rc < 0) return rc;
-    rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_BASE, 0);
+    rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_BASE, interpreter_base);
     if (rc < 0) return rc;
     rc = push_auxv_pair(stack_pages, &sp, AUXV_AT_PAGESZ, 4096);
     if (rc < 0) return rc;
@@ -898,31 +983,12 @@ struct exec_elf64_phdr {
     uint64_t p_align;
 } __attribute__((packed));
 
-#define EXEC_ELF_TYPE_DYN 3
-#define EXEC_ELF_PT_LOAD 1
 #define EXEC_USER_ELF_DYN_BASE 0x0000700001000000ULL
+#define EXEC_USER_INTERP_DYN_BASE 0x0000701000000000ULL
+#define EXEC_FILE_IMAGE_MAX (8U * 1024U * 1024U)
 
-static uint64_t exec_align_down_4k(uint64_t value) {
-    return value & ~0xFFFULL;
-}
-
-static int64_t compute_phdr_user_va(const struct exec_elf64_ehdr* ehdr, const struct exec_elf64_phdr* phdrs, uint64_t load_bias, uint64_t* out) {
-    if (!ehdr || !phdrs || !out) {
-        return -(int64_t)LINUX_EFAULT;
-    }
-
-    for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
-        const struct exec_elf64_phdr* phdr = &phdrs[i];
-        if (phdr->p_type != EXEC_ELF_PT_LOAD || phdr->p_filesz == 0) continue;
-        if (ehdr->e_phoff < phdr->p_offset) continue;
-        if (ehdr->e_phoff >= phdr->p_offset + phdr->p_filesz) continue;
-
-        *out = load_bias + phdr->p_vaddr + (ehdr->e_phoff - phdr->p_offset);
-        return 0;
-    }
-
-    return -(int64_t)LINUX_EINVAL;
-}
+static uint8_t exec_file_image[EXEC_FILE_IMAGE_MAX];
+static uint8_t exec_interp_image[EXEC_FILE_IMAGE_MAX];
 
 int64_t exec_initrd_program(
     const char* normalized,
@@ -930,7 +996,8 @@ int64_t exec_initrd_program(
     const uint64_t* envp_user
 ) {
     process_t* proc = get_current_process();
-    uint64_t* user_p4 = proc ? proc->p4_table : p4_table;
+    uint64_t* old_p4 = proc ? proc->p4_table : NULL;
+    uint64_t* new_p4 = NULL;
     char argv_storage[MAX_EXEC_ARGS][MAX_EXEC_STRING];
     char envp_storage[MAX_EXEC_ENVP][MAX_EXEC_STRING];
     const char* argv_kernel[MAX_EXEC_ARGS];
@@ -948,71 +1015,128 @@ int64_t exec_initrd_program(
     if (rc < 0) return rc;
 
     const uint8_t* elf_data = NULL;
+    const uint8_t* interp_data = NULL;
     uint32_t elf_size = 0;
+    uint32_t interp_size = 0;
     struct vfs_node program_node;
-    uint64_t phdr_va = 0;
-    uint64_t load_bias = 0;
+    struct vfs_node interpreter_node;
+    const struct elf64_load_options program_options = {
+        .dynamic_base = EXEC_USER_ELF_DYN_BASE,
+        .apply_relocations = 1,
+    };
+    const struct elf64_load_options interpreter_options = {
+        .dynamic_base = EXEC_USER_INTERP_DYN_BASE,
+        .apply_relocations = 0,
+    };
+    struct elf64_load_result program_load;
+    struct elf64_load_result interpreter_load;
+    uint64_t start_entry;
+    uint64_t interpreter_base = 0;
+    int64_t failure = -(int64_t)LINUX_EINVAL;
+    const char* failure_stage = "program ELF";
+
+    if (!proc || !old_p4) {
+        return -(int64_t)LINUX_EINVAL;
+    }
     if (vfs_lookup(normalized, &program_node) != 0) {
         return -(int64_t)LINUX_ENOENT;
     }
     if (program_node.type != VFS_NODE_TYPE_REGULAR) {
         return -(int64_t)LINUX_EINVAL;
     }
-    if (program_node.backend != VFS_BACKEND_AOSFS && program_node.backend != VFS_BACKEND_INITRD) {
+    if (program_node.backend != VFS_BACKEND_AOSFS &&
+        program_node.backend != VFS_BACKEND_INITRD &&
+        program_node.backend != VFS_BACKEND_TMPFS &&
+        program_node.backend != VFS_BACKEND_FAT32 &&
+        program_node.backend != VFS_BACKEND_EXT4) {
         return -(int64_t)LINUX_EACCES;
     }
-    elf_data = program_node.u.data;
     elf_size = program_node.size;
+    if ((program_node.backend == VFS_BACKEND_AOSFS ||
+         program_node.backend == VFS_BACKEND_INITRD) &&
+        program_node.u.data) {
+        elf_data = program_node.u.data;
+    } else {
+        if (elf_size > sizeof(exec_file_image) ||
+            vfs_read_node(&program_node, 0, exec_file_image, elf_size) != 0) {
+            return -(int64_t)LINUX_E2BIG;
+        }
+        elf_data = exec_file_image;
+    }
 
     if (elf_size < sizeof(struct exec_elf64_ehdr)) {
         return -(int64_t)LINUX_EINVAL;
     }
 
     const struct exec_elf64_ehdr* ehdr = (const struct exec_elf64_ehdr*)elf_data;
-    uint64_t image_end = 0;
     if (ehdr->e_phoff + (uint64_t)ehdr->e_phnum * sizeof(struct exec_elf64_phdr) > elf_size) {
         return -(int64_t)LINUX_EINVAL;
     }
-    const struct exec_elf64_phdr* phdrs = (const struct exec_elf64_phdr*)(elf_data + ehdr->e_phoff);
-    if (ehdr->e_type == EXEC_ELF_TYPE_DYN) {
-        uint64_t min_vaddr = UINT64_MAX;
-        int found_load = 0;
-        for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
-            if (phdrs[i].p_type != EXEC_ELF_PT_LOAD || phdrs[i].p_memsz == 0) continue;
-            uint64_t seg_start = exec_align_down_4k(phdrs[i].p_vaddr);
-            if (seg_start < min_vaddr) min_vaddr = seg_start;
-            found_load = 1;
-        }
-        if (!found_load || EXEC_USER_ELF_DYN_BASE < min_vaddr) {
-            return -(int64_t)LINUX_EINVAL;
-        }
-        load_bias = EXEC_USER_ELF_DYN_BASE - min_vaddr;
-    }
-    for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
-        uint64_t seg_end = 0;
-        if (phdrs[i].p_type != EXEC_ELF_PT_LOAD || phdrs[i].p_memsz == 0) continue;
-        seg_end = load_bias + phdrs[i].p_vaddr + phdrs[i].p_memsz;
-        if (seg_end > image_end) {
-            image_end = seg_end;
-        }
-    }
-    rc = compute_phdr_user_va(ehdr, phdrs, load_bias, &phdr_va);
-    if (rc < 0) return rc;
 
-    vmm_free_user_space(user_p4);
+    new_p4 = vmm_create_user_space(old_p4);
+    if (!new_p4) {
+        return -(int64_t)LINUX_ENOMEM;
+    }
 
-    uint64_t entry = 0;
-    if (elf64_load_image(user_p4, elf_data, elf_size, &entry) != 0) {
-        return -(int64_t)LINUX_EINVAL;
+    if (elf64_load_image_ex(new_p4, elf_data, elf_size,
+                            &program_options, &program_load) != 0) {
+        goto exec_failed;
+    }
+    start_entry = program_load.entry;
+
+    if (program_load.interpreter[0] != '\0') {
+        const char* interpreter_path =
+            normalize_path(program_load.interpreter);
+
+        failure_stage = "interpreter lookup";
+        if (*interpreter_path == '\0' ||
+            vfs_lookup(interpreter_path, &interpreter_node) != 0) {
+            failure = -(int64_t)LINUX_ENOENT;
+            goto exec_failed;
+        }
+        if (interpreter_node.type != VFS_NODE_TYPE_REGULAR) {
+            goto exec_failed;
+        }
+        interp_size = interpreter_node.size;
+        if ((interpreter_node.backend == VFS_BACKEND_AOSFS ||
+             interpreter_node.backend == VFS_BACKEND_INITRD) &&
+            interpreter_node.u.data) {
+            interp_data = interpreter_node.u.data;
+        } else {
+            failure_stage = "interpreter read";
+            if (interp_size > sizeof(exec_interp_image) ||
+                vfs_read_node(&interpreter_node, 0, exec_interp_image,
+                              interp_size) != 0) {
+                failure = -(int64_t)LINUX_E2BIG;
+                goto exec_failed;
+            }
+            interp_data = exec_interp_image;
+        }
+        failure_stage = "interpreter ELF";
+        if (elf64_load_image_ex(new_p4, interp_data, interp_size,
+                                &interpreter_options,
+                                &interpreter_load) != 0 ||
+            interpreter_load.interpreter[0] != '\0') {
+            goto exec_failed;
+        }
+        start_entry = interpreter_load.entry;
+        interpreter_base = interpreter_load.load_bias;
     }
 
     uint8_t* stack_pages[USER_STACK_PAGES];
     for (size_t i = 0; i < USER_STACK_PAGES; i++) {
+        stack_pages[i] = NULL;
+    }
+    failure_stage = "stack allocation";
+    for (size_t i = 0; i < USER_STACK_PAGES; i++) {
         stack_pages[i] = (uint8_t*)pmm_alloc_block();
-        if (!stack_pages[i]) return -(int64_t)LINUX_EIO;
+        if (!stack_pages[i]) {
+            failure = -(int64_t)LINUX_ENOMEM;
+            goto exec_failed;
+        }
         local_memset(stack_pages[i], 0, 4096);
         vmm_map_page(
-            user_p4,
+            new_p4,
             USER_STACK_BASE + i * 4096ULL,
             (uint64_t)stack_pages[i],
             PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER
@@ -1020,6 +1144,7 @@ int64_t exec_initrd_program(
     }
 
     uint64_t new_rsp = 0;
+    failure_stage = "initial stack";
     rc = build_exec_stack(
         stack_pages,
         &new_rsp,
@@ -1028,22 +1153,28 @@ int64_t exec_initrd_program(
         envp_kernel,
         envc,
         normalized,
-        entry,
-        phdr_va,
-        ehdr->e_phentsize,
-        ehdr->e_phnum
+        program_load.entry,
+        interpreter_base,
+        program_load.program_headers,
+        program_load.program_header_size,
+        program_load.program_header_count
     );
-    if (rc < 0) return rc;
-
-    if (proc) {
-        proc->fs_base = 0;
-        proc->brk_base = align_up_page(image_end);
-        proc->brk_current = proc->brk_base;
-        proc->brk_mapped_end = proc->brk_base;
-        proc->mmap_next = USER_MMAP_BASE;
-        proc->clear_child_tid = 0;
-        copy_kernel_cstr_bounded(proc->command, sizeof(proc->command), normalized);
+    if (rc < 0) {
+        failure = rc;
+        goto exec_failed;
     }
+
+    proc->fs_base = 0;
+    proc->brk_base = align_up_page(program_load.image_end);
+    proc->brk_current = proc->brk_base;
+    proc->brk_mapped_end = proc->brk_base;
+    proc->mmap_next = USER_MMAP_BASE;
+    proc->clear_child_tid = 0;
+    copy_kernel_cstr_bounded(proc->command, sizeof(proc->command), normalized);
+
+    proc->p4_table = new_p4;
+    switch_page_table(new_p4);
+    vmm_destroy_user_space(old_p4);
     process_load_fs_base(0);
 
     serial_print("AOS: execve -> ");
@@ -1052,10 +1183,18 @@ int64_t exec_initrd_program(
 
     input_clear_events();
     asm volatile("swapgs");
-    jump_to_user(entry, new_rsp);
+    jump_to_user(start_entry, new_rsp);
     return 0;
-}
 
+exec_failed:
+    serial_print("AOS: execve failed at ");
+    serial_print(failure_stage);
+    serial_print("\n");
+    vmm_destroy_user_space(new_p4);
+    return failure;
+}
+//DONT MIND MEEE
+//OREWA OPPEKO THE FREIZA FORCE
 
 
 

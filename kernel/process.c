@@ -2,6 +2,7 @@
 #include <pmm.h>
 #include <vmm.h>
 #include <timer.h>
+#include <thermal.h>
 #include <xhci.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -15,6 +16,7 @@ extern void process_load_fs_base(uint64_t fs_base);
 process_t process_list[MAX_PROCESSES];
 process_t* current_process = NULL;
 static uint32_t next_pid = 1;
+static uint8_t g_thermal_policy_active;
 
 static void local_strcpy_bounded(char* dst, size_t dst_size, const char* src) {
     size_t i = 0;
@@ -47,6 +49,43 @@ static void* local_memset(void* dest, int val, size_t n) {
     return dest;
 }
 
+static int local_streq(const char* a, const char* b) {
+    if (!a || !b) return 0;
+    while (*a && *b && *a == *b) {
+        a++;
+        b++;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+static const char* command_basename(const char* command) {
+    const char* base = command ? command : "";
+
+    for (const char* p = base; *p; p++) {
+        if (*p == '/') base = p + 1;
+    }
+    return base;
+}
+
+static int process_is_thermal_essential(const process_t* proc) {
+    const char* command;
+
+    if (!proc || proc->pid == 1) return 1;
+    command = command_basename(proc->command);
+    return local_streq(command, "desktop.elf") ||
+           local_streq(command, "desktop") ||
+           local_streq(command, "dextop") ||
+           local_streq(command, "dm") ||
+           local_streq(command, "mui") ||
+           local_streq(command, "mui.elf") ||
+           local_streq(command, "MUI") ||
+           local_streq(command, "shutdown") ||
+           local_streq(command, "shutdown.elf") ||
+           local_streq(command, "restart") ||
+           local_streq(command, "restart.elf") ||
+           local_streq(command, "reboot");
+}
+
 void schedule(struct syscall_regs* regs) {
     if (!current_process) return;
 
@@ -66,13 +105,25 @@ void schedule(struct syscall_regs* regs) {
     }
 
     process_t* next = NULL;
+    process_t* throttled_fallback = NULL;
     for (int i = 0; i < MAX_PROCESSES; i++) {
         int idx = (start_idx + i) % MAX_PROCESSES;
         if (process_list[idx].status == PROCESS_STATUS_READY) {
+            if (process_list[idx].thermal_throttled) {
+                if (!throttled_fallback) {
+                    throttled_fallback = &process_list[idx];
+                }
+                process_list[idx].thermal_skip_phase =
+                    (uint8_t)((process_list[idx].thermal_skip_phase + 1U) & 3U);
+                if (process_list[idx].thermal_skip_phase != 0) {
+                    continue;
+                }
+            }
             next = &process_list[idx];
             break;
         }
     }
+    if (!next) next = throttled_fallback;
 
     if (next && next != current_process) {
         current_process = next;
@@ -94,6 +145,12 @@ void schedule(struct syscall_regs* regs) {
 void timer_handler(struct syscall_regs* regs) {
     (void)regs;
     timer_tick();
+    if (current_process && current_process->status == PROCESS_STATUS_RUNNING) {
+        current_process->cpu_ticks++;
+    }
+    if (thermal_timer_tick()) {
+        process_update_thermal_policy(thermal_emergency_active());
+    }
     xhci_poll_keyboard();
     /*
      * The timer IRQ currently arrives through an interrupt gate, not the
@@ -107,6 +164,7 @@ void timer_handler(struct syscall_regs* regs) {
 }
 
 void init_process() {
+    g_thermal_policy_active = 0;
     for (int i = 0; i < MAX_PROCESSES; i++) {
         process_list[i].status = PROCESS_STATUS_DEAD;
     }
@@ -138,7 +196,7 @@ void init_process() {
     process_list[0].egid = 0;
     local_strcpy_bounded(process_list[0].username, sizeof(process_list[0].username), "root");
     local_strcpy_bounded(process_list[0].home, sizeof(process_list[0].home), "root");
-    local_strcpy_bounded(process_list[0].command, sizeof(process_list[0].command), "shell.elf");
+    local_strcpy_bounded(process_list[0].command, sizeof(process_list[0].command), "desktop.elf");
     current_process = &process_list[0];
 }
 
@@ -186,6 +244,8 @@ int64_t sys_fork(struct syscall_regs* regs) {
     local_memcpy(child->username, current_process->username, sizeof(child->username));
     local_memcpy(child->home, current_process->home, sizeof(child->home));
     local_memcpy(child->command, current_process->command, sizeof(child->command));
+    child->thermal_throttled =
+        g_thermal_policy_active && !process_is_thermal_essential(child);
 
     // Child returns 0
     child->regs.rax = 0;
@@ -272,10 +332,71 @@ int process_is_root(void) {
     return process_get_euid() == 0;
 }
 
+void process_update_thermal_policy(int emergency_active) {
+    g_thermal_policy_active = emergency_active ? 1U : 0U;
+
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        process_t* proc = &process_list[i];
+        if (proc->status == PROCESS_STATUS_DEAD ||
+            proc->status == PROCESS_STATUS_ZOMBIE) {
+            proc->thermal_throttled = 0;
+            proc->thermal_skip_phase = 0;
+            continue;
+        }
+        proc->thermal_throttled =
+            g_thermal_policy_active && !process_is_thermal_essential(proc);
+        if (!proc->thermal_throttled) proc->thermal_skip_phase = 0;
+    }
+}
+
+void process_thermal_gate_current(void) {
+    uint32_t frequency;
+    uint64_t wait_ticks;
+    uint64_t start;
+
+    if (!current_process || !current_process->thermal_throttled) return;
+    frequency = timer_get_frequency();
+    if (frequency == 0) frequency = 100;
+    wait_ticks = frequency / 20U;
+    if (wait_ticks == 0) wait_ticks = 1;
+
+    current_process->thermal_delay_events++;
+    start = timer_get_ticks();
+    while (timer_get_ticks() - start < wait_ticks) {
+        __asm__ volatile("sti; hlt; cli" ::: "memory");
+    }
+}
+
+uint32_t process_thermal_throttled_count(void) {
+    uint32_t count = 0;
+
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (process_list[i].status != PROCESS_STATUS_DEAD &&
+            process_list[i].status != PROCESS_STATUS_ZOMBIE &&
+            process_list[i].thermal_throttled) {
+            count++;
+        }
+    }
+    return count;
+}
+
 void process_become_root(void) {
     if (!current_process) {
         return;
     }
     current_process->euid = 0;
     current_process->egid = 0;
+}
+
+void process_set_identity(uint32_t uid, uint32_t gid,
+                          const char* username, const char* home) {
+    if (!current_process) return;
+    current_process->uid = uid;
+    current_process->gid = gid;
+    current_process->euid = uid;
+    current_process->egid = gid;
+    local_strcpy_bounded(current_process->username,
+                         sizeof(current_process->username), username);
+    local_strcpy_bounded(current_process->home,
+                         sizeof(current_process->home), home);
 }
