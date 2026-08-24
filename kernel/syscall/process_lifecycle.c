@@ -6,6 +6,17 @@ static int wait_pid_matches(int64_t requested_pid, uint32_t child_pid) {
     return requested_pid == -1 || requested_pid == (int64_t)child_pid;
 }
 
+static int write_process_u32(process_t* process, uint64_t user_address,
+                             uint32_t value) {
+    if (!process || user_address == 0 ||
+        vmm_prepare_user_write(process->p4_table, user_address,
+                               sizeof(value)) != 0) {
+        return -1;
+    }
+    *(uint32_t*)(uintptr_t)user_address = value;
+    return 0;
+}
+
 void syscall_release_fd_table_entries(struct fd_entry* table, size_t count) {
     if (!table) {
         return;
@@ -17,6 +28,8 @@ void syscall_release_fd_table_entries(struct fd_entry* table, size_t count) {
             release_pipe_ref(table[i].handle_index, table[i].kind);
         } else if (table[i].kind == FD_KIND_SOCKET) {
             close_socket_ref(table[i].handle_index);
+        } else if (table[i].kind == FD_KIND_EVENTFD) {
+            release_eventfd_ref(table[i].handle_index);
         }
         table[i].kind = FD_KIND_FREE;
         table[i].handle_index = -1;
@@ -55,7 +68,10 @@ int64_t sys_wait4(struct syscall_regs* regs) {
     if (zombie) {
         uint32_t child_pid = zombie->pid;
         if (status_ptr) {
-            *status_ptr = zombie->exit_status;
+            if (write_process_u32(parent, (uint64_t)(uintptr_t)status_ptr,
+                                  (uint32_t)zombie->exit_status) != 0) {
+                return -(int64_t)LINUX_EFAULT;
+            }
         }
         local_memset(zombie, 0, sizeof(*zombie));
         zombie->status = PROCESS_STATUS_DEAD;
@@ -79,18 +95,18 @@ int64_t sys_wait4(struct syscall_regs* regs) {
 
     current_process = first_ready;
     first_ready->status = PROCESS_STATUS_RUNNING;
+    process_load_fs_base(first_ready->fs_base);
     switch_to_process(first_ready);
     return -(int64_t)LINUX_EINTR;
 }
 
 static void release_process_memory(process_t* proc) {
-    if (!proc || !proc->p4_table) return;
+    uint64_t* address_space;
 
-    vmm_free_user_space(proc->p4_table);
-    if (proc->p4_table != p4_table) {
-        pmm_free_block(proc->p4_table);
-    }
+    if (!proc || !proc->p4_table) return;
+    address_space = proc->p4_table;
     proc->p4_table = NULL;
+    process_release_address_space(address_space, proc);
 }
 
 static process_t* find_process_by_pid(uint32_t pid) {
@@ -117,6 +133,16 @@ static int wake_parent_if_waiting(process_t* child, int32_t raw_status) {
     if (!wait_pid_matches(parent->wait_target_pid, child->pid)) return 0;
 
     if (parent->wait_status_ptr) {
+        if (vmm_prepare_user_write(
+                parent->p4_table,
+                (uint64_t)(uintptr_t)parent->wait_status_ptr,
+                sizeof(*parent->wait_status_ptr)) != 0) {
+            parent->regs.rax = (uint64_t)-(int64_t)LINUX_EFAULT;
+            parent->status = PROCESS_STATUS_READY;
+            parent->wait_target_pid = -1;
+            parent->wait_status_ptr = NULL;
+            return 1;
+        }
         switch_page_table(parent->p4_table);
         *parent->wait_status_ptr = raw_status;
         if (current_process && current_process->p4_table) {
@@ -135,6 +161,7 @@ void process_exit_and_wake_parent(int exit_code) {
     process_t* parent = NULL;
     uint32_t child_pid;
     int32_t raw_status;
+    int wait_status_error = 0;
 
     if (!child) {
         halt_forever();
@@ -142,7 +169,39 @@ void process_exit_and_wake_parent(int exit_code) {
 
     child_pid = child->pid;
     raw_status = (exit_code & 0xFF) << 8;
+    process_complete_vfork(child);
+    if (child->clear_child_tid) {
+        (void)write_process_u32(child, child->clear_child_tid, 0);
+    }
     syscall_release_fd_table_entries(child->fd_table, PROCESS_FD_MAX);
+
+    if (child->is_thread) {
+        process_t* next = NULL;
+        uint32_t thread_group_id = child->thread_group_id;
+
+        release_process_memory(child);
+        local_memset(child, 0, sizeof(*child));
+        child->status = PROCESS_STATUS_DEAD;
+        for (int pass = 0; pass < 2 && !next; pass++) {
+            for (int i = 0; i < MAX_PROCESSES; i++) {
+                process_t* candidate = &process_list[i];
+                if (candidate->status != PROCESS_STATUS_READY) continue;
+                if (pass == 0 && candidate->thread_group_id != thread_group_id) {
+                    continue;
+                }
+                next = candidate;
+                break;
+            }
+        }
+        if (next) {
+            current_process = next;
+            next->status = PROCESS_STATUS_RUNNING;
+            switch_page_table(next->p4_table);
+            process_load_fs_base(next->fs_base);
+            switch_to_process(next);
+        }
+        halt_forever();
+    }
 
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (process_list[i].status == PROCESS_STATUS_DEAD) continue;
@@ -155,18 +214,30 @@ void process_exit_and_wake_parent(int exit_code) {
     if (parent && parent->status == PROCESS_STATUS_WAITING &&
         wait_pid_matches(parent->wait_target_pid, child_pid)) {
         if (parent->wait_status_ptr) {
+            if (vmm_prepare_user_write(
+                    parent->p4_table,
+                    (uint64_t)(uintptr_t)parent->wait_status_ptr,
+                    sizeof(*parent->wait_status_ptr)) != 0) {
+                wait_status_error = 1;
+                parent->wait_status_ptr = NULL;
+            }
             switch_page_table(parent->p4_table);
-            *parent->wait_status_ptr = raw_status;
+            if (parent->wait_status_ptr) {
+                *parent->wait_status_ptr = raw_status;
+            }
         }
         switch_page_table(parent->p4_table);
         release_process_memory(child);
-        parent->regs.rax = child_pid;
+        parent->regs.rax = wait_status_error
+                               ? (uint64_t)-(int64_t)LINUX_EFAULT
+                               : child_pid;
         parent->status = PROCESS_STATUS_RUNNING;
         parent->wait_target_pid = -1;
         parent->wait_status_ptr = NULL;
         local_memset(child, 0, sizeof(*child));
         child->status = PROCESS_STATUS_DEAD;
         current_process = parent;
+        process_load_fs_base(parent->fs_base);
         switch_to_process(parent);
     }
 
@@ -182,6 +253,7 @@ void process_exit_and_wake_parent(int exit_code) {
             parent->wait_target_pid = -1;
             parent->wait_status_ptr = NULL;
         }
+        process_load_fs_base(parent->fs_base);
         switch_to_process(parent);
     }
 

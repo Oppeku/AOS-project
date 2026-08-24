@@ -797,6 +797,22 @@ int64_t sys_gfx_blit_alpha_mask(struct syscall_regs* regs) {
     return 0;
 }
 
+int64_t sys_gfx_capture_rgb32(struct syscall_regs* regs) {
+    uint32_t* pixels = (uint32_t*)(uintptr_t)regs->rdi;
+    uint64_t position = regs->rsi;
+    uint64_t dimensions = regs->rdx;
+    uint32_t x = (uint32_t)(position >> 32);
+    uint32_t y = (uint32_t)position;
+    uint32_t width = (uint32_t)(dimensions >> 32);
+    uint32_t height = (uint32_t)dimensions;
+
+    if (!pixels) return -(int64_t)LINUX_EFAULT;
+    if (gfx_capture_rgb32(pixels, x, y, width, height) != 0) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    return 0;
+}
+
 int64_t sys_input_poll(struct syscall_regs* regs) {
     struct aos_input_event_user* out = (struct aos_input_event_user*)(uintptr_t)regs->rdi;
     struct aos_input_event event;
@@ -878,6 +894,56 @@ int64_t sys_sudo_auth(struct syscall_regs* regs) {
     credentials_wipe(password, sizeof(password));
     process_become_root();
     return 0;
+}
+
+#define AOS_UNI_QUERY 0U
+#define AOS_UNI_ENABLE 1U
+#define AOS_UNI_DISABLE 2U
+#define AOS_UNI_ENABLE_PATH "var/lib/uni/enabled"
+
+static int uni_enabled(void) {
+    struct vfs_node node;
+    return vfs_lookup(AOS_UNI_ENABLE_PATH, &node) == 0 &&
+           node.type == VFS_NODE_TYPE_REGULAR;
+}
+
+static int ensure_system_directory(const char* path) {
+    struct vfs_node node;
+
+    if (vfs_lookup(path, &node) == 0) {
+        return node.type == VFS_NODE_TYPE_DIRECTORY ? 0 : -1;
+    }
+    return vfs_mkdir_path(path, 0755, 0, 0);
+}
+
+int64_t sys_uni_control(struct syscall_regs* regs) {
+    uint32_t action = (uint32_t)regs->rdi;
+    struct vfs_node node;
+
+    if (action == AOS_UNI_QUERY) return uni_enabled();
+    if (action != AOS_UNI_ENABLE && action != AOS_UNI_DISABLE) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    if (!process_is_root() &&
+        !session_user_is_administrator(process_get_username())) {
+        return -(int64_t)LINUX_EPERM;
+    }
+
+    if (action == AOS_UNI_DISABLE) {
+        if (!uni_enabled()) return 0;
+        return vfs_unlink_path(AOS_UNI_ENABLE_PATH) == 0
+                   ? 0 : -(int64_t)LINUX_EIO;
+    }
+
+    if (uni_enabled()) return 1;
+    if (ensure_system_directory("var") != 0 ||
+        ensure_system_directory("var/lib") != 0 ||
+        ensure_system_directory("var/lib/uni") != 0 ||
+        aosfs_create_path_mode(AOS_UNI_ENABLE_PATH, 0600, 0, 0,
+                               &node) != 0) {
+        return -(int64_t)LINUX_EIO;
+    }
+    return 1;
 }
 
 int64_t sys_session(struct syscall_regs* regs) {

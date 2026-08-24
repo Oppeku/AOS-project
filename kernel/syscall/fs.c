@@ -34,6 +34,68 @@ struct linux_dirent64 {
     char d_name[];
 };
 
+struct linux_statfs {
+    int64_t f_type;
+    int64_t f_bsize;
+    uint64_t f_blocks;
+    uint64_t f_bfree;
+    uint64_t f_bavail;
+    uint64_t f_files;
+    uint64_t f_ffree;
+    int32_t f_fsid[2];
+    int64_t f_namelen;
+    int64_t f_frsize;
+    int64_t f_flags;
+    int64_t f_spare[4];
+};
+
+_Static_assert(sizeof(struct linux_statfs) == 120,
+               "Linux x86_64 statfs ABI size changed");
+
+static int64_t linux_fs_magic(uint8_t backend) {
+    switch (backend) {
+        case VFS_BACKEND_FAT32:
+            return 0x4D44;
+        case VFS_BACKEND_TMPFS:
+            return 0x01021994;
+        case VFS_BACKEND_EXT4:
+            return 0xEF53;
+        case VFS_BACKEND_AOSFS:
+            return 0x414F5346;
+        case VFS_BACKEND_PROCFS:
+            return 0x9FA0;
+        case VFS_BACKEND_INITRD:
+            return 0x858458F6;
+        default:
+            return 0x62656572;
+    }
+}
+
+static void fill_linux_statfs(struct linux_statfs* st, uint8_t backend) {
+    const uint64_t block_size = 4096;
+    const uint64_t default_blocks = 262144;
+
+    local_memset(st, 0, sizeof(*st));
+    st->f_type = linux_fs_magic(backend);
+    st->f_bsize = (int64_t)block_size;
+    st->f_blocks = default_blocks;
+    st->f_bfree = default_blocks / 2;
+    st->f_bavail = st->f_bfree;
+    st->f_files = 65536;
+    st->f_ffree = 32768;
+    st->f_fsid[0] = (int32_t)backend;
+    st->f_namelen = 255;
+    st->f_frsize = (int64_t)block_size;
+    if (backend == VFS_BACKEND_INITRD ||
+        backend == VFS_BACKEND_SYNTHETIC ||
+        backend == VFS_BACKEND_PROCFS) {
+        st->f_bfree = 0;
+        st->f_bavail = 0;
+        st->f_ffree = 0;
+        st->f_flags = 1;
+    }
+}
+
 static void fill_linux_stat(struct linux_stat* st, uint64_t inode_seed, uint32_t size, uint32_t mode) {
     local_memset(st, 0, sizeof(*st));
     st->st_dev = 1;
@@ -46,6 +108,21 @@ static void fill_linux_stat(struct linux_stat* st, uint64_t inode_seed, uint32_t
     st->st_blocks = (int64_t)((size + 511U) / 512U);
 }
 
+static void fill_linux_node_stat(struct linux_stat* st,
+                                 const struct vfs_node* node) {
+    uint32_t type_mode = LINUX_S_IFREG;
+
+    if (node->type == VFS_NODE_TYPE_DIRECTORY) type_mode = LINUX_S_IFDIR;
+    else if (node->type == VFS_NODE_TYPE_CHAR_DEVICE) type_mode = LINUX_S_IFCHR;
+    else if (node->type == VFS_NODE_TYPE_SYMLINK) type_mode = LINUX_S_IFLNK;
+    fill_linux_stat(st, node->inode,
+                    node->type == VFS_NODE_TYPE_DIRECTORY ? 0 : node->size,
+                    type_mode | (node->mode & 07777U));
+    st->st_uid = node->uid;
+    st->st_gid = node->gid;
+    if (node->type == VFS_NODE_TYPE_DIRECTORY) st->st_nlink = 2;
+}
+
 int64_t sys_open(struct syscall_regs* regs) {
     char path_buf[MAX_EXEC_STRING];
     char resolved_path[MAX_EXEC_STRING];
@@ -55,7 +132,8 @@ int64_t sys_open(struct syscall_regs* regs) {
     rc = resolve_path_from_dirfd(LINUX_AT_FDCWD, path_buf, resolved_path, sizeof(resolved_path));
     if (rc < 0) return rc;
 
-    return open_path_with_flags(resolved_path, (uint64_t)regs->rsi);
+    return open_path_with_flags(resolved_path, (uint64_t)regs->rsi,
+                                (uint16_t)regs->rdx);
 }
 
 int64_t sys_access(struct syscall_regs* regs) {
@@ -91,7 +169,8 @@ int64_t sys_openat(struct syscall_regs* regs) {
     rc = resolve_path_from_dirfd(dirfd, path_buf, resolved_path, sizeof(resolved_path));
     if (rc < 0) return rc;
 
-    rc = open_path_with_flags(resolved_path, regs->rdx);
+    rc = open_path_with_flags(resolved_path, regs->rdx,
+                              (uint16_t)regs->r10);
     syscall_linux_trace_path("openat", resolved_path, rc);
     return rc;
 }
@@ -114,7 +193,8 @@ int64_t sys_mkdirat(struct syscall_regs* regs) {
     if (!user_can_mutate_path(resolved_path)) {
         return -(int64_t)LINUX_EACCES;
     }
-    if (aosfs_mkdir_path(resolved_path) != 0) {
+    if (vfs_mkdir_path(resolved_path, (uint16_t)regs->rdx,
+                       process_get_euid(), process_get_egid()) != 0) {
         return -(int64_t)LINUX_EACCES;
     }
     return 0;
@@ -132,6 +212,7 @@ int64_t sys_unlinkat(struct syscall_regs* regs) {
     int64_t dirfd = linux_signed_int_arg(regs->rdi);
     char path_buf[MAX_EXEC_STRING];
     char resolved_path[MAX_EXEC_STRING];
+    struct vfs_node node;
     int64_t rc;
 
     if (regs->rdx != 0 && regs->rdx != LINUX_AT_REMOVEDIR) {
@@ -144,19 +225,200 @@ int64_t sys_unlinkat(struct syscall_regs* regs) {
     rc = resolve_path_from_dirfd(dirfd, path_buf, resolved_path, sizeof(resolved_path));
     if (rc < 0) return rc;
 
+    if (vfs_lstat(resolved_path, &node) != 0) {
+        return -(int64_t)LINUX_ENOENT;
+    }
     if (!user_can_mutate_path(resolved_path)) {
         return -(int64_t)LINUX_EACCES;
     }
     if (regs->rdx == LINUX_AT_REMOVEDIR) {
+        if (node.type != VFS_NODE_TYPE_DIRECTORY) {
+            return -(int64_t)LINUX_ENOTDIR;
+        }
         if (vfs_rmdir_path(resolved_path) != 0) {
             return -(int64_t)LINUX_EACCES;
         }
         return 0;
     }
+    if (node.type == VFS_NODE_TYPE_DIRECTORY) {
+        return -(int64_t)LINUX_EISDIR;
+    }
     if (vfs_unlink_path(resolved_path) != 0) {
         return -(int64_t)LINUX_EACCES;
     }
     return 0;
+}
+
+int64_t sys_unlink(struct syscall_regs* regs) {
+    struct syscall_regs unlinkat_regs = *regs;
+    unlinkat_regs.rdi = (uint64_t)(int64_t)LINUX_AT_FDCWD;
+    unlinkat_regs.rsi = regs->rdi;
+    unlinkat_regs.rdx = 0;
+    return sys_unlinkat(&unlinkat_regs);
+}
+
+int64_t sys_rmdir(struct syscall_regs* regs) {
+    struct syscall_regs unlinkat_regs = *regs;
+    unlinkat_regs.rdi = (uint64_t)(int64_t)LINUX_AT_FDCWD;
+    unlinkat_regs.rsi = regs->rdi;
+    unlinkat_regs.rdx = LINUX_AT_REMOVEDIR;
+    return sys_unlinkat(&unlinkat_regs);
+}
+
+int64_t sys_symlinkat(struct syscall_regs* regs) {
+    int64_t dirfd = linux_signed_int_arg(regs->rsi);
+    char target[MAX_EXEC_STRING];
+    char path[MAX_EXEC_STRING];
+    char resolved_path[MAX_EXEC_STRING];
+    int64_t rc;
+
+    rc = copy_user_cstr((const char*)(uintptr_t)regs->rdi,
+                        target, sizeof(target));
+    if (rc < 0) return rc;
+    rc = copy_user_cstr((const char*)(uintptr_t)regs->rdx,
+                        path, sizeof(path));
+    if (rc < 0) return rc;
+    rc = resolve_path_from_dirfd(dirfd, path, resolved_path,
+                                 sizeof(resolved_path));
+    if (rc < 0) return rc;
+    if (!user_can_mutate_path(resolved_path)) {
+        return -(int64_t)LINUX_EACCES;
+    }
+    {
+        struct vfs_node existing;
+        if (vfs_lstat(resolved_path, &existing) == 0) {
+            return -(int64_t)LINUX_EEXIST;
+        }
+    }
+    if (vfs_symlink_path(target, resolved_path,
+                         process_get_euid(), process_get_egid()) != 0) {
+        return -(int64_t)LINUX_EACCES;
+    }
+    return 0;
+}
+
+int64_t sys_symlink(struct syscall_regs* regs) {
+    struct syscall_regs linkat_regs = *regs;
+    linkat_regs.rdi = regs->rdi;
+    linkat_regs.rsi = (uint64_t)(int64_t)LINUX_AT_FDCWD;
+    linkat_regs.rdx = regs->rsi;
+    return sys_symlinkat(&linkat_regs);
+}
+
+int64_t sys_readlinkat(struct syscall_regs* regs) {
+    int64_t dirfd = linux_signed_int_arg(regs->rdi);
+    char path[MAX_EXEC_STRING];
+    char resolved_path[MAX_EXEC_STRING];
+    char* buffer = (char*)(uintptr_t)regs->rdx;
+    struct vfs_node node;
+    size_t size = 0;
+    int64_t rc;
+
+    if (regs->r10 == 0) return -(int64_t)LINUX_EINVAL;
+    if (!buffer) return -(int64_t)LINUX_EFAULT;
+    rc = copy_user_cstr((const char*)(uintptr_t)regs->rsi,
+                        path, sizeof(path));
+    if (rc < 0) return rc;
+    rc = resolve_path_from_dirfd(dirfd, path, resolved_path,
+                                 sizeof(resolved_path));
+    if (rc < 0) return rc;
+    if (vfs_lstat(resolved_path, &node) != 0) {
+        return -(int64_t)LINUX_ENOENT;
+    }
+    if (node.type != VFS_NODE_TYPE_SYMLINK) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    if (vfs_readlink_path(resolved_path, buffer, (size_t)regs->r10,
+                          &size) != 0) {
+        return -(int64_t)LINUX_EIO;
+    }
+    return (int64_t)size;
+}
+
+int64_t sys_readlink(struct syscall_regs* regs) {
+    struct syscall_regs linkat_regs = *regs;
+    linkat_regs.rdi = (uint64_t)(int64_t)LINUX_AT_FDCWD;
+    linkat_regs.rsi = regs->rdi;
+    linkat_regs.rdx = regs->rsi;
+    linkat_regs.r10 = regs->rdx;
+    return sys_readlinkat(&linkat_regs);
+}
+
+int64_t sys_fchmodat(struct syscall_regs* regs) {
+    int64_t dirfd = linux_signed_int_arg(regs->rdi);
+    char path[MAX_EXEC_STRING];
+    char resolved_path[MAX_EXEC_STRING];
+    struct vfs_node node;
+    int64_t rc;
+
+    rc = copy_user_cstr((const char*)(uintptr_t)regs->rsi,
+                        path, sizeof(path));
+    if (rc < 0) return rc;
+    rc = resolve_path_from_dirfd(dirfd, path, resolved_path,
+                                 sizeof(resolved_path));
+    if (rc < 0) return rc;
+    if (vfs_lookup(resolved_path, &node) != 0) {
+        return -(int64_t)LINUX_ENOENT;
+    }
+    if (process_get_euid() != 0 && process_get_euid() != node.uid) {
+        return -(int64_t)LINUX_EPERM;
+    }
+    if (vfs_chmod_path(resolved_path, (uint16_t)regs->rdx, 0) != 0) {
+        return -(int64_t)LINUX_EACCES;
+    }
+    return 0;
+}
+
+int64_t sys_chmod(struct syscall_regs* regs) {
+    struct syscall_regs chmodat_regs = *regs;
+    chmodat_regs.rdi = (uint64_t)(int64_t)LINUX_AT_FDCWD;
+    chmodat_regs.rsi = regs->rdi;
+    chmodat_regs.rdx = regs->rsi;
+    return sys_fchmodat(&chmodat_regs);
+}
+
+int64_t sys_fchownat(struct syscall_regs* regs) {
+    int64_t dirfd = linux_signed_int_arg(regs->rdi);
+    char path[MAX_EXEC_STRING];
+    char resolved_path[MAX_EXEC_STRING];
+    struct vfs_node node;
+    uint32_t uid = (uint32_t)regs->rdx;
+    uint32_t gid = (uint32_t)regs->r10;
+    uint64_t flags = regs->r8;
+    int64_t rc;
+
+    if (flags & ~((uint64_t)LINUX_AT_SYMLINK_NOFOLLOW)) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    if (process_get_euid() != 0) return -(int64_t)LINUX_EPERM;
+    rc = copy_user_cstr((const char*)(uintptr_t)regs->rsi,
+                        path, sizeof(path));
+    if (rc < 0) return rc;
+    rc = resolve_path_from_dirfd(dirfd, path, resolved_path,
+                                 sizeof(resolved_path));
+    if (rc < 0) return rc;
+    if (((flags & LINUX_AT_SYMLINK_NOFOLLOW)
+             ? vfs_lstat(resolved_path, &node)
+             : vfs_lookup(resolved_path, &node)) != 0) {
+        return -(int64_t)LINUX_ENOENT;
+    }
+    if (uid == UINT32_MAX) uid = node.uid;
+    if (gid == UINT32_MAX) gid = node.gid;
+    if (vfs_chown_path(resolved_path, uid, gid,
+                       (flags & LINUX_AT_SYMLINK_NOFOLLOW) != 0) != 0) {
+        return -(int64_t)LINUX_EACCES;
+    }
+    return 0;
+}
+
+int64_t sys_chown(struct syscall_regs* regs) {
+    struct syscall_regs chownat_regs = *regs;
+    chownat_regs.rdi = (uint64_t)(int64_t)LINUX_AT_FDCWD;
+    chownat_regs.rsi = regs->rdi;
+    chownat_regs.rdx = regs->rsi;
+    chownat_regs.r10 = regs->rdx;
+    chownat_regs.r8 = 0;
+    return sys_fchownat(&chownat_regs);
 }
 
 int64_t sys_faccessat(struct syscall_regs* regs) {
@@ -235,10 +497,32 @@ int64_t sys_read(struct syscall_regs* regs) {
         return (int64_t)bytes_read;
     }
     if (entry->kind == FD_KIND_NULL) return 0;
+    if (entry->kind == FD_KIND_RANDOM) {
+        linux_random_fill((uint8_t*)buf, len);
+        return (int64_t)len;
+    }
     if (entry->kind == FD_KIND_SOCKET) {
         return socket_recv_data(get_socket_by_index(entry->handle_index),
                                 (uint8_t*)buf,
                                 len);
+    }
+    if (entry->kind == FD_KIND_EVENTFD) {
+        struct eventfd_object* eventfd =
+            get_eventfd_object_by_index(entry->handle_index);
+        uint64_t value;
+
+        if (!eventfd) return -(int64_t)LINUX_EBADF;
+        if (len < sizeof(value)) return -(int64_t)LINUX_EINVAL;
+        if (eventfd->counter == 0) {
+            if (eventfd->nonblocking) return -(int64_t)LINUX_EAGAIN;
+            if (regs->rcx >= 2) regs->rcx -= 2;
+            schedule(regs);
+            return -(int64_t)LINUX_EAGAIN;
+        }
+        value = eventfd->semaphore ? 1 : eventfd->counter;
+        eventfd->counter -= value;
+        local_memcpy(buf, &value, sizeof(value));
+        return (int64_t)sizeof(value);
     }
     if (entry->kind != FD_KIND_STDIN && entry->kind != FD_KIND_TTY) return -(int64_t)LINUX_EBADF;
     if (len == 0) return 0;
@@ -355,12 +639,7 @@ int64_t sys_fstat(struct syscall_regs* regs) {
             syscall_linux_trace("fstat bad handle", entry->handle_index);
             return -(int64_t)LINUX_EBADF;
         }
-        if (file->node.type == VFS_NODE_TYPE_DIRECTORY) {
-            uint64_t inode_seed = file->node.inode;
-            fill_linux_stat(st, inode_seed, 0, LINUX_S_IFDIR | LINUX_S_IRUSR | LINUX_S_IWUSR | LINUX_S_IRGRP | LINUX_S_IROTH);
-        } else {
-            fill_linux_stat(st, file->node.inode, file->node.size, LINUX_S_IFREG | LINUX_S_IRUSR | LINUX_S_IWUSR | LINUX_S_IRGRP | LINUX_S_IROTH);
-        }
+        fill_linux_node_stat(st, &file->node);
         return 0;
     }
     if (entry->kind == FD_KIND_PIPE_READER || entry->kind == FD_KIND_PIPE_WRITER) {
@@ -381,6 +660,127 @@ int64_t sys_stat(struct syscall_regs* regs) {
     return sys_newfstatat(&statat_regs);
 }
 
+int64_t sys_lstat(struct syscall_regs* regs) {
+    struct syscall_regs statat_regs = *regs;
+    statat_regs.rdi = (uint64_t)(int64_t)LINUX_AT_FDCWD;
+    statat_regs.rsi = regs->rdi;
+    statat_regs.rdx = regs->rsi;
+    statat_regs.r10 = LINUX_AT_SYMLINK_NOFOLLOW;
+    return sys_newfstatat(&statat_regs);
+}
+
+int64_t sys_flock(struct syscall_regs* regs) {
+    struct file_handle* file = get_vnode_handle(regs->rdi);
+    uint32_t operation = (uint32_t)regs->rsi;
+    uint32_t mode = operation & ~LINUX_LOCK_NB;
+
+    if (!file) return -(int64_t)LINUX_EBADF;
+    if (mode != LINUX_LOCK_SH && mode != LINUX_LOCK_EX &&
+        mode != LINUX_LOCK_UN) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    if (mode == LINUX_LOCK_UN) {
+        file->flock_mode = 0;
+        return 0;
+    }
+
+    for (int i = 0; i < MAX_FILE_HANDLES; i++) {
+        struct file_handle* other = &g_file_handles[i];
+        if (!other->in_use || other == file || other->flock_mode == 0) continue;
+        if (other->node.backend != file->node.backend ||
+            other->node.inode != file->node.inode) {
+            continue;
+        }
+        if (mode == LINUX_LOCK_EX || other->flock_mode == LINUX_LOCK_EX) {
+            return -(int64_t)LINUX_EAGAIN;
+        }
+    }
+    file->flock_mode = (uint8_t)mode;
+    return 0;
+}
+
+int64_t sys_ftruncate(struct syscall_regs* regs) {
+    struct file_handle* file = get_vnode_handle(regs->rdi);
+    int64_t requested_size = (int64_t)regs->rsi;
+    uint32_t new_size;
+    int result = -1;
+
+    if (!file) return -(int64_t)LINUX_EBADF;
+    if (file->node.type != VFS_NODE_TYPE_REGULAR) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    if ((file->open_flags & LINUX_O_ACCMODE) == 0) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    if (requested_size < 0 || (uint64_t)requested_size > UINT32_MAX) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    new_size = (uint32_t)requested_size;
+    if (file->node.backend == VFS_BACKEND_AOSFS) {
+        result = aosfs_resize_path(file->node.path, new_size);
+    } else if (file->node.backend == VFS_BACKEND_TMPFS) {
+        result = tmpfs_resize_path(file->node.path, new_size);
+    } else if (new_size == 0 && file->node.backend == VFS_BACKEND_FAT32) {
+        uint32_t first_cluster = 0;
+        uint32_t size = 0;
+        result = fat32_truncate_path(file->node.path, &first_cluster, &size);
+    } else if (new_size == 0 && file->node.backend == VFS_BACKEND_EXT4) {
+        uint32_t size = 0;
+        result = ext4_truncate_path(file->node.path, &size);
+    }
+    if (result != 0) return -(int64_t)LINUX_EIO;
+
+    for (int i = 0; i < MAX_FILE_HANDLES; i++) {
+        if (!g_file_handles[i].in_use ||
+            g_file_handles[i].node.backend != file->node.backend ||
+            g_file_handles[i].node.inode != file->node.inode) {
+            continue;
+        }
+        g_file_handles[i].node.size = new_size;
+    }
+    return 0;
+}
+
+int64_t sys_statfs(struct syscall_regs* regs) {
+    const char* path_user = (const char*)(uintptr_t)regs->rdi;
+    struct linux_statfs* st =
+        (struct linux_statfs*)(uintptr_t)regs->rsi;
+    char path[MAX_EXEC_STRING];
+    char resolved_path[MAX_EXEC_STRING];
+    struct vfs_node node;
+    int64_t rc;
+
+    if (!st) return -(int64_t)LINUX_EFAULT;
+    rc = copy_user_cstr(path_user, path, sizeof(path));
+    if (rc < 0) return rc;
+    rc = resolve_path_from_dirfd(LINUX_AT_FDCWD, path, resolved_path,
+                                 sizeof(resolved_path));
+    if (rc < 0) return rc;
+    if (vfs_lookup(resolved_path, &node) != 0) {
+        return -(int64_t)LINUX_ENOENT;
+    }
+    fill_linux_statfs(st, node.backend);
+    return 0;
+}
+
+int64_t sys_fstatfs(struct syscall_regs* regs) {
+    struct fd_entry* entry = get_fd_entry(regs->rdi);
+    struct linux_statfs* st =
+        (struct linux_statfs*)(uintptr_t)regs->rsi;
+    uint8_t backend = VFS_BACKEND_SYNTHETIC;
+
+    if (!entry) return -(int64_t)LINUX_EBADF;
+    if (!st) return -(int64_t)LINUX_EFAULT;
+    if (entry->kind == FD_KIND_VNODE) {
+        struct file_handle* file =
+            get_file_handle_by_index(entry->handle_index);
+        if (!file) return -(int64_t)LINUX_EBADF;
+        backend = file->node.backend;
+    }
+    fill_linux_statfs(st, backend);
+    return 0;
+}
+
 int64_t sys_newfstatat(struct syscall_regs* regs) {
     int64_t dirfd = linux_signed_int_arg(regs->rdi);
     const char* path = (const char*)(uintptr_t)regs->rsi;
@@ -397,12 +797,7 @@ int64_t sys_newfstatat(struct syscall_regs* regs) {
         if (entry->kind == FD_KIND_VNODE) {
             struct file_handle* file = get_file_handle_by_index(entry->handle_index);
             if (!file) return -(int64_t)LINUX_EBADF;
-            if (file->node.type == VFS_NODE_TYPE_DIRECTORY) {
-                uint64_t inode_seed = file->node.inode;
-                fill_linux_stat(st, inode_seed, 0, LINUX_S_IFDIR | LINUX_S_IRUSR | LINUX_S_IWUSR | LINUX_S_IRGRP | LINUX_S_IROTH);
-            } else {
-                fill_linux_stat(st, file->node.inode, file->node.size, LINUX_S_IFREG | LINUX_S_IRUSR | LINUX_S_IWUSR | LINUX_S_IRGRP | LINUX_S_IROTH);
-            }
+            fill_linux_node_stat(st, &file->node);
         } else {
             uint32_t mode = (entry->kind == FD_KIND_PIPE_READER || entry->kind == FD_KIND_PIPE_WRITER)
                 ? (LINUX_S_IFIFO | LINUX_S_IRUSR | LINUX_S_IWUSR | LINUX_S_IRGRP | LINUX_S_IROTH)
@@ -421,16 +816,12 @@ int64_t sys_newfstatat(struct syscall_regs* regs) {
 
     {
         struct vfs_node node;
-        if (vfs_lookup(resolved_path, &node) != 0) {
+        if (((flags & LINUX_AT_SYMLINK_NOFOLLOW)
+                 ? vfs_lstat(resolved_path, &node)
+                 : vfs_lookup(resolved_path, &node)) != 0) {
             return -(int64_t)LINUX_ENOENT;
         }
-        if (node.type == VFS_NODE_TYPE_DIRECTORY) {
-            fill_linux_stat(st, node.inode, 0, LINUX_S_IFDIR | LINUX_S_IRUSR | LINUX_S_IWUSR | LINUX_S_IRGRP | LINUX_S_IROTH);
-        } else if (node.type == VFS_NODE_TYPE_CHAR_DEVICE) {
-            fill_linux_stat(st, node.inode, 0, LINUX_S_IFCHR | LINUX_S_IRUSR | LINUX_S_IWUSR | LINUX_S_IRGRP | LINUX_S_IROTH);
-        } else {
-            fill_linux_stat(st, node.inode, node.size, LINUX_S_IFREG | LINUX_S_IRUSR | LINUX_S_IWUSR | LINUX_S_IRGRP | LINUX_S_IROTH);
-        }
+        fill_linux_node_stat(st, &node);
     }
 
     return 0;

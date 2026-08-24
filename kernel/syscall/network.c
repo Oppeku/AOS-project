@@ -15,6 +15,58 @@ struct linux_sockaddr_in6 {
     uint32_t sin6_scope_id;
 } __attribute__((packed));
 
+struct linux_sockaddr_un {
+    uint16_t sun_family;
+    uint8_t sun_path[108];
+} __attribute__((packed));
+
+struct linux_iovec {
+    void* base;
+    uint64_t length;
+};
+
+struct linux_msghdr {
+    void* name;
+    uint32_t name_length;
+    uint32_t reserved_name;
+    struct linux_iovec* iov;
+    uint64_t iov_count;
+    void* control;
+    uint64_t control_length;
+    int32_t flags;
+    uint32_t reserved_flags;
+};
+
+struct linux_cmsghdr {
+    uint64_t length;
+    int32_t level;
+    int32_t type;
+};
+
+struct linux_ucred {
+    int32_t pid;
+    uint32_t uid;
+    uint32_t gid;
+};
+
+static uint64_t sock_cmsg_align(uint64_t value) {
+    return (value + 7U) & ~7ULL;
+}
+
+static void socket_record_sender_credentials(struct socket_object* receiver) {
+    process_t* sender;
+
+    if (!receiver || !receiver->pass_credentials ||
+        receiver->rx_credentials_valid) {
+        return;
+    }
+    sender = get_current_process();
+    receiver->rx_credentials_valid = 1;
+    receiver->rx_sender_pid = sender ? sender->pid : 0;
+    receiver->rx_sender_uid = process_get_euid();
+    receiver->rx_sender_gid = process_get_egid();
+}
+
 static uint16_t sock_get_be16(const uint8_t* p) {
     return (uint16_t)(((uint16_t)p[0] << 8) | p[1]);
 }
@@ -1326,6 +1378,144 @@ int64_t sys_socket(struct syscall_regs* regs) {
     return install_socket_fd((int)regs->rdi, (int)regs->rsi, (int)regs->rdx);
 }
 
+static int unix_socket_path(const struct linux_sockaddr_un* address,
+                            uint64_t address_length, const uint8_t** path,
+                            uint16_t* path_length) {
+    uint64_t length;
+
+    if (!address || !path || !path_length) return -1;
+    if (address_length <= sizeof(address->sun_family) ||
+        address_length > sizeof(*address) ||
+        address->sun_family != LINUX_AF_UNIX) {
+        return -1;
+    }
+    length = address_length - sizeof(address->sun_family);
+    if (address->sun_path[0] != 0) {
+        uint64_t text_length = 0;
+        while (text_length < length && address->sun_path[text_length] != 0) {
+            text_length++;
+        }
+        length = text_length;
+    }
+    if (length == 0 || length > sizeof(address->sun_path)) return -1;
+    *path = address->sun_path;
+    *path_length = (uint16_t)length;
+    return 0;
+}
+
+int64_t sys_bind(struct syscall_regs* regs) {
+    struct socket_object* sock = get_socket_for_fd(regs->rdi);
+    const struct linux_sockaddr_un* address =
+        (const struct linux_sockaddr_un*)(uintptr_t)regs->rsi;
+    const uint8_t* path;
+    uint16_t path_length;
+
+    if (!sock) return -(int64_t)LINUX_EBADF;
+    if (sock->family != LINUX_AF_UNIX) {
+        return -(int64_t)LINUX_EAFNOSUPPORT;
+    }
+    if (sock->state != SOCKET_STATE_CREATED || sock->unix_bound) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    if (unix_socket_path(address, regs->rdx, &path, &path_length) != 0) {
+        return address ? -(int64_t)LINUX_EINVAL
+                       : -(int64_t)LINUX_EFAULT;
+    }
+    for (int i = 0; i < MAX_SOCKET_OBJECTS; i++) {
+        struct socket_object* other = &g_socket_objects[i];
+        if (other == sock || !other->in_use || !other->unix_bound ||
+            other->unix_path_length != path_length) {
+            continue;
+        }
+        if (sock_same_bytes(other->unix_path, path, path_length)) {
+            return -(int64_t)LINUX_EADDRINUSE;
+        }
+    }
+    local_memcpy(sock->unix_path, path, path_length);
+    sock->unix_path_length = path_length;
+    sock->unix_bound = 1;
+    return 0;
+}
+
+int64_t sys_listen(struct syscall_regs* regs) {
+    struct socket_object* sock = get_socket_for_fd(regs->rdi);
+    int64_t backlog = linux_signed_int_arg(regs->rsi);
+
+    if (!sock) return -(int64_t)LINUX_EBADF;
+    if (sock->family != LINUX_AF_UNIX ||
+        sock->type != LINUX_SOCK_STREAM || !sock->unix_bound ||
+        sock->state != SOCKET_STATE_CREATED) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    if (backlog < 0) backlog = 0;
+    if (backlog > 255) backlog = 255;
+    sock->unix_backlog = (uint8_t)backlog;
+    sock->state = SOCKET_STATE_LISTENING;
+    return 0;
+}
+
+int64_t sys_socketpair(struct syscall_regs* regs) {
+    int domain = (int)regs->rdi;
+    int type = (int)regs->rsi;
+    int protocol = (int)regs->rdx;
+    int32_t* user_fds = (int32_t*)(uintptr_t)regs->r10;
+    int base_type = type & LINUX_SOCK_TYPE_MASK;
+    int first_index = -1;
+    int second_index = -1;
+    int first_fd;
+    int second_fd;
+    struct fd_entry* table = current_fd_table();
+
+    if (!user_fds || !table) return -(int64_t)LINUX_EFAULT;
+    if (domain != LINUX_AF_UNIX || protocol != 0 ||
+        (type & ~(LINUX_SOCK_TYPE_MASK | LINUX_SOCK_NONBLOCK |
+                  LINUX_SOCK_CLOEXEC)) != 0 ||
+        (base_type != LINUX_SOCK_STREAM &&
+         base_type != LINUX_SOCK_DGRAM &&
+         base_type != LINUX_SOCK_SEQPACKET)) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+
+    for (int i = 0; i < MAX_SOCKET_OBJECTS; i++) {
+        if (g_socket_objects[i].in_use) continue;
+        if (first_index < 0) first_index = i;
+        else {
+            second_index = i;
+            break;
+        }
+    }
+    if (second_index < 0) return -(int64_t)LINUX_EMFILE;
+    first_fd = allocate_fd_slot(3);
+    if (first_fd < 0) return -(int64_t)LINUX_EMFILE;
+    second_fd = allocate_fd_slot(first_fd + 1);
+    if (second_fd < 0) return -(int64_t)LINUX_EMFILE;
+
+    local_memset(&g_socket_objects[first_index], 0,
+                 sizeof(g_socket_objects[first_index]));
+    local_memset(&g_socket_objects[second_index], 0,
+                 sizeof(g_socket_objects[second_index]));
+    g_socket_objects[first_index].in_use = 1;
+    g_socket_objects[first_index].state = SOCKET_STATE_CONNECTED;
+    g_socket_objects[first_index].family = LINUX_AF_UNIX;
+    g_socket_objects[first_index].type = (uint8_t)base_type;
+    g_socket_objects[first_index].refcount = 1;
+    g_socket_objects[first_index].peer_index = second_index;
+    g_socket_objects[second_index].in_use = 1;
+    g_socket_objects[second_index].state = SOCKET_STATE_CONNECTED;
+    g_socket_objects[second_index].family = LINUX_AF_UNIX;
+    g_socket_objects[second_index].type = (uint8_t)base_type;
+    g_socket_objects[second_index].refcount = 1;
+    g_socket_objects[second_index].peer_index = first_index;
+
+    table[first_fd].kind = FD_KIND_SOCKET;
+    table[first_fd].handle_index = first_index;
+    table[second_fd].kind = FD_KIND_SOCKET;
+    table[second_fd].handle_index = second_index;
+    user_fds[0] = first_fd;
+    user_fds[1] = second_fd;
+    return 0;
+}
+
 int64_t sys_socket_bind_netdev(struct syscall_regs* regs) {
     struct socket_object* sock = get_socket_for_fd(regs->rdi);
     uint64_t index = regs->rsi;
@@ -1458,7 +1648,33 @@ int64_t socket_send_data(struct socket_object* sock, const uint8_t* data, uint64
     uint64_t sent = 0;
 
     if (!sock || sock->state != SOCKET_STATE_CONNECTED) return -(int64_t)LINUX_EBADF;
+    if (sock->write_shutdown) return -(int64_t)LINUX_EPIPE;
     if (!data && len > 0) return -(int64_t)LINUX_EFAULT;
+    if (sock->family == LINUX_AF_UNIX) {
+        struct socket_object* peer = get_socket_by_index(sock->peer_index);
+        uint64_t unread;
+        uint64_t copied;
+
+        if (!peer || peer->state == SOCKET_STATE_CLOSED) {
+            return -(int64_t)LINUX_EPIPE;
+        }
+        unread = peer->rx_len - peer->rx_off;
+        if (peer->rx_off != 0 && unread != 0) {
+            local_memcpy(peer->rx_buffer,
+                         peer->rx_buffer + peer->rx_off, unread);
+        }
+        peer->rx_off = 0;
+        peer->rx_len = (uint32_t)unread;
+        copied = sizeof(peer->rx_buffer) - unread;
+        if (copied > len) copied = len;
+        if (copied == 0 && len != 0) return -(int64_t)LINUX_EAGAIN;
+        local_memcpy(peer->rx_buffer + unread, data, copied);
+        peer->rx_len += (uint32_t)copied;
+        if (copied != 0 || len == 0) {
+            socket_record_sender_credentials(peer);
+        }
+        return (int64_t)copied;
+    }
     while (sent < len) {
         uint16_t chunk = (uint16_t)(len - sent);
         uint32_t seq_before;
@@ -1520,10 +1736,30 @@ int64_t socket_recv_data(struct socket_object* sock, uint8_t* dst, uint64_t len)
     int recv_retries = 0;
 
     if (!sock) return -(int64_t)LINUX_EBADF;
+    if (sock->read_shutdown) return 0;
     if (sock->state == SOCKET_STATE_CLOSED && sock->rx_off >= sock->rx_len) return 0;
     if (sock->state != SOCKET_STATE_CONNECTED && sock->state != SOCKET_STATE_CLOSED) return -(int64_t)LINUX_EBADF;
     if (!dst && len > 0) return -(int64_t)LINUX_EFAULT;
     if (len == 0) return 0;
+    if (sock->family == LINUX_AF_UNIX) {
+        uint64_t available = sock->rx_len - sock->rx_off;
+        struct socket_object* peer;
+
+        if (available > len) available = len;
+        if (available != 0) {
+            local_memcpy(dst, sock->rx_buffer + sock->rx_off, available);
+            sock->rx_off += (uint32_t)available;
+            if (sock->rx_off == sock->rx_len) {
+                sock->rx_off = 0;
+                sock->rx_len = 0;
+            }
+            return (int64_t)available;
+        }
+        peer = get_socket_by_index(sock->peer_index);
+        return !peer || peer->state == SOCKET_STATE_CLOSED || peer->write_shutdown
+                   ? 0
+                   : -(int64_t)LINUX_EAGAIN;
+    }
 
     while (copied < len) {
         if (sock->rx_off < sock->rx_len) {
@@ -1593,6 +1829,269 @@ int64_t sys_recvfrom(struct syscall_regs* regs) {
     (void)regs->r8;
     (void)regs->r9;
     return socket_recv_data(sock, buf, len);
+}
+
+int64_t sys_socket_shutdown(struct syscall_regs* regs) {
+    struct socket_object* sock = get_socket_for_fd(regs->rdi);
+    int how = (int)regs->rsi;
+
+    if (!sock) return -(int64_t)LINUX_EBADF;
+    if (how < 0 || how > 2) return -(int64_t)LINUX_EINVAL;
+    if (sock->state != SOCKET_STATE_CONNECTED &&
+        sock->state != SOCKET_STATE_CLOSED) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    if (how == 0 || how == 2) sock->read_shutdown = 1;
+    if (how == 1 || how == 2) {
+        sock->write_shutdown = 1;
+        if (sock->family != LINUX_AF_UNIX &&
+            sock->state == SOCKET_STATE_CONNECTED) {
+            (void)socket_send_fin_close(sock);
+        }
+    }
+    return 0;
+}
+
+int64_t sys_setsockopt(struct syscall_regs* regs) {
+    struct socket_object* sock = get_socket_for_fd(regs->rdi);
+    int level = (int)regs->rsi;
+    int option = (int)regs->rdx;
+    const int32_t* value = (const int32_t*)(uintptr_t)regs->r10;
+    uint64_t value_length = regs->r8;
+
+    if (!sock) return -(int64_t)LINUX_EBADF;
+    if (!value || value_length < sizeof(*value)) {
+        return -(int64_t)LINUX_EFAULT;
+    }
+    if (level != LINUX_SOL_SOCKET || option != LINUX_SO_PASSCRED) {
+        return -(int64_t)LINUX_ENOPROTOOPT;
+    }
+    if (sock->family != LINUX_AF_UNIX) {
+        return -(int64_t)LINUX_ENOPROTOOPT;
+    }
+    sock->pass_credentials = *value != 0;
+    return 0;
+}
+
+static int64_t socket_parse_rights(const struct linux_msghdr* message,
+                                   struct fd_entry out_entries[SOCKET_ANCILLARY_FD_MAX],
+                                   uint8_t* out_count) {
+    const uint8_t* control;
+    uint64_t remaining;
+
+    *out_count = 0;
+    if (message->control_length == 0) return 0;
+    if (!message->control) return -(int64_t)LINUX_EFAULT;
+    control = (const uint8_t*)message->control;
+    remaining = message->control_length;
+
+    while (remaining >= sizeof(struct linux_cmsghdr)) {
+        const struct linux_cmsghdr* header =
+            (const struct linux_cmsghdr*)(const void*)control;
+        uint64_t data_length;
+        uint64_t advance;
+
+        if (header->length < sizeof(*header) || header->length > remaining) {
+            return -(int64_t)LINUX_EINVAL;
+        }
+        data_length = header->length - sizeof(*header);
+        if (header->level != LINUX_SOL_SOCKET) {
+            return -(int64_t)LINUX_EINVAL;
+        }
+        if (header->type == LINUX_SCM_RIGHTS) {
+            const int32_t* fds;
+            uint64_t count;
+
+            if ((data_length % sizeof(int32_t)) != 0) {
+                return -(int64_t)LINUX_EINVAL;
+            }
+            count = data_length / sizeof(int32_t);
+            if (count > (uint64_t)(SOCKET_ANCILLARY_FD_MAX - *out_count)) {
+                return -(int64_t)LINUX_EINVAL;
+            }
+            fds = (const int32_t*)(const void*)(control + sizeof(*header));
+            for (uint64_t i = 0; i < count; i++) {
+                struct fd_entry* entry;
+                if (fds[i] < 0) return -(int64_t)LINUX_EBADF;
+                entry = get_fd_entry((uint64_t)fds[i]);
+                if (!entry) return -(int64_t)LINUX_EBADF;
+                out_entries[*out_count] = *entry;
+                (*out_count)++;
+            }
+        } else if (header->type != LINUX_SCM_CREDENTIALS) {
+            return -(int64_t)LINUX_EINVAL;
+        }
+        advance = sock_cmsg_align(header->length);
+        if (advance > remaining) break;
+        control += advance;
+        remaining -= advance;
+    }
+    return 0;
+}
+
+int64_t sys_sendmsg(struct syscall_regs* regs) {
+    struct socket_object* sock = get_socket_for_fd(regs->rdi);
+    const struct linux_msghdr* message =
+        (const struct linux_msghdr*)(uintptr_t)regs->rsi;
+    struct fd_entry rights[SOCKET_ANCILLARY_FD_MAX];
+    uint8_t rights_count = 0;
+    uint64_t sent = 0;
+    int64_t result;
+
+    if (!sock) return -(int64_t)LINUX_EBADF;
+    if (!message) return -(int64_t)LINUX_EFAULT;
+    if (message->iov_count > 16 ||
+        (message->iov_count != 0 && !message->iov)) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    result = socket_parse_rights(message, rights, &rights_count);
+    if (result < 0) return result;
+    if (rights_count != 0 && sock->family != LINUX_AF_UNIX) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    if (rights_count != 0) {
+        struct socket_object* peer = get_socket_by_index(sock->peer_index);
+        if (!peer || peer->rx_ancillary_fd_count != 0) {
+            return -(int64_t)LINUX_EAGAIN;
+        }
+    }
+
+    for (uint64_t i = 0; i < message->iov_count; i++) {
+        const struct linux_iovec* iov = &message->iov[i];
+        if (!iov->base && iov->length != 0) {
+            return sent ? (int64_t)sent : -(int64_t)LINUX_EFAULT;
+        }
+        result = socket_send_data(sock, (const uint8_t*)iov->base, iov->length);
+        if (result < 0) return sent ? (int64_t)sent : result;
+        sent += (uint64_t)result;
+        if ((uint64_t)result != iov->length) break;
+    }
+
+    if (message->iov_count == 0) {
+        result = socket_send_data(sock, NULL, 0);
+        if (result < 0) return result;
+    }
+    if (rights_count != 0) {
+        struct socket_object* peer = get_socket_by_index(sock->peer_index);
+        if (!peer) return -(int64_t)LINUX_EPIPE;
+        for (uint8_t i = 0; i < rights_count; i++) {
+            peer->rx_ancillary_fds[i] = rights[i];
+            retain_fd_entry_refs(&peer->rx_ancillary_fds[i]);
+        }
+        peer->rx_ancillary_fd_count = rights_count;
+    }
+    (void)regs->rdx;
+    return (int64_t)sent;
+}
+
+static uint64_t socket_write_control_message(uint8_t* control,
+                                             uint64_t capacity,
+                                             int32_t type,
+                                             const void* data,
+                                             uint64_t data_length) {
+    uint64_t raw_length = sizeof(struct linux_cmsghdr) + data_length;
+    uint64_t space = sock_cmsg_align(raw_length);
+    struct linux_cmsghdr* header;
+
+    if (!control || capacity < space) return 0;
+    header = (struct linux_cmsghdr*)(void*)control;
+    header->length = raw_length;
+    header->level = LINUX_SOL_SOCKET;
+    header->type = type;
+    local_memcpy(control + sizeof(*header), data, data_length);
+    if (space > raw_length) {
+        local_memset(control + raw_length, 0, space - raw_length);
+    }
+    return space;
+}
+
+int64_t sys_recvmsg(struct syscall_regs* regs) {
+    struct socket_object* sock = get_socket_for_fd(regs->rdi);
+    struct linux_msghdr* message =
+        (struct linux_msghdr*)(uintptr_t)regs->rsi;
+    uint8_t* control;
+    uint64_t control_capacity;
+    uint64_t control_used = 0;
+    uint64_t received = 0;
+    int64_t result = 0;
+
+    if (!sock) return -(int64_t)LINUX_EBADF;
+    if (!message) return -(int64_t)LINUX_EFAULT;
+    if (message->iov_count > 16 ||
+        (message->iov_count != 0 && !message->iov)) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    control = (uint8_t*)message->control;
+    control_capacity = message->control_length;
+    message->flags = 0;
+    message->name_length = 0;
+
+    for (uint64_t i = 0; i < message->iov_count; i++) {
+        struct linux_iovec* iov = &message->iov[i];
+        if (!iov->base && iov->length != 0) {
+            return received ? (int64_t)received : -(int64_t)LINUX_EFAULT;
+        }
+        result = socket_recv_data(sock, (uint8_t*)iov->base, iov->length);
+        if (result < 0) {
+            if (received == 0 && !sock->rx_credentials_valid &&
+                sock->rx_ancillary_fd_count == 0) {
+                return result;
+            }
+            break;
+        }
+        received += (uint64_t)result;
+        if ((uint64_t)result != iov->length) break;
+    }
+
+    if (sock->rx_credentials_valid) {
+        struct linux_ucred credentials;
+        uint64_t used;
+        credentials.pid = (int32_t)sock->rx_sender_pid;
+        credentials.uid = sock->rx_sender_uid;
+        credentials.gid = sock->rx_sender_gid;
+        used = socket_write_control_message(control ? control + control_used : NULL,
+                                            control_capacity - control_used,
+                                            LINUX_SCM_CREDENTIALS,
+                                            &credentials,
+                                            sizeof(credentials));
+        if (used == 0) message->flags |= LINUX_MSG_CTRUNC;
+        else control_used += used;
+        sock->rx_credentials_valid = 0;
+    }
+
+    if (sock->rx_ancillary_fd_count != 0) {
+        int32_t installed[SOCKET_ANCILLARY_FD_MAX];
+        uint8_t count = sock->rx_ancillary_fd_count;
+        uint64_t required = sock_cmsg_align(sizeof(struct linux_cmsghdr) +
+                                            count * sizeof(int32_t));
+        struct fd_entry* table = current_fd_table();
+        uint8_t found = 0;
+
+        for (int fd = 0; table && fd < PROCESS_FD_MAX && found < count; fd++) {
+            if (table[fd].kind == FD_KIND_FREE) installed[found++] = fd;
+        }
+        if (!control || control_capacity - control_used < required ||
+            found != count) {
+            message->flags |= LINUX_MSG_CTRUNC;
+            for (uint8_t i = 0; i < count; i++) {
+                release_fd_entry_refs(&sock->rx_ancillary_fds[i]);
+            }
+        } else {
+            for (uint8_t i = 0; i < count; i++) {
+                table[installed[i]] = sock->rx_ancillary_fds[i];
+                sock->rx_ancillary_fds[i].kind = FD_KIND_FREE;
+                sock->rx_ancillary_fds[i].handle_index = -1;
+            }
+            control_used += socket_write_control_message(
+                control ? control + control_used : NULL,
+                control_capacity - control_used,
+                LINUX_SCM_RIGHTS, installed, count * sizeof(int32_t));
+        }
+        sock->rx_ancillary_fd_count = 0;
+    }
+    message->control_length = control_used;
+    (void)regs->rdx;
+    return (int64_t)received;
 }
 
 int64_t sys_dns_lookup(struct syscall_regs* regs) {

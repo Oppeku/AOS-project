@@ -8,8 +8,10 @@
 
 // 32KB bitmap can manage 1GB of memory (32768 bytes * 8 bits/byte * 4096 bytes/page)
 uint8_t pmm_bitmap[32768]; 
+static uint16_t pmm_refcounts[262144];
 uint64_t total_blocks = 262144; // 1GB in 4KB blocks
 static uint64_t free_blocks;
+static uint8_t oom_reported;
 
 extern void serial_print(const char* s);
 extern uint8_t aos_boot_verbose;
@@ -39,13 +41,17 @@ static void mark_used_range(uint64_t start, uint64_t end) {
 void pmm_init(uint64_t mb_info) {
     if (aos_boot_verbose) {
         serial_print("PMM: Initializing...\n");
+#if AOS_BOOT_STATUS_ON_SCREEN
         vga_print("PMM: Initializing...", 0x0F, 0, 10);
+#endif
     }
     total_blocks = 0;
     free_blocks = 0;
+    oom_reported = 0;
 
     // 1. Mark everything as used by default (1)
     for(int i = 0; i < 32768; i++) pmm_bitmap[i] = 0xFF;
+    for (uint64_t i = 0; i < 262144; i++) pmm_refcounts[i] = 0;
     
     struct multiboot_tag* tag;
     int found_mmap = 0;
@@ -89,7 +95,9 @@ void pmm_init(uint64_t mb_info) {
 
     if (!found_mmap) {
         serial_print("PMM ERROR: No Memory Map found!\n");
+#if AOS_BOOT_STATUS_ON_SCREEN
         vga_print("PMM ERROR: No Memory Map found! Falling back to 128MB.", 0x0C, 0, 11);
+#endif
         total_blocks = 32768;
         for(uint64_t i = 0; i < total_blocks; i++) {
             uint8_t mask = (uint8_t)(1 << (i % 8));
@@ -104,7 +112,9 @@ void pmm_init(uint64_t mb_info) {
         }
         if (aos_boot_verbose) {
             serial_print("PMM: Memory Map parsed.\n");
+#if AOS_BOOT_STATUS_ON_SCREEN
             vga_print("PMM: Memory Map parsed successfully.", 0x0A, 0, 11);
+#endif
         }
     }
 
@@ -144,22 +154,54 @@ void* pmm_alloc_block() {
         uint8_t mask = (uint8_t)(1 << (i % 8));
         if (!(pmm_bitmap[i / 8] & mask)) {
             pmm_bitmap[i / 8] |= mask; // Mark as used
+            pmm_refcounts[i] = 1;
             if (free_blocks > 0) free_blocks--;
+            oom_reported = 0;
             return (void*)(i * 4096);
         }
     }
-    serial_print("PMM: Out of memory!\n");
+    if (!oom_reported) {
+        serial_print("PMM: Out of memory!\n");
+        oom_reported = 1;
+    }
     return NULL; // Out of memory!
+}
+
+int pmm_retain_block(void* addr) {
+    uint64_t block = (uint64_t)addr / 4096;
+    uint8_t mask;
+
+    if (((uint64_t)addr & 0xFFFULL) != 0 || block >= total_blocks) return -1;
+    mask = (uint8_t)(1 << (block % 8));
+    if (!(pmm_bitmap[block / 8] & mask) || pmm_refcounts[block] == 0 ||
+        pmm_refcounts[block] == UINT16_MAX) {
+        return -1;
+    }
+    pmm_refcounts[block]++;
+    return 0;
 }
 
 void pmm_free_block(void* addr) {
     uint64_t block = (uint64_t)addr / 4096;
     uint8_t mask = (uint8_t)(1 << (block % 8));
-    if (block >= total_blocks) return;
+    if (((uint64_t)addr & 0xFFFULL) != 0 || block >= total_blocks ||
+        pmm_refcounts[block] == 0) return;
+    if (pmm_refcounts[block] > 1) {
+        pmm_refcounts[block]--;
+        return;
+    }
+    pmm_refcounts[block] = 0;
     if (pmm_bitmap[block / 8] & mask) {
         pmm_bitmap[block / 8] &= (uint8_t)~mask;
         free_blocks++;
+        oom_reported = 0;
     }
+}
+
+uint16_t pmm_block_refcount(void* addr) {
+    uint64_t block = (uint64_t)addr / 4096;
+    if (((uint64_t)addr & 0xFFFULL) != 0 || block >= total_blocks) return 0;
+    return pmm_refcounts[block];
 }
 
 uint64_t pmm_total_memory(void) {

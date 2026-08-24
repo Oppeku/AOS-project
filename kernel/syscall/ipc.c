@@ -6,6 +6,43 @@ struct linux_pollfd {
     int16_t revents;
 };
 
+int64_t sys_eventfd2(struct syscall_regs* regs) {
+    uint32_t initial_value = (uint32_t)regs->rdi;
+    uint32_t flags = (uint32_t)regs->rsi;
+    int object_index = -1;
+    int fd;
+    struct fd_entry* table = current_fd_table();
+
+    if ((flags & ~(uint32_t)(LINUX_EFD_SEMAPHORE | LINUX_EFD_NONBLOCK |
+                             LINUX_EFD_CLOEXEC)) != 0) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    if (!table) return -(int64_t)LINUX_EMFILE;
+    for (int i = 0; i < MAX_EVENTFD_OBJECTS; i++) {
+        if (!g_eventfd_objects[i].in_use) {
+            object_index = i;
+            break;
+        }
+    }
+    if (object_index < 0) return -(int64_t)LINUX_EMFILE;
+
+    fd = allocate_fd_slot(3);
+    if (fd < 0) return -(int64_t)LINUX_EMFILE;
+
+    local_memset(&g_eventfd_objects[object_index], 0,
+                 sizeof(g_eventfd_objects[object_index]));
+    g_eventfd_objects[object_index].in_use = 1;
+    g_eventfd_objects[object_index].semaphore =
+        (flags & LINUX_EFD_SEMAPHORE) != 0;
+    g_eventfd_objects[object_index].nonblocking =
+        (flags & LINUX_EFD_NONBLOCK) != 0;
+    g_eventfd_objects[object_index].refcount = 1;
+    g_eventfd_objects[object_index].counter = initial_value;
+    table[fd].kind = FD_KIND_EVENTFD;
+    table[fd].handle_index = object_index;
+    return fd;
+}
+
 int64_t sys_pipe(struct syscall_regs* regs) {
     int32_t* user_pipefd = (int32_t*)(uintptr_t)regs->rdi;
     int pipe_index = -1;
@@ -44,6 +81,17 @@ int64_t sys_pipe(struct syscall_regs* regs) {
     return 0;
 }
 
+int64_t sys_pipe2(struct syscall_regs* regs) {
+    uint64_t flags = regs->rsi;
+    struct syscall_regs pipe_regs = *regs;
+
+    if ((flags & ~(uint64_t)(LINUX_SOCK_NONBLOCK | LINUX_SOCK_CLOEXEC)) != 0) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    pipe_regs.rdi = regs->rdi;
+    return sys_pipe(&pipe_regs);
+}
+
 int64_t sys_poll(struct syscall_regs* regs) {
     struct linux_pollfd* fds = (struct linux_pollfd*)(uintptr_t)regs->rdi;
     uint64_t nfds = regs->rsi;
@@ -74,7 +122,9 @@ int64_t sys_poll(struct syscall_regs* regs) {
         if (entry->kind == FD_KIND_STDIN || entry->kind == FD_KIND_TTY) {
             if (pfd->events & LINUX_POLLIN) revents |= LINUX_POLLIN;
             if (pfd->events & LINUX_POLLOUT) revents |= LINUX_POLLOUT;
-        } else if (entry->kind == FD_KIND_STDOUT || entry->kind == FD_KIND_STDERR || entry->kind == FD_KIND_VNODE || entry->kind == FD_KIND_NULL) {
+        } else if (entry->kind == FD_KIND_STDOUT || entry->kind == FD_KIND_STDERR ||
+                   entry->kind == FD_KIND_VNODE || entry->kind == FD_KIND_NULL ||
+                   entry->kind == FD_KIND_RANDOM) {
             if (pfd->events & LINUX_POLLOUT) revents |= LINUX_POLLOUT;
             if (pfd->events & LINUX_POLLIN) revents |= LINUX_POLLIN;
         } else if (entry->kind == FD_KIND_PIPE_READER) {
@@ -97,11 +147,37 @@ int64_t sys_poll(struct syscall_regs* regs) {
             if (!sock) {
                 revents |= LINUX_POLLERR;
             } else {
-                if (pfd->events & LINUX_POLLOUT) revents |= LINUX_POLLOUT;
+                struct socket_object* peer =
+                    sock->family == LINUX_AF_UNIX
+                        ? get_socket_by_index(sock->peer_index)
+                        : NULL;
+                if ((pfd->events & LINUX_POLLOUT) &&
+                    (sock->family != LINUX_AF_UNIX ||
+                     (peer && peer->state != SOCKET_STATE_CLOSED))) {
+                    revents |= LINUX_POLLOUT;
+                }
                 if ((pfd->events & LINUX_POLLIN) && sock->rx_off < sock->rx_len) {
                     revents |= LINUX_POLLIN;
                 }
-                if (sock->state == SOCKET_STATE_CLOSED) revents |= LINUX_POLLHUP;
+                if (sock->state == SOCKET_STATE_CLOSED ||
+                    (sock->family == LINUX_AF_UNIX &&
+                     (!peer || peer->state == SOCKET_STATE_CLOSED))) {
+                    revents |= LINUX_POLLHUP;
+                }
+            }
+        } else if (entry->kind == FD_KIND_EVENTFD) {
+            struct eventfd_object* eventfd =
+                get_eventfd_object_by_index(entry->handle_index);
+            if (!eventfd) {
+                revents |= LINUX_POLLERR;
+            } else {
+                if ((pfd->events & LINUX_POLLIN) && eventfd->counter > 0) {
+                    revents |= LINUX_POLLIN;
+                }
+                if ((pfd->events & LINUX_POLLOUT) &&
+                    eventfd->counter < UINT64_MAX - 1) {
+                    revents |= LINUX_POLLOUT;
+                }
             }
         }
 

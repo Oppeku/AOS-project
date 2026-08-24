@@ -53,6 +53,10 @@ static const char aos_kernel_watermark[] =
 #define AOS_BOOT_VERBOSE 0
 #endif
 
+#ifndef AOS_BOOT_STATUS_ON_SCREEN
+#define AOS_BOOT_STATUS_ON_SCREEN 0
+#endif
+
 #ifndef AOS_ENABLE_MUI_FRAMEBUFFER
 #define AOS_ENABLE_MUI_FRAMEBUFFER 0
 #endif
@@ -63,10 +67,17 @@ void outb(uint16_t port, uint8_t val) {
     asm volatile ( "outb %0, %1" : : "a"(val), "Nd"(port) );
 }
 
-void serial_print(const char* s) {
+static void serial_write_raw(const char* s) {
     for (int i = 0; s[i] != '\0'; i++) {
         outb(0x3F8, s[i]);
     }
+}
+
+void serial_print(const char* s) {
+    if (!aos_boot_verbose) {
+        return;
+    }
+    serial_write_raw(s);
 }
 
 static size_t local_strlen(const char* s) {
@@ -84,6 +95,7 @@ static int local_streq(const char* a, const char* b) {
     return a[i] == '\0' && b[i] == '\0';
 }
 
+#if AOS_BOOT_STATUS_ON_SCREEN
 static void build_padding(char* out, size_t out_size, size_t count, char fill) {
     size_t i;
 
@@ -99,42 +111,44 @@ static void build_padding(char* out, size_t out_size, size_t count, char fill) {
     }
     out[count] = '\0';
 }
+#endif
 
 static void boot_log_status(const char* message, const char* tag, unsigned char tag_color) {
+    serial_print(message);
+    serial_print(" ");
+    serial_print(tag);
+    serial_print("\n");
+
+#if AOS_BOOT_STATUS_ON_SCREEN
     char padding[48];
     size_t message_len = local_strlen(message);
     size_t target_width = 52;
     size_t pad_count = (message_len < target_width) ? (target_width - message_len) : 2;
 
     build_padding(padding, sizeof(padding), pad_count, '.');
-
-    serial_print(message);
-    serial_print(" ");
-    serial_print(tag);
-    serial_print("\n");
-
     vga_write(message, 0x07);
     vga_write(" ", 0x08);
     vga_write(padding, 0x08);
     vga_write(" ", 0x08);
     vga_write(tag, tag_color);
     vga_write("\n", 0x07);
+#else
+    (void)tag_color;
+#endif
 }
 static void boot_logo(void) {
     static const char* const lines[] = {
-        "  █████╗  ██████╗ ███████╗",
-        "  ██╔══██╗██╔═══██╗██╔════╝",
-        "  ███████║██║   ██║███████╗",
-        "  ██╔══██║██║   ██║╚════██║",
-        "  ██║  ██║╚██████╔╝███████║",
-        "  ╚═╝  ╚═╝ ╚═════╝ ╚══════╝",
-        " Yo, how are you lets get started ",
+        "       _       ___    ____  ",
+        "      / \\     / _ \\  / ___| ",
+        "     / _ \\   | | | | \\___ \\ ",
+        "    / ___ \\  | |_| |  ___) |",
+        "   /_/   \\_\\  \\___/  |____/ ",
         ""
     };
 
     for (size_t i = 0; lines[i][0] != '\0'; i++) {
-        serial_print(lines[i]);
-        serial_print("\n");
+        serial_write_raw(lines[i]);
+        serial_write_raw("\n");
         vga_write(lines[i], i < 5 ? 0x0B : 0x07);
         vga_write("\n", 0x07);
     }

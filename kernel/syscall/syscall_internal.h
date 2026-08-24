@@ -66,7 +66,9 @@ static inline void io_wait(void) {
 #define MAX_EXEC_STRING 256
 #define MAX_FILE_HANDLES 16
 #define MAX_PIPE_OBJECTS 8
+#define MAX_EVENTFD_OBJECTS 32
 #define LINUX_AT_FDCWD (-100)
+#define LINUX_AT_SYMLINK_NOFOLLOW 0x100
 #define LINUX_AT_EMPTY_PATH 0x1000
 #define LINUX_AT_REMOVEDIR 0x200
 #define LINUX_O_ACCMODE 3
@@ -83,8 +85,13 @@ static inline void io_wait(void) {
 #define LINUX_MAP_PRIVATE 0x02
 #define LINUX_MAP_FIXED 0x10
 #define LINUX_MAP_ANONYMOUS 0x20
+#define LINUX_MAP_32BIT 0x40
+#define LINUX_MAP_GROWSDOWN 0x0100
 #define LINUX_MAP_DENYWRITE 0x0800
 #define LINUX_MAP_EXECUTABLE 0x1000
+#define LINUX_MAP_NORESERVE 0x4000
+#define LINUX_MAP_POPULATE 0x8000
+#define LINUX_MAP_STACK 0x20000
 #define LINUX_MAP_FIXED_NOREPLACE 0x100000
 #define LINUX_F_OK 0
 #define LINUX_X_OK 1
@@ -96,6 +103,7 @@ static inline void io_wait(void) {
 #define LINUX_S_IFCHR 0020000U
 #define LINUX_S_IFREG 0100000U
 #define LINUX_S_IFDIR 0040000U
+#define LINUX_S_IFLNK 0120000U
 #define LINUX_S_IRUSR 00400U
 #define LINUX_S_IWUSR 00200U
 #define LINUX_S_IRGRP 00040U
@@ -122,9 +130,39 @@ static inline void io_wait(void) {
 #define LINUX_F_SETFD 2
 #define LINUX_F_GETFL 3
 #define LINUX_F_SETFL 4
+#define LINUX_EFD_SEMAPHORE 1
+#define LINUX_EFD_NONBLOCK 0x800
+#define LINUX_EFD_CLOEXEC 0x80000
+#define LINUX_FUTEX_WAIT 0
+#define LINUX_FUTEX_WAKE 1
+#define LINUX_FUTEX_REQUEUE 3
+#define LINUX_FUTEX_CMP_REQUEUE 4
+#define LINUX_FUTEX_WAIT_BITSET 9
+#define LINUX_FUTEX_WAKE_BITSET 10
+#define LINUX_FUTEX_CMD_MASK 0x7F
+#define LINUX_AF_UNIX 1
 #define LINUX_AF_INET 2
 #define LINUX_AF_INET6 10
 #define LINUX_SOCK_STREAM 1
+#define LINUX_SOCK_DGRAM 2
+#define LINUX_SOCK_SEQPACKET 5
+#define LINUX_SOCK_TYPE_MASK 0xF
+#define LINUX_SOCK_NONBLOCK 0x800
+#define LINUX_SOCK_CLOEXEC 0x80000
+#define LINUX_SOL_SOCKET 1
+#define LINUX_SCM_RIGHTS 1
+#define LINUX_SCM_CREDENTIALS 2
+#define LINUX_SO_PASSCRED 16
+#define LINUX_MSG_CTRUNC 0x08
+#define LINUX_MSG_NOSIGNAL 0x4000
+#define LINUX_LOCK_SH 1
+#define LINUX_LOCK_EX 2
+#define LINUX_LOCK_NB 4
+#define LINUX_LOCK_UN 8
+#define LINUX_SS_DISABLE 2
+#define LINUX_SS_AUTODISARM 0x80000000U
+#define LINUX_MINSIGSTKSZ 2048U
+#define SOCKET_ANCILLARY_FD_MAX 4
 #define LINUX_IPPROTO_TCP 6
 #define LINUX_TERMIOS_ICRNL 0000400U
 #define LINUX_TERMIOS_OPOST 0000001U
@@ -147,9 +185,11 @@ enum fd_kind {
     FD_KIND_TTY = 7,
     FD_KIND_NULL = 8,
     FD_KIND_SOCKET = 9,
+    FD_KIND_RANDOM = 10,
+    FD_KIND_EVENTFD = 11,
 };
 
-#define MAX_SOCKET_OBJECTS 8
+#define MAX_SOCKET_OBJECTS 32
 #define SOCKET_TX_FRAME_SIZE 1518
 #define SOCKET_RX_FRAME_SIZE 1518
 #define SOCKET_RX_BUFFER_SIZE 8192
@@ -187,6 +227,7 @@ enum socket_state {
     SOCKET_STATE_CREATED = 1,
     SOCKET_STATE_CONNECTED = 2,
     SOCKET_STATE_CLOSED = 3,
+    SOCKET_STATE_LISTENING = 4,
 };
 
 struct socket_object {
@@ -215,6 +256,21 @@ struct socket_object {
     uint8_t remote_ip6[16];
     uint8_t next_hop_ip6[16];
     uint8_t remote_mac[6];
+    int32_t peer_index;
+    uint8_t pass_credentials;
+    uint8_t read_shutdown;
+    uint8_t write_shutdown;
+    uint8_t rx_credentials_valid;
+    uint8_t rx_ancillary_fd_count;
+    uint8_t reserved_ancillary[2];
+    uint32_t rx_sender_pid;
+    uint32_t rx_sender_uid;
+    uint32_t rx_sender_gid;
+    struct fd_entry rx_ancillary_fds[SOCKET_ANCILLARY_FD_MAX];
+    uint8_t unix_path[108];
+    uint16_t unix_path_length;
+    uint8_t unix_bound;
+    uint8_t unix_backlog;
     uint8_t rx_buffer[SOCKET_RX_BUFFER_SIZE];
     uint32_t rx_len;
     uint32_t rx_off;
@@ -256,7 +312,8 @@ struct ndp_cache_entry {
 
 struct file_handle {
     uint8_t in_use;
-    uint8_t reserved[7];
+    uint8_t flock_mode;
+    uint8_t reserved[6];
     uint32_t refcount;
     uint32_t reserved2;
     uint64_t offset;
@@ -275,6 +332,15 @@ struct pipe_object {
     uint8_t buffer[16384];
 };
 
+struct eventfd_object {
+    uint8_t in_use;
+    uint8_t semaphore;
+    uint8_t nonblocking;
+    uint8_t reserved;
+    uint32_t refcount;
+    uint64_t counter;
+};
+
 #define LINUX_POLLIN 0x0001
 #define LINUX_POLLOUT 0x0004
 #define LINUX_POLLERR 0x0008
@@ -283,6 +349,7 @@ struct pipe_object {
 
 extern struct file_handle g_file_handles[MAX_FILE_HANDLES];
 extern struct pipe_object g_pipe_objects[MAX_PIPE_OBJECTS];
+extern struct eventfd_object g_eventfd_objects[MAX_EVENTFD_OBJECTS];
 extern struct socket_object g_socket_objects[MAX_SOCKET_OBJECTS];
 extern struct dns_cache_entry g_dns_cache[SOCKET_DNS_CACHE_ENTRIES];
 extern struct arp_cache_entry g_arp_cache[SOCKET_ARP_CACHE_ENTRIES];
@@ -309,11 +376,14 @@ struct fd_entry* get_fd_entry(uint64_t fd);
 struct file_handle* get_vnode_handle(uint64_t fd);
 struct pipe_object* get_pipe_object_by_index(int32_t pipe_index);
 struct pipe_object* get_pipe_for_fd(uint64_t fd, uint8_t expected_kind);
+struct eventfd_object* get_eventfd_object_by_index(int32_t eventfd_index);
 struct socket_object* get_socket_by_index(int32_t socket_index);
 struct socket_object* get_socket_for_fd(uint64_t fd);
 void release_file_handle(int32_t handle_index);
 void retain_fd_entry_refs(struct fd_entry* entry);
+void release_fd_entry_refs(struct fd_entry* entry);
 void release_pipe_ref(int32_t pipe_index, uint8_t kind);
+void release_eventfd_ref(int32_t eventfd_index);
 void release_socket_ref(int32_t socket_index);
 void close_socket_ref(int32_t socket_index);
 void close_fd_internal(uint64_t fd);
@@ -323,13 +393,15 @@ uint16_t allocate_socket_port(void);
 int64_t install_socket_fd(int family, int type, int protocol);
 int64_t dup_fd_common(uint64_t oldfd, int64_t requested_newfd, int overwrite);
 int64_t resolve_path_from_dirfd(int64_t dirfd, const char* path, char* out, size_t out_size);
-int64_t open_path_with_flags(const char* path, uint64_t flags);
+int64_t open_path_with_flags(const char* path, uint64_t flags,
+                             uint16_t mode);
 int64_t exec_initrd_program(const char* normalized, const uint64_t* argv_user, const uint64_t* envp_user);
 void process_exit_and_wake_parent(int exit_code);
 void syscall_release_fd_table_entries(struct fd_entry* table, size_t count);
 void process_load_fs_base(uint64_t fs_base);
 int64_t socket_send_data(struct socket_object* sock, const uint8_t* data, uint64_t len);
 int64_t socket_recv_data(struct socket_object* sock, uint8_t* dst, uint64_t len);
+void linux_random_fill(uint8_t* buffer, size_t length);
 int socket_send_fin_close(struct socket_object* sock);
 
 #endif

@@ -10,13 +10,23 @@
 extern void serial_print(const char* s);
 extern uint64_t p4_table[];
 extern void syscall_retain_fd_table_entries(struct fd_entry* table, size_t count);
+extern void syscall_release_fd_table_entries(struct fd_entry* table, size_t count);
 extern void syscall_init_process_fd_table(struct fd_entry* table, size_t count);
 extern void process_load_fs_base(uint64_t fs_base);
+extern void switch_page_table(uint64_t* table);
 
 process_t process_list[MAX_PROCESSES];
 process_t* current_process = NULL;
 static uint32_t next_pid = 1;
 static uint8_t g_thermal_policy_active;
+
+#define LINUX_CLONE_VM 0x00000100ULL
+#define LINUX_CLONE_VFORK 0x00004000ULL
+#define LINUX_CLONE_THREAD 0x00010000ULL
+#define LINUX_CLONE_SETTLS 0x00080000ULL
+#define LINUX_CLONE_PARENT_SETTID 0x00100000ULL
+#define LINUX_CLONE_CHILD_CLEARTID 0x00200000ULL
+#define LINUX_CLONE_CHILD_SETTID 0x01000000ULL
 
 static void local_strcpy_bounded(char* dst, size_t dst_size, const char* src) {
     size_t i = 0;
@@ -47,6 +57,20 @@ static void* local_memset(void* dest, int val, size_t n) {
     uint8_t* d = dest;
     while (n--) *d++ = (uint8_t)val;
     return dest;
+}
+
+static void serial_print_hex64(uint64_t value) {
+    char text[19];
+
+    text[0] = '0';
+    text[1] = 'x';
+    for (int i = 0; i < 16; i++) {
+        uint8_t digit = (uint8_t)((value >> (60 - i * 4)) & 0xF);
+        text[2 + i] = (char)(digit < 10 ? '0' + digit
+                                       : 'A' + digit - 10);
+    }
+    text[18] = '\0';
+    serial_print(text);
 }
 
 static int local_streq(const char* a, const char* b) {
@@ -86,44 +110,163 @@ static int process_is_thermal_essential(const process_t* proc) {
            local_streq(command, "reboot");
 }
 
-void schedule(struct syscall_regs* regs) {
-    if (!current_process) return;
-
-    // Save current state
-    local_memcpy(&current_process->regs, regs, sizeof(struct syscall_regs));
-    if (current_process->status == PROCESS_STATUS_RUNNING) {
-        current_process->status = PROCESS_STATUS_READY;
-    }
-
-    // Pick next process
+static process_t* process_select_next_ready(process_t* current) {
     int start_idx = 0;
-    for(int i=0; i<MAX_PROCESSES; i++) {
-        if(&process_list[i] == current_process) {
+    process_t* throttled_fallback = NULL;
+
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (&process_list[i] == current) {
             start_idx = i + 1;
             break;
         }
     }
 
-    process_t* next = NULL;
-    process_t* throttled_fallback = NULL;
     for (int i = 0; i < MAX_PROCESSES; i++) {
         int idx = (start_idx + i) % MAX_PROCESSES;
-        if (process_list[idx].status == PROCESS_STATUS_READY) {
-            if (process_list[idx].thermal_throttled) {
-                if (!throttled_fallback) {
-                    throttled_fallback = &process_list[idx];
-                }
-                process_list[idx].thermal_skip_phase =
-                    (uint8_t)((process_list[idx].thermal_skip_phase + 1U) & 3U);
-                if (process_list[idx].thermal_skip_phase != 0) {
-                    continue;
-                }
-            }
-            next = &process_list[idx];
-            break;
+        process_t* candidate = &process_list[idx];
+
+        if (candidate->status != PROCESS_STATUS_READY) continue;
+        if (candidate->thermal_throttled) {
+            if (!throttled_fallback) throttled_fallback = candidate;
+            candidate->thermal_skip_phase =
+                (uint8_t)((candidate->thermal_skip_phase + 1U) & 3U);
+            if (candidate->thermal_skip_phase != 0) continue;
         }
+        return candidate;
     }
-    if (!next) next = throttled_fallback;
+    return throttled_fallback;
+}
+
+static void process_save_interrupt_context(
+    process_t* proc, const struct process_interrupt_frame* frame) {
+    proc->regs.rax = frame->rax;
+    proc->regs.rdx = frame->rdx;
+    proc->regs.rsi = frame->rsi;
+    proc->regs.rdi = frame->rdi;
+    proc->regs.r10 = frame->r10;
+    proc->regs.r8 = frame->r8;
+    proc->regs.r9 = frame->r9;
+    proc->regs.r15 = frame->r15;
+    proc->regs.r14 = frame->r14;
+    proc->regs.r13 = frame->r13;
+    proc->regs.r12 = frame->r12;
+    proc->regs.rbx = frame->rbx;
+    proc->regs.rbp = frame->rbp;
+    proc->regs.rcx = frame->rip;
+    proc->regs.r11 = frame->rflags;
+    proc->regs.rsp = frame->rsp;
+    proc->interrupted_rcx = frame->rcx;
+    proc->interrupted_r11 = frame->r11;
+    proc->has_interrupt_context = 1;
+}
+
+static void process_restore_interrupt_context(
+    struct process_interrupt_frame* frame, const process_t* proc) {
+    frame->rax = proc->regs.rax;
+    frame->rdx = proc->regs.rdx;
+    frame->rsi = proc->regs.rsi;
+    frame->rdi = proc->regs.rdi;
+    frame->r10 = proc->regs.r10;
+    frame->r8 = proc->regs.r8;
+    frame->r9 = proc->regs.r9;
+    frame->r15 = proc->regs.r15;
+    frame->r14 = proc->regs.r14;
+    frame->r13 = proc->regs.r13;
+    frame->r12 = proc->regs.r12;
+    frame->rbx = proc->regs.rbx;
+    frame->rbp = proc->regs.rbp;
+    frame->rcx = proc->has_interrupt_context
+                     ? proc->interrupted_rcx
+                     : proc->regs.rcx;
+    frame->r11 = proc->has_interrupt_context
+                     ? proc->interrupted_r11
+                     : proc->regs.r11;
+    frame->rip = proc->regs.rcx;
+    frame->rflags = proc->regs.r11 | 0x200ULL;
+    frame->rsp = proc->regs.rsp;
+}
+
+static void process_preempt_from_interrupt(
+    struct process_interrupt_frame* frame) {
+    process_t* previous;
+    process_t* next;
+
+    if (!frame || (frame->cs & 3U) != 3U || !current_process ||
+        current_process->status != PROCESS_STATUS_RUNNING) {
+        return;
+    }
+
+    previous = current_process;
+    process_save_interrupt_context(previous, frame);
+    previous->status = PROCESS_STATUS_READY;
+    next = process_select_next_ready(previous);
+    if (!next || next == previous) {
+        previous->status = PROCESS_STATUS_RUNNING;
+        return;
+    }
+
+    if (next->regs.rsp != 0 &&
+        !vmm_page_present(next->p4_table, next->regs.rsp)) {
+        serial_print("AOS: scheduler selected unmapped user stack ");
+        serial_print_hex64(next->regs.rsp);
+        serial_print("\n");
+    }
+
+    process_restore_interrupt_context(frame, next);
+    current_process = next;
+    next->status = PROCESS_STATUS_RUNNING;
+    switch_page_table(next->p4_table);
+    process_load_fs_base(next->fs_base);
+}
+
+void process_release_address_space(uint64_t* address_space,
+                                   const process_t* releasing_process) {
+    if (!address_space) return;
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        const process_t* other = &process_list[i];
+        if (other == releasing_process ||
+            other->status == PROCESS_STATUS_DEAD) {
+            continue;
+        }
+        if (other->p4_table == address_space) return;
+    }
+    vmm_destroy_user_space(address_space);
+}
+
+void process_complete_vfork(process_t* child) {
+    uint32_t parent_pid;
+
+    if (!child || child->vfork_parent_pid == 0) return;
+    parent_pid = child->vfork_parent_pid;
+    child->vfork_parent_pid = 0;
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        process_t* parent = &process_list[i];
+
+        if (parent->status == PROCESS_STATUS_DEAD ||
+            parent->pid != parent_pid ||
+            parent->vfork_child_pid != child->pid) {
+            continue;
+        }
+        parent->vfork_child_pid = 0;
+        if (parent->status == PROCESS_STATUS_WAITING) {
+            parent->status = PROCESS_STATUS_READY;
+        }
+        return;
+    }
+}
+
+void schedule(struct syscall_regs* regs) {
+    if (!current_process) return;
+
+    // Save current state
+    local_memcpy(&current_process->regs, regs, sizeof(struct syscall_regs));
+    current_process->has_interrupt_context = 0;
+    if (current_process->status == PROCESS_STATUS_RUNNING) {
+        current_process->status = PROCESS_STATUS_READY;
+    }
+
+    // Pick next process
+    process_t* next = process_select_next_ready(current_process);
 
     if (next && next != current_process) {
         current_process = next;
@@ -142,8 +285,7 @@ void schedule(struct syscall_regs* regs) {
     }
 }
 
-void timer_handler(struct syscall_regs* regs) {
-    (void)regs;
+void timer_handler(struct process_interrupt_frame* frame) {
     timer_tick();
     if (current_process && current_process->status == PROCESS_STATUS_RUNNING) {
         current_process->cpu_ticks++;
@@ -152,15 +294,7 @@ void timer_handler(struct syscall_regs* regs) {
         process_update_thermal_policy(thermal_emergency_active());
     }
     xhci_poll_keyboard();
-    /*
-     * The timer IRQ currently arrives through an interrupt gate, not the
-     * SYSCALL entry path, so we do not have a syscall_regs frame here.
-     * Treating the incoming register state as syscall_regs caused the kernel
-     * to read from arbitrary user-space addresses and fault on timer ticks.
-     *
-     * Leave preemptive scheduling disabled until the timer stub saves an
-     * interrupt-compatible frame and switch_to_process can resume from it.
-     */
+    process_preempt_from_interrupt(frame);
 }
 
 void init_process() {
@@ -172,6 +306,9 @@ void init_process() {
     // Create the first process (the one already running)
     process_list[0].pid = next_pid++;
     process_list[0].parent_pid = 0;
+    process_list[0].session_id = process_list[0].pid;
+    process_list[0].process_group_id = process_list[0].pid;
+    process_list[0].thread_group_id = process_list[0].pid;
     process_list[0].status = PROCESS_STATUS_RUNNING;
     process_list[0].exit_status = 0;
     process_list[0].p4_table = p4_table;
@@ -217,12 +354,18 @@ int64_t sys_fork(struct syscall_regs* regs) {
     local_memset(child, 0, sizeof(*child));
     child->pid = next_pid++;
     child->parent_pid = current_process->pid;
-    child->status = PROCESS_STATUS_READY;
+    child->session_id = current_process->session_id;
+    child->process_group_id = current_process->process_group_id;
+    child->thread_group_id = child->pid;
     child->exit_status = 0;
 
     // 1. Copy Address Space
     child->p4_table = vmm_copy_p4(current_process->p4_table);
-    if (!child->p4_table) return -1;
+    if (!child->p4_table) {
+        local_memset(child, 0, sizeof(*child));
+        child->status = PROCESS_STATUS_DEAD;
+        return -(int64_t)LINUX_ENOMEM;
+    }
 
     // 2. Copy Registers
     local_memcpy(&child->regs, regs, sizeof(struct syscall_regs));
@@ -236,7 +379,13 @@ int64_t sys_fork(struct syscall_regs* regs) {
     child->brk_current = current_process->brk_current;
     child->brk_mapped_end = current_process->brk_mapped_end;
     child->mmap_next = current_process->mmap_next;
-    child->clear_child_tid = current_process->clear_child_tid;
+    /* clear_child_tid is task-local state established by set_tid_address(2)
+     * or CLONE_CHILD_CLEARTID; a plain fork does not inherit it. */
+    child->clear_child_tid = 0;
+    child->nice_value = current_process->nice_value;
+    child->signal_stack_pointer = current_process->signal_stack_pointer;
+    child->signal_stack_size = current_process->signal_stack_size;
+    child->signal_stack_flags = current_process->signal_stack_flags;
     child->uid = current_process->uid;
     child->gid = current_process->gid;
     child->euid = current_process->euid;
@@ -249,6 +398,7 @@ int64_t sys_fork(struct syscall_regs* regs) {
 
     // Child returns 0
     child->regs.rax = 0;
+    child->status = PROCESS_STATUS_READY;
 
     // Parent returns child PID
     serial_print("AOS: sys_fork success, child PID=");
@@ -258,8 +408,108 @@ int64_t sys_fork(struct syscall_regs* regs) {
 }
 
 int64_t sys_clone(struct syscall_regs* regs) {
-    serial_print("AOS: sys_clone called (behaving like fork)\n");
-    return sys_fork(regs);
+    uint64_t flags = regs->rdi;
+    process_t* parent = current_process;
+    process_t* child = NULL;
+    int child_idx = -1;
+
+    if ((flags & LINUX_CLONE_VM) == 0) {
+        serial_print("AOS: sys_clone using fork address space\n");
+        return sys_fork(regs);
+    }
+    if (!parent || ((flags & LINUX_CLONE_THREAD) != 0 &&
+                    (flags & LINUX_CLONE_VM) == 0)) {
+        return -(int64_t)LINUX_EINVAL;
+    }
+    if ((flags & LINUX_CLONE_PARENT_SETTID) != 0 && regs->rdx == 0) {
+        return -(int64_t)LINUX_EFAULT;
+    }
+    if ((flags & LINUX_CLONE_CHILD_SETTID) != 0 && regs->r10 == 0) {
+        return -(int64_t)LINUX_EFAULT;
+    }
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (process_list[i].status == PROCESS_STATUS_DEAD) {
+            child_idx = i;
+            break;
+        }
+    }
+    if (child_idx < 0) return -(int64_t)LINUX_EAGAIN;
+
+    child = &process_list[child_idx];
+    local_memset(child, 0, sizeof(*child));
+    child->pid = next_pid++;
+    child->parent_pid = (flags & LINUX_CLONE_THREAD)
+                            ? parent->parent_pid
+                            : parent->pid;
+    child->session_id = parent->session_id;
+    child->process_group_id = parent->process_group_id;
+    child->thread_group_id = (flags & LINUX_CLONE_THREAD)
+                                 ? parent->thread_group_id
+                                 : child->pid;
+    child->is_thread = (flags & LINUX_CLONE_THREAD) != 0;
+    child->shares_address_space = 1;
+    parent->shares_address_space = 1;
+    child->p4_table = parent->p4_table;
+    local_memcpy(&child->regs, regs, sizeof(child->regs));
+    child->regs.rax = 0;
+    if (regs->rsi != 0) child->regs.rsp = regs->rsi;
+    if (child->regs.rsp != 0 &&
+        !vmm_page_present(parent->p4_table, child->regs.rsp)) {
+        serial_print("AOS: clone received unmapped child stack ");
+        serial_print_hex64(child->regs.rsp);
+        serial_print("\n");
+    }
+    local_memcpy(child->cwd, parent->cwd, sizeof(child->cwd));
+    child->wait_target_pid = -1;
+    child->wait_status_ptr = NULL;
+    local_memcpy(child->fd_table, parent->fd_table, sizeof(child->fd_table));
+    syscall_retain_fd_table_entries(child->fd_table, PROCESS_FD_MAX);
+    child->fs_base = (flags & LINUX_CLONE_SETTLS) ? regs->r8 : parent->fs_base;
+    child->brk_base = parent->brk_base;
+    child->brk_current = parent->brk_current;
+    child->brk_mapped_end = parent->brk_mapped_end;
+    child->mmap_next = parent->mmap_next;
+    child->clear_child_tid = (flags & LINUX_CLONE_CHILD_CLEARTID)
+                                 ? regs->r10
+                                 : 0;
+    child->nice_value = parent->nice_value;
+    if ((flags & LINUX_CLONE_VM) == 0 || (flags & LINUX_CLONE_VFORK) != 0) {
+        child->signal_stack_pointer = parent->signal_stack_pointer;
+        child->signal_stack_size = parent->signal_stack_size;
+        child->signal_stack_flags = parent->signal_stack_flags;
+    }
+    child->uid = parent->uid;
+    child->gid = parent->gid;
+    child->euid = parent->euid;
+    child->egid = parent->egid;
+    local_memcpy(child->username, parent->username, sizeof(child->username));
+    local_memcpy(child->home, parent->home, sizeof(child->home));
+    local_memcpy(child->command, parent->command, sizeof(child->command));
+    child->thermal_throttled =
+        g_thermal_policy_active && !process_is_thermal_essential(child);
+
+    if (flags & LINUX_CLONE_PARENT_SETTID) {
+        *(uint32_t*)(uintptr_t)regs->rdx = child->pid;
+    }
+    if (flags & LINUX_CLONE_CHILD_SETTID) {
+        *(uint32_t*)(uintptr_t)regs->r10 = child->pid;
+    }
+    child->status = PROCESS_STATUS_READY;
+    serial_print("AOS: sys_clone shared address space\n");
+    if (flags & LINUX_CLONE_VFORK) {
+        child->vfork_parent_pid = parent->pid;
+        parent->vfork_child_pid = child->pid;
+        local_memcpy(&parent->regs, regs, sizeof(parent->regs));
+        parent->regs.rax = child->pid;
+        parent->has_interrupt_context = 0;
+        parent->status = PROCESS_STATUS_WAITING;
+        child->status = PROCESS_STATUS_RUNNING;
+        current_process = child;
+        switch_page_table(child->p4_table);
+        process_load_fs_base(child->fs_base);
+        switch_to_process(child);
+    }
+    return child->pid;
 }
 
 process_t* get_current_process(void) {
@@ -271,6 +521,10 @@ const char* process_get_cwd(void) {
         return "";
     }
     return current_process->cwd;
+}
+
+const char* process_get_command(void) {
+    return current_process ? current_process->command : "";
 }
 
 void process_set_cwd(const char* path) {

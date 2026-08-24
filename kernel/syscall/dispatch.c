@@ -19,8 +19,11 @@ int64_t sys_bluetooth_info(struct syscall_regs* regs);
 int64_t sys_bluetooth_control(struct syscall_regs* regs);
 int64_t sys_bluetooth_device_info(struct syscall_regs* regs);
 int64_t sys_bluetooth_bond_info(struct syscall_regs* regs);
+int64_t sys_bind(struct syscall_regs* regs);
 int64_t sys_brk(struct syscall_regs* regs);
 int64_t sys_chdir(struct syscall_regs* regs);
+int64_t sys_chmod(struct syscall_regs* regs);
+int64_t sys_chown(struct syscall_regs* regs);
 int64_t sys_clock_gettime(struct syscall_regs* regs);
 int64_t sys_clone(struct syscall_regs* regs);
 int64_t sys_close(struct syscall_regs* regs);
@@ -34,17 +37,28 @@ int64_t sys_dns_lookup6(struct syscall_regs* regs);
 int64_t sys_driver_info(struct syscall_regs* regs);
 int64_t sys_dup(struct syscall_regs* regs);
 int64_t sys_dup2(struct syscall_regs* regs);
+int64_t sys_eventfd2(struct syscall_regs* regs);
 int64_t sys_execve(struct syscall_regs* regs);
 int64_t sys_faccessat(struct syscall_regs* regs);
+int64_t sys_fchmodat(struct syscall_regs* regs);
+int64_t sys_fchownat(struct syscall_regs* regs);
 int64_t sys_fcntl(struct syscall_regs* regs);
+int64_t sys_flock(struct syscall_regs* regs);
+int64_t sys_ftruncate(struct syscall_regs* regs);
 int64_t sys_firmware_info(struct syscall_regs* regs);
 int64_t sys_fork(struct syscall_regs* regs);
 int64_t sys_fstat(struct syscall_regs* regs);
+int64_t sys_lstat(struct syscall_regs* regs);
+int64_t sys_fstatfs(struct syscall_regs* regs);
+int64_t sys_futex(struct syscall_regs* regs);
 int64_t sys_getcwd(struct syscall_regs* regs);
 int64_t sys_getdents64(struct syscall_regs* regs);
 int64_t sys_getpid(struct syscall_regs* regs);
 int64_t sys_getppid(struct syscall_regs* regs);
+int64_t sys_getpriority(struct syscall_regs* regs);
 int64_t sys_getrandom(struct syscall_regs* regs);
+int64_t sys_gettid(struct syscall_regs* regs);
+int64_t sys_gettimeofday(struct syscall_regs* regs);
 int64_t sys_gfx_clear(struct syscall_regs* regs);
 int64_t sys_gfx_blit_rgb565(struct syscall_regs* regs);
 int64_t sys_gfx_blend_round_rect(struct syscall_regs* regs);
@@ -53,6 +67,7 @@ int64_t sys_gfx_aa_line(struct syscall_regs* regs);
 int64_t sys_gfx_aa_circle(struct syscall_regs* regs);
 int64_t sys_gfx_blit_rgb565_rect(struct syscall_regs* regs);
 int64_t sys_gfx_blit_alpha_mask(struct syscall_regs* regs);
+int64_t sys_gfx_capture_rgb32(struct syscall_regs* regs);
 int64_t sys_gfx_info(struct syscall_regs* regs);
 int64_t sys_gfx_pixel(struct syscall_regs* regs);
 int64_t sys_gfx_present(struct syscall_regs* regs);
@@ -60,6 +75,8 @@ int64_t sys_gfx_rect(struct syscall_regs* regs);
 int64_t sys_input_poll(struct syscall_regs* regs);
 int64_t sys_ioctl(struct syscall_regs* regs);
 int64_t sys_lseek(struct syscall_regs* regs);
+int64_t sys_listen(struct syscall_regs* regs);
+int64_t sys_madvise(struct syscall_regs* regs);
 int64_t sys_mem_info(struct syscall_regs* regs);
 int64_t sys_mkdir(struct syscall_regs* regs);
 int64_t sys_mkdirat(struct syscall_regs* regs);
@@ -88,6 +105,7 @@ int64_t sys_partition_type(struct syscall_regs* regs);
 int64_t sys_partition_write(struct syscall_regs* regs);
 int64_t sys_pci_info(struct syscall_regs* regs);
 int64_t sys_pipe(struct syscall_regs* regs);
+int64_t sys_pipe2(struct syscall_regs* regs);
 int64_t sys_poll(struct syscall_regs* regs);
 int64_t sys_pread64(struct syscall_regs* regs);
 int64_t sys_prlimit64(struct syscall_regs* regs);
@@ -96,27 +114,44 @@ int64_t sys_process_kill(struct syscall_regs* regs);
 int64_t sys_process_pause(struct syscall_regs* regs);
 int64_t sys_process_resume(struct syscall_regs* regs);
 int64_t sys_read(struct syscall_regs* regs);
+int64_t sys_readlink(struct syscall_regs* regs);
+int64_t sys_readlinkat(struct syscall_regs* regs);
+int64_t sys_rmdir(struct syscall_regs* regs);
 int64_t sys_readv(struct syscall_regs* regs);
 int64_t sys_recvfrom(struct syscall_regs* regs);
+int64_t sys_sendmsg(struct syscall_regs* regs);
+int64_t sys_recvmsg(struct syscall_regs* regs);
+int64_t sys_setsockopt(struct syscall_regs* regs);
+int64_t sys_socket_shutdown(struct syscall_regs* regs);
 int64_t sys_restart(struct syscall_regs* regs);
 int64_t sys_session(struct syscall_regs* regs);
 int64_t sys_rt_sigaction(struct syscall_regs* regs);
 int64_t sys_rt_sigprocmask(struct syscall_regs* regs);
+int64_t sys_sigaltstack(struct syscall_regs* regs);
+int64_t sys_setsid(struct syscall_regs* regs);
+int64_t sys_setpriority(struct syscall_regs* regs);
 int64_t sys_sendto(struct syscall_regs* regs);
 int64_t sys_set_tid_address(struct syscall_regs* regs);
 int64_t sys_shutdown(struct syscall_regs* regs);
+int64_t sys_symlink(struct syscall_regs* regs);
+int64_t sys_symlinkat(struct syscall_regs* regs);
 int64_t sys_socket(struct syscall_regs* regs);
+int64_t sys_socketpair(struct syscall_regs* regs);
 int64_t sys_socket_bind_netdev(struct syscall_regs* regs);
 int64_t sys_socket_info(struct syscall_regs* regs);
 int64_t sys_stat(struct syscall_regs* regs);
+int64_t sys_statfs(struct syscall_regs* regs);
 int64_t sys_sudo_auth(struct syscall_regs* regs);
 int64_t sys_time_info(struct syscall_regs* regs);
 int64_t sys_thermal_info(struct syscall_regs* regs);
+int64_t sys_tgkill(struct syscall_regs* regs);
 int64_t sys_installer(struct syscall_regs* regs);
 int64_t sys_uname(struct syscall_regs* regs);
+int64_t sys_unlink(struct syscall_regs* regs);
 int64_t sys_unlinkat(struct syscall_regs* regs);
 int64_t sys_uptime_info(struct syscall_regs* regs);
 int64_t sys_user_info(struct syscall_regs* regs);
+int64_t sys_uni_control(struct syscall_regs* regs);
 int64_t sys_wait4(struct syscall_regs* regs);
 int64_t sys_wifi_control(struct syscall_regs* regs);
 int64_t sys_wifi_scan_info(struct syscall_regs* regs);
@@ -177,8 +212,32 @@ void syscall_handler(struct syscall_regs* regs) {
         case LINUX_SYS_ACCESS:
             regs->rax = (uint64_t)sys_access(regs);
             return;
+        case LINUX_SYS_SYMLINK:
+            regs->rax = (uint64_t)sys_symlink(regs);
+            return;
+        case LINUX_SYS_READLINK:
+            regs->rax = (uint64_t)sys_readlink(regs);
+            return;
+        case LINUX_SYS_RMDIR:
+            regs->rax = (uint64_t)sys_rmdir(regs);
+            return;
+        case LINUX_SYS_UNLINK:
+            regs->rax = (uint64_t)sys_unlink(regs);
+            return;
+        case LINUX_SYS_CHMOD:
+            regs->rax = (uint64_t)sys_chmod(regs);
+            return;
+        case LINUX_SYS_CHOWN:
+            regs->rax = (uint64_t)sys_chown(regs);
+            return;
         case LINUX_SYS_PIPE:
             regs->rax = (uint64_t)sys_pipe(regs);
+            return;
+        case LINUX_SYS_PIPE2:
+            regs->rax = (uint64_t)sys_pipe2(regs);
+            return;
+        case LINUX_SYS_EVENTFD2:
+            regs->rax = (uint64_t)sys_eventfd2(regs);
             return;
         case LINUX_SYS_DUP:
             regs->rax = (uint64_t)sys_dup(regs);
@@ -192,8 +251,17 @@ void syscall_handler(struct syscall_regs* regs) {
         case LINUX_SYS_SOCKET:
             regs->rax = (uint64_t)sys_socket(regs);
             return;
+        case LINUX_SYS_SOCKETPAIR:
+            regs->rax = (uint64_t)sys_socketpair(regs);
+            return;
         case LINUX_SYS_CONNECT:
             regs->rax = (uint64_t)sys_connect(regs);
+            return;
+        case LINUX_SYS_BIND:
+            regs->rax = (uint64_t)sys_bind(regs);
+            return;
+        case LINUX_SYS_LISTEN:
+            regs->rax = (uint64_t)sys_listen(regs);
             return;
         case LINUX_SYS_SENDTO:
             regs->rax = (uint64_t)sys_sendto(regs);
@@ -201,8 +269,23 @@ void syscall_handler(struct syscall_regs* regs) {
         case LINUX_SYS_RECVFROM:
             regs->rax = (uint64_t)sys_recvfrom(regs);
             return;
+        case LINUX_SYS_SENDMSG:
+            regs->rax = (uint64_t)sys_sendmsg(regs);
+            return;
+        case LINUX_SYS_RECVMSG:
+            regs->rax = (uint64_t)sys_recvmsg(regs);
+            return;
+        case LINUX_SYS_SETSOCKOPT:
+            regs->rax = (uint64_t)sys_setsockopt(regs);
+            return;
+        case LINUX_SYS_SHUTDOWN:
+            regs->rax = (uint64_t)sys_socket_shutdown(regs);
+            return;
         case LINUX_SYS_WAIT4:
             regs->rax = (uint64_t)sys_wait4(regs);
+            return;
+        case LINUX_SYS_SETSID:
+            regs->rax = (uint64_t)sys_setsid(regs);
             return;
         case LINUX_SYS_OPENAT:
             regs->rax = (uint64_t)sys_openat(regs);
@@ -216,6 +299,15 @@ void syscall_handler(struct syscall_regs* regs) {
         case LINUX_SYS_UNLINKAT:
             regs->rax = (uint64_t)sys_unlinkat(regs);
             return;
+        case LINUX_SYS_FCHOWNAT:
+            regs->rax = (uint64_t)sys_fchownat(regs);
+            return;
+        case LINUX_SYS_SYMLINKAT:
+            regs->rax = (uint64_t)sys_symlinkat(regs);
+            return;
+        case LINUX_SYS_FCHMODAT:
+            regs->rax = (uint64_t)sys_fchmodat(regs);
+            return;
         case LINUX_SYS_CLOSE:
             regs->rax = (uint64_t)sys_close(regs);
             return;
@@ -224,6 +316,21 @@ void syscall_handler(struct syscall_regs* regs) {
             return;
         case LINUX_SYS_FSTAT:
             regs->rax = (uint64_t)sys_fstat(regs);
+            return;
+        case LINUX_SYS_LSTAT:
+            regs->rax = (uint64_t)sys_lstat(regs);
+            return;
+        case LINUX_SYS_STATFS:
+            regs->rax = (uint64_t)sys_statfs(regs);
+            return;
+        case LINUX_SYS_FSTATFS:
+            regs->rax = (uint64_t)sys_fstatfs(regs);
+            return;
+        case LINUX_SYS_GETPRIORITY:
+            regs->rax = (uint64_t)sys_getpriority(regs);
+            return;
+        case LINUX_SYS_SETPRIORITY:
+            regs->rax = (uint64_t)sys_setpriority(regs);
             return;
         case LINUX_SYS_MMAP:
             regs->rax = (uint64_t)sys_mmap(regs);
@@ -234,6 +341,9 @@ void syscall_handler(struct syscall_regs* regs) {
         case LINUX_SYS_MUNMAP:
             regs->rax = (uint64_t)sys_munmap(regs);
             return;
+        case LINUX_SYS_MADVISE:
+            regs->rax = (uint64_t)sys_madvise(regs);
+            return;
         case LINUX_SYS_BRK:
             regs->rax = (uint64_t)sys_brk(regs);
             return;
@@ -242,6 +352,9 @@ void syscall_handler(struct syscall_regs* regs) {
             return;
         case LINUX_SYS_RT_SIGPROCMASK:
             regs->rax = (uint64_t)sys_rt_sigprocmask(regs);
+            return;
+        case LINUX_SYS_SIGALTSTACK:
+            regs->rax = (uint64_t)sys_sigaltstack(regs);
             return;
         case LINUX_SYS_LSEEK:
             regs->rax = (uint64_t)sys_lseek(regs);
@@ -261,8 +374,20 @@ void syscall_handler(struct syscall_regs* regs) {
         case LINUX_SYS_CLOCK_GETTIME:
             regs->rax = (uint64_t)sys_clock_gettime(regs);
             return;
+        case LINUX_SYS_GETTIMEOFDAY:
+            regs->rax = (uint64_t)sys_gettimeofday(regs);
+            return;
+        case LINUX_SYS_GETTID:
+            regs->rax = (uint64_t)sys_gettid(regs);
+            return;
+        case LINUX_SYS_FUTEX:
+            regs->rax = (uint64_t)sys_futex(regs);
+            return;
+        case LINUX_SYS_TGKILL:
+            regs->rax = (uint64_t)sys_tgkill(regs);
+            return;
         case LINUX_SYS_READLINKAT:
-            regs->rax = (uint64_t)(-(int64_t)LINUX_ENOENT);
+            regs->rax = (uint64_t)sys_readlinkat(regs);
             return;
         case LINUX_SYS_SET_ROBUST_LIST:
         case LINUX_SYS_RSEQ:
@@ -373,6 +498,9 @@ void syscall_handler(struct syscall_regs* regs) {
         case AOS_SYS_GFX_BLIT_ALPHA_MASK:
             regs->rax = (uint64_t)sys_gfx_blit_alpha_mask(regs);
             return;
+        case AOS_SYS_GFX_CAPTURE_RGB32:
+            regs->rax = (uint64_t)sys_gfx_capture_rgb32(regs);
+            return;
         case AOS_SYS_INPUT_POLL:
             regs->rax = (uint64_t)sys_input_poll(regs);
             return;
@@ -470,6 +598,9 @@ void syscall_handler(struct syscall_regs* regs) {
         case AOS_SYS_SESSION:
             regs->rax = (uint64_t)sys_session(regs);
             return;
+        case AOS_SYS_UNI_CONTROL:
+            regs->rax = (uint64_t)sys_uni_control(regs);
+            return;
         case LINUX_SYS_FACCESSAT:
             regs->rax = (uint64_t)sys_faccessat(regs);
             return;
@@ -503,6 +634,12 @@ void syscall_handler(struct syscall_regs* regs) {
             return;
         case LINUX_SYS_FCNTL:
             regs->rax = (uint64_t)sys_fcntl(regs);
+            return;
+        case LINUX_SYS_FLOCK:
+            regs->rax = (uint64_t)sys_flock(regs);
+            return;
+        case LINUX_SYS_FTRUNCATE:
+            regs->rax = (uint64_t)sys_ftruncate(regs);
             return;
         case LINUX_SYS_GETCWD:
             regs->rax = (uint64_t)sys_getcwd(regs);

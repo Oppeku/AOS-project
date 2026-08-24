@@ -30,9 +30,17 @@
 #define AOSFS_TABLE_OFFSET 4096U
 #define AOSFS_DATA_OFFSET 524288U
 #define AOSFS_LEGACY_DATA_OFFSET 65536U
+#define AOSFS_ENTRY_REGULAR 0U
+#define AOSFS_ENTRY_DIRECTORY 1U
+#define AOSFS_ENTRY_SYMLINK 2U
+#define AOSFS_DISK_MODE_VALID 0x8000U
+#define AOSFS_DEFAULT_FILE_MODE 0644U
+#define AOSFS_DEFAULT_DIRECTORY_MODE 0755U
+#define AOSFS_DEFAULT_SYMLINK_MODE 0777U
 
 #define LINUX_DTYPE_REG 8
 #define LINUX_DTYPE_DIR 4
+#define LINUX_DTYPE_LNK 10
 
 static const char* g_root_dirs[] = {
     "aos",
@@ -73,8 +81,11 @@ static const char* g_root_dirs[] = {
 
 struct aosfs_entry {
     uint8_t in_use;
-    uint8_t is_dir;
+    uint8_t kind;
+    uint16_t mode;
     uint32_t size;
+    uint32_t uid;
+    uint32_t gid;
     uint64_t inode;
     uint64_t data_offset;
     uint64_t data_capacity;
@@ -96,15 +107,20 @@ struct aosfs_superblock {
 
 struct aosfs_disk_entry {
     uint8_t in_use;
-    uint8_t is_dir;
-    uint16_t reserved0;
+    uint8_t kind;
+    uint16_t mode;
     uint32_t size;
     uint64_t inode;
     char path[AOSFS_PATH_MAX];
     uint64_t data_offset;
     uint64_t data_capacity;
-    uint8_t reserved1[96];
+    uint32_t uid;
+    uint32_t gid;
+    uint8_t reserved1[88];
 };
+
+_Static_assert(sizeof(struct aosfs_disk_entry) == 256,
+               "AOSFS disk entry layout must remain stable");
 
 struct aosfs_instance {
     uint8_t mounted;
@@ -523,11 +539,15 @@ static int sync_entry(size_t index) {
     }
     local_memset(&disk_entry, 0, sizeof(disk_entry));
     disk_entry.in_use = g_entries[index].in_use;
-    disk_entry.is_dir = g_entries[index].is_dir;
+    disk_entry.kind = g_entries[index].kind;
+    disk_entry.mode = (uint16_t)(AOSFS_DISK_MODE_VALID |
+                                 (g_entries[index].mode & 07777U));
     disk_entry.size = g_entries[index].size;
     disk_entry.inode = g_entries[index].inode;
     disk_entry.data_offset = g_entries[index].data_offset;
     disk_entry.data_capacity = g_entries[index].data_capacity;
+    disk_entry.uid = g_entries[index].uid;
+    disk_entry.gid = g_entries[index].gid;
     copy_string(disk_entry.path, sizeof(disk_entry.path), g_entries[index].path);
     return blkdev_write(g_blkdev_id, g_base_offset + AOSFS_TABLE_OFFSET + index * sizeof(disk_entry), &disk_entry, sizeof(disk_entry));
 }
@@ -568,6 +588,12 @@ static int dynamic_dir_has_children(const char* path) {
     return 0;
 }
 
+static uint8_t entry_dirent_type(const struct aosfs_entry* entry) {
+    if (entry->kind == AOSFS_ENTRY_DIRECTORY) return LINUX_DTYPE_DIR;
+    if (entry->kind == AOSFS_ENTRY_SYMLINK) return LINUX_DTYPE_LNK;
+    return LINUX_DTYPE_REG;
+}
+
 static int dir_exists(const char* path) {
     struct aosfs_entry* entry;
     if (!path) {
@@ -577,7 +603,7 @@ static int dir_exists(const char* path) {
         return 1;
     }
     entry = find_entry(path);
-    return entry && entry->is_dir;
+    return entry && entry->kind == AOSFS_ENTRY_DIRECTORY;
 }
 
 static int commands_leaf(const char* path, const char** leaf_out) {
@@ -602,6 +628,7 @@ static void fill_dir_node(const char* path, uint64_t inode, struct vfs_node* out
     local_memset(out, 0, sizeof(*out));
     out->type = VFS_NODE_TYPE_DIRECTORY;
     out->backend = VFS_BACKEND_AOSFS;
+    out->mode = AOSFS_DEFAULT_DIRECTORY_MODE;
     out->inode = inode;
     make_node_path(path, node_path, sizeof(node_path));
     copy_string(out->path, sizeof(out->path), node_path);
@@ -613,6 +640,7 @@ static void fill_file_node(const char* path, const uint8_t* data, uint32_t size,
     local_memset(out, 0, sizeof(*out));
     out->type = VFS_NODE_TYPE_REGULAR;
     out->backend = VFS_BACKEND_AOSFS;
+    out->mode = 0555U;
     out->size = size;
     out->inode = AOSFS_FILE_INO_BASE + ((uint64_t)(uintptr_t)data >> 4);
     out->u.data = data;
@@ -625,8 +653,15 @@ static void fill_dynamic_node(struct aosfs_entry* entry, struct vfs_node* out) {
     int index = entry_index(entry);
 
     local_memset(out, 0, sizeof(*out));
-    out->type = entry->is_dir ? VFS_NODE_TYPE_DIRECTORY : VFS_NODE_TYPE_REGULAR;
+    out->type = entry->kind == AOSFS_ENTRY_DIRECTORY
+                    ? VFS_NODE_TYPE_DIRECTORY
+                    : entry->kind == AOSFS_ENTRY_SYMLINK
+                          ? VFS_NODE_TYPE_SYMLINK
+                          : VFS_NODE_TYPE_REGULAR;
     out->backend = VFS_BACKEND_AOSFS;
+    out->mode = entry->mode;
+    out->uid = entry->uid;
+    out->gid = entry->gid;
     out->size = entry->size;
     out->inode = entry->inode;
     out->u.data = g_block_backed || index < 0
@@ -720,12 +755,24 @@ int aosfs_mount_role(uint8_t role, uint32_t blkdev_id, uint64_t base_offset) {
             continue;
         }
         g_entries[i].in_use = 1;
-        g_entries[i].is_dir = disk_entry.is_dir ? 1 : 0;
+        if (disk_entry.kind > AOSFS_ENTRY_SYMLINK) return -1;
+        g_entries[i].kind = disk_entry.kind;
+        if (disk_entry.mode & AOSFS_DISK_MODE_VALID) {
+            g_entries[i].mode = disk_entry.mode & 07777U;
+        } else if (g_entries[i].kind == AOSFS_ENTRY_DIRECTORY) {
+            g_entries[i].mode = AOSFS_DEFAULT_DIRECTORY_MODE;
+        } else if (g_entries[i].kind == AOSFS_ENTRY_SYMLINK) {
+            g_entries[i].mode = AOSFS_DEFAULT_SYMLINK_MODE;
+        } else {
+            g_entries[i].mode = AOSFS_DEFAULT_FILE_MODE;
+        }
+        g_entries[i].uid = disk_entry.uid;
+        g_entries[i].gid = disk_entry.gid;
         g_entries[i].size = disk_entry.size;
         g_entries[i].inode = disk_entry.inode;
         copy_string(g_entries[i].path, sizeof(g_entries[i].path), disk_entry.path);
 
-        if (!g_entries[i].is_dir) {
+        if (g_entries[i].kind != AOSFS_ENTRY_DIRECTORY) {
             if (legacy) {
                 uint64_t copied = 0;
                 uint64_t new_offset = g_next_data_offset;
@@ -882,7 +929,9 @@ int aosfs_lookup_path(const char* path, struct vfs_node* out) {
     return -1;
 }
 
-int aosfs_create_path(const char* path, struct vfs_node* out) {
+int aosfs_create_path_mode(const char* path, uint16_t mode,
+                           uint32_t uid, uint32_t gid,
+                           struct vfs_node* out) {
     char parent[AOSFS_PATH_MAX];
     struct aosfs_entry* entry;
     uint8_t* data = NULL;
@@ -907,7 +956,7 @@ int aosfs_create_path(const char* path, struct vfs_node* out) {
 
     entry = find_entry(path);
     if (entry) {
-        if (entry->is_dir) {
+        if (entry->kind == AOSFS_ENTRY_DIRECTORY) {
             return -1;
         }
         fill_dynamic_node(entry, out);
@@ -921,7 +970,10 @@ int aosfs_create_path(const char* path, struct vfs_node* out) {
         if (!g_entries[i].in_use) {
             local_memset(&g_entries[i], 0, sizeof(g_entries[i]));
             g_entries[i].in_use = 1;
-            g_entries[i].is_dir = 0;
+            g_entries[i].kind = AOSFS_ENTRY_REGULAR;
+            g_entries[i].mode = mode & 07777U;
+            g_entries[i].uid = uid;
+            g_entries[i].gid = gid;
             g_entries[i].size = 0;
             g_entries[i].inode = g_next_inode++;
             copy_string(g_entries[i].path, sizeof(g_entries[i].path), path);
@@ -937,7 +989,12 @@ int aosfs_create_path(const char* path, struct vfs_node* out) {
     return -1;
 }
 
-int aosfs_mkdir_path(const char* path) {
+int aosfs_create_path(const char* path, struct vfs_node* out) {
+    return aosfs_create_path_mode(path, AOSFS_DEFAULT_FILE_MODE, 0, 0, out);
+}
+
+int aosfs_mkdir_path_mode(const char* path, uint16_t mode,
+                          uint32_t uid, uint32_t gid) {
     char parent[AOSFS_PATH_MAX];
     const char* command_name = NULL;
 
@@ -959,8 +1016,12 @@ int aosfs_mkdir_path(const char* path) {
 
     for (size_t i = 0; i < g_entry_limit; i++) {
         if (!g_entries[i].in_use) {
+            local_memset(&g_entries[i], 0, sizeof(g_entries[i]));
             g_entries[i].in_use = 1;
-            g_entries[i].is_dir = 1;
+            g_entries[i].kind = AOSFS_ENTRY_DIRECTORY;
+            g_entries[i].mode = mode & 07777U;
+            g_entries[i].uid = uid;
+            g_entries[i].gid = gid;
             g_entries[i].size = 0;
             g_entries[i].inode = g_next_inode++;
             copy_string(g_entries[i].path, sizeof(g_entries[i].path), path);
@@ -973,6 +1034,91 @@ int aosfs_mkdir_path(const char* path) {
     }
 
     return -1;
+}
+
+int aosfs_mkdir_path(const char* path) {
+    return aosfs_mkdir_path_mode(path, AOSFS_DEFAULT_DIRECTORY_MODE, 0, 0);
+}
+
+int aosfs_symlink_path(const char* target, const char* path,
+                       uint32_t uid, uint32_t gid) {
+    struct vfs_node node;
+    struct aosfs_entry* entry;
+    const char* selected_path = path;
+    uint64_t target_size = local_strlen(target);
+    uint64_t written = 0;
+    uint32_t new_size = 0;
+    int index;
+
+    if (!target || target_size == 0 || target_size >= AOSFS_PATH_MAX ||
+        aosfs_create_path_mode(path, AOSFS_DEFAULT_SYMLINK_MODE,
+                               uid, gid, &node) != 0 ||
+        select_instance_for_path(&selected_path) != 0) {
+        return -1;
+    }
+    entry = find_entry(selected_path);
+    index = entry_index(entry);
+    if (!entry || index < 0 || entry->kind != AOSFS_ENTRY_REGULAR) {
+        (void)aosfs_unlink_path(path);
+        return -1;
+    }
+    entry->kind = AOSFS_ENTRY_SYMLINK;
+    entry->mode = AOSFS_DEFAULT_SYMLINK_MODE;
+    if (sync_entry((size_t)index) != 0 ||
+        aosfs_write_path(path, 0, (const uint8_t*)target, target_size,
+                         &written, &new_size) != 0 ||
+        written != target_size) {
+        (void)aosfs_unlink_path(path);
+        return -1;
+    }
+    return 0;
+}
+
+int aosfs_readlink_path(const char* path, char* buffer, size_t capacity,
+                        size_t* size) {
+    const char* original_path = path;
+    struct aosfs_entry* entry;
+    int index;
+
+    if (!path || !buffer || !size || select_instance_for_path(&path) != 0) {
+        return -1;
+    }
+    entry = find_entry(path);
+    index = entry_index(entry);
+    if (!entry || index < 0 || entry->kind != AOSFS_ENTRY_SYMLINK) {
+        return -1;
+    }
+    *size = entry->size < capacity ? entry->size : capacity;
+    if (*size != 0 &&
+        aosfs_read_path(original_path, 0, (uint8_t*)buffer, *size) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+int aosfs_chmod_path(const char* path, uint16_t mode) {
+    struct aosfs_entry* entry;
+    int index;
+
+    if (!path || select_instance_for_path(&path) != 0) return -1;
+    entry = find_entry(path);
+    index = entry_index(entry);
+    if (!entry || index < 0) return -1;
+    entry->mode = mode & 07777U;
+    return sync_entry((size_t)index);
+}
+
+int aosfs_chown_path(const char* path, uint32_t uid, uint32_t gid) {
+    struct aosfs_entry* entry;
+    int index;
+
+    if (!path || select_instance_for_path(&path) != 0) return -1;
+    entry = find_entry(path);
+    index = entry_index(entry);
+    if (!entry || index < 0) return -1;
+    entry->uid = uid;
+    entry->gid = gid;
+    return sync_entry((size_t)index);
 }
 
 static int reserve_entry_extent(struct aosfs_entry* entry, size_t index, uint64_t required) {
@@ -1074,7 +1220,7 @@ int aosfs_read_path(const char* path, uint64_t offset, uint8_t* buffer, uint64_t
     }
     entry = find_entry(path);
     index = entry_index(entry);
-    if (!entry || entry->is_dir || index < 0 ||
+    if (!entry || entry->kind == AOSFS_ENTRY_DIRECTORY || index < 0 ||
         offset > entry->size || len > (uint64_t)entry->size - offset) {
         return -1;
     }
@@ -1113,7 +1259,7 @@ int aosfs_truncate_path(const char* path) {
     }
     entry = find_entry(path);
     index = entry_index(entry);
-    if (!entry || entry->is_dir) {
+    if (!entry || entry->kind != AOSFS_ENTRY_REGULAR) {
         return -1;
     }
     entry->size = 0;
@@ -1121,6 +1267,54 @@ int aosfs_truncate_path(const char* path) {
     if (!g_block_backed && memory_data) {
         local_memset(memory_data, 0, AOSFS_INLINE_CAPACITY);
     }
+    return sync_entry((size_t)index) == 0 &&
+           sync_entry_data((size_t)index) == 0 ? 0 : -1;
+}
+
+int aosfs_resize_path(const char* path, uint32_t size) {
+    struct aosfs_entry* entry;
+    uint8_t* memory_data;
+    uint8_t zeros[512];
+    uint32_t old_size;
+    int index;
+
+    if (size > AOSFS_MAX_FILE_SIZE ||
+        select_instance_for_path(&path) != 0) {
+        return -1;
+    }
+    entry = find_entry(path);
+    index = entry_index(entry);
+    if (!entry || entry->kind != AOSFS_ENTRY_REGULAR || index < 0) {
+        return -1;
+    }
+    old_size = entry->size;
+    if (size > old_size) {
+        uint32_t position = old_size;
+        local_memset(zeros, 0, sizeof(zeros));
+        if (g_block_backed && g_format_version >= AOSFS_VERSION) {
+            if (reserve_entry_extent(entry, (size_t)index, size) != 0) {
+                return -1;
+            }
+            while (position < size) {
+                uint32_t chunk = size - position;
+                if (chunk > sizeof(zeros)) chunk = sizeof(zeros);
+                if (blkdev_write(g_blkdev_id,
+                                 g_base_offset +
+                                     entry_data_offset(entry, (size_t)index) +
+                                     position,
+                                 zeros, chunk) != 0) {
+                    return -1;
+                }
+                position += chunk;
+            }
+        } else {
+            if (size > AOSFS_INLINE_CAPACITY) return -1;
+            memory_data = memory_entry_data((size_t)index);
+            if (!memory_data) return -1;
+            local_memset(memory_data + old_size, 0, size - old_size);
+        }
+    }
+    entry->size = size;
     return sync_entry((size_t)index) == 0 &&
            sync_entry_data((size_t)index) == 0 ? 0 : -1;
 }
@@ -1138,7 +1332,7 @@ int aosfs_unlink_path(const char* path) {
 
     entry = find_entry(path);
     index = entry_index(entry);
-    if (!entry || entry->is_dir || index < 0) {
+    if (!entry || entry->kind == AOSFS_ENTRY_DIRECTORY || index < 0) {
         return -1;
     }
 
@@ -1162,7 +1356,7 @@ int aosfs_rmdir_path(const char* path) {
 
     entry = find_entry(path);
     index = entry_index(entry);
-    if (!entry || !entry->is_dir || index < 0) {
+    if (!entry || entry->kind != AOSFS_ENTRY_DIRECTORY || index < 0) {
         return -1;
     }
     if (dynamic_dir_has_children(path)) {
@@ -1185,7 +1379,8 @@ int aosfs_write_path(const char* path, uint64_t offset, const uint8_t* buffer, u
     }
     entry = find_entry(path);
     index = entry_index(entry);
-    if (!entry || entry->is_dir || index < 0 || (!buffer && len != 0) ||
+    if (!entry || entry->kind == AOSFS_ENTRY_DIRECTORY || index < 0 ||
+        (!buffer && len != 0) ||
         offset > AOSFS_MAX_FILE_SIZE || len > AOSFS_MAX_FILE_SIZE - offset) {
         return -1;
     }
@@ -1275,7 +1470,7 @@ int aosfs_dirent_at_index(const char* path, uint64_t index, char* name_buf, size
                 local_memcpy(name_buf, child, child_len);
                 name_buf[child_len] = '\0';
                 if (size) *size = g_entries[i].size;
-                if (d_type) *d_type = g_entries[i].is_dir ? LINUX_DTYPE_DIR : LINUX_DTYPE_REG;
+                if (d_type) *d_type = entry_dirent_type(&g_entries[i]);
                 return 0;
             }
             seen++;
@@ -1312,7 +1507,7 @@ int aosfs_dirent_at_index(const char* path, uint64_t index, char* name_buf, size
             local_memcpy(name_buf, child, child_len);
             name_buf[child_len] = '\0';
             if (size) *size = g_entries[i].size;
-            if (d_type) *d_type = g_entries[i].is_dir ? LINUX_DTYPE_DIR : LINUX_DTYPE_REG;
+            if (d_type) *d_type = entry_dirent_type(&g_entries[i]);
             return 0;
         }
         seen++;

@@ -5,7 +5,10 @@
 int64_t sys_getpid(struct syscall_regs* regs) {
     (void)regs;
     process_t* proc = get_current_process();
-    return proc ? (int64_t)proc->pid : 1;
+    return proc ? (int64_t)(proc->thread_group_id
+                                ? proc->thread_group_id
+                                : proc->pid)
+                : 1;
 }
 
 int64_t sys_getppid(struct syscall_regs* regs) {

@@ -35,6 +35,28 @@ static void* local_memcpy(void* dest, const void* src, size_t n) {
     return dest;
 }
 
+#define PTE_PHYS_MASK 0x000FFFFFFFFFF000ULL
+
+static uint64_t* find_page_entry(uint64_t* pml4, uint64_t virt) {
+    uint64_t pml4_idx = (virt >> 39) & 0x1FF;
+    uint64_t pdpt_idx = (virt >> 30) & 0x1FF;
+    uint64_t pd_idx = (virt >> 21) & 0x1FF;
+    uint64_t pt_idx = (virt >> 12) & 0x1FF;
+    uint64_t* pdpt;
+    uint64_t* pd;
+    uint64_t* pt;
+
+    if (!pml4 || !(pml4[pml4_idx] & PAGE_PRESENT)) return NULL;
+    pdpt = (uint64_t*)(pml4[pml4_idx] & PTE_PHYS_MASK);
+    if (!(pdpt[pdpt_idx] & PAGE_PRESENT)) return NULL;
+    pd = (uint64_t*)(pdpt[pdpt_idx] & PTE_PHYS_MASK);
+    if (!(pd[pd_idx] & PAGE_PRESENT) || (pd[pd_idx] & (1ULL << 7))) {
+        return NULL;
+    }
+    pt = (uint64_t*)(pd[pd_idx] & PTE_PHYS_MASK);
+    return &pt[pt_idx];
+}
+
 static int split_huge_pd_entry(uint64_t* pd, uint64_t pd_idx) {
     uint64_t old_entry = pd[pd_idx];
     uint64_t* new_pt = (uint64_t*)pmm_alloc_block();
@@ -122,6 +144,84 @@ uint64_t vmm_unmap_page(uint64_t* pml4, uint64_t virt) {
     return phys;
 }
 
+int vmm_page_present(uint64_t* pml4, uint64_t virt) {
+    uint64_t* entry = find_page_entry(pml4, virt);
+    return entry && (*entry & PAGE_PRESENT);
+}
+
+int vmm_handle_cow_fault(uint64_t* pml4, uint64_t virt) {
+    uint64_t* entry = find_page_entry(pml4, virt);
+    uint64_t old_phys;
+    uint64_t new_phys;
+
+    if (!entry || !(*entry & PAGE_PRESENT) || !(*entry & PAGE_COW)) return -1;
+    old_phys = *entry & PTE_PHYS_MASK;
+    if (pmm_block_refcount((void*)old_phys) > 1) {
+        new_phys = (uint64_t)pmm_alloc_block();
+        if (!new_phys) return -1;
+        local_memcpy((void*)new_phys, (const void*)old_phys, 4096);
+        pmm_free_block((void*)old_phys);
+    } else {
+        new_phys = old_phys;
+    }
+    *entry = new_phys | ((*entry & 0xFFFULL) & ~PAGE_COW) |
+             PAGE_PRESENT | PAGE_WRITABLE;
+    asm volatile("invlpg (%0)" :: "r"(virt) : "memory");
+    return 0;
+}
+
+int vmm_prepare_user_write(uint64_t* pml4, uint64_t virt, uint64_t length) {
+    uint64_t end;
+    uint64_t page;
+
+    if (length == 0) return 0;
+    end = virt + length - 1;
+    if (!pml4 || end < virt || virt < AOS_USER_SPACE_START ||
+        end >= 0x0000800000000000ULL) {
+        return -1;
+    }
+
+    page = virt & ~0xFFFULL;
+    for (;;) {
+        uint64_t* entry = find_page_entry(pml4, page);
+
+        if (!entry || (*entry & (PAGE_PRESENT | PAGE_USER)) !=
+                          (PAGE_PRESENT | PAGE_USER)) {
+            return -1;
+        }
+        if (!(*entry & PAGE_WRITABLE) &&
+            vmm_handle_cow_fault(pml4, page) != 0) {
+            return -1;
+        }
+        if (page == (end & ~0xFFFULL)) break;
+        page += 4096;
+    }
+    return 0;
+}
+
+int vmm_protect_page(uint64_t* pml4, uint64_t virt, uint64_t flags) {
+    uint64_t* entry = find_page_entry(pml4, virt);
+    uint64_t phys;
+    uint64_t retained_cow = 0;
+
+    if (!entry || !(*entry & PAGE_PRESENT)) return -1;
+    phys = *entry & PTE_PHYS_MASK;
+    if (flags & PAGE_WRITABLE) {
+        if ((*entry & PAGE_COW) || pmm_block_refcount((void*)phys) > 1) {
+            uint64_t new_phys = (uint64_t)pmm_alloc_block();
+            if (!new_phys) return -1;
+            local_memcpy((void*)new_phys, (const void*)phys, 4096);
+            pmm_free_block((void*)phys);
+            phys = new_phys;
+        }
+    } else if (*entry & PAGE_COW) {
+        retained_cow = PAGE_COW;
+    }
+    *entry = phys | flags | retained_cow;
+    asm volatile("invlpg (%0)" :: "r"(virt) : "memory");
+    return 0;
+}
+
 static int table_has_present_entries(uint64_t* table) {
     for (int i = 0; i < 512; i++) {
         if (table[i] & PAGE_PRESENT) return 1;
@@ -134,7 +234,7 @@ void vmm_free_user_space(uint64_t* pml4) {
 
     for (int i = 0; i < 512; i++) {
         uint64_t pml4_base = (uint64_t)i << 39;
-        if (pml4_base < AOS_USER_SPACE_START) continue;
+        if (pml4_base < AOS_USER_SPACE_START || i >= 256) continue;
         if (!(pml4[i] & PAGE_PRESENT) || !(pml4[i] & PAGE_USER)) continue;
         uint64_t* pdpt = (uint64_t*)(pml4[i] & ~0xFFFULL);
 
@@ -224,13 +324,14 @@ uint64_t* vmm_copy_p4(uint64_t* src_p4) {
     for (int i = 0; i < 512; i++) {
         if (!(src_p4[i] & PAGE_PRESENT)) continue;
 
-        if (((uint64_t)i << 39) < AOS_USER_SPACE_START) {
+        if (((uint64_t)i << 39) < AOS_USER_SPACE_START || i >= 256) {
             dst_p4[i] = src_p4[i];
             continue;
         }
 
         uint64_t* src_pdpt = (uint64_t*)(src_p4[i] & ~0xFFF);
         uint64_t* dst_pdpt = (uint64_t*)pmm_alloc_block();
+        if (!dst_pdpt) goto copy_failed;
         memset(dst_pdpt, 0, 4096);
         dst_p4[i] = (uint64_t)dst_pdpt | (src_p4[i] & 0xFFF);
 
@@ -239,23 +340,18 @@ uint64_t* vmm_copy_p4(uint64_t* src_p4) {
 
             uint64_t* src_pd = (uint64_t*)(src_pdpt[j] & ~0xFFF);
             uint64_t* dst_pd = (uint64_t*)pmm_alloc_block();
+            if (!dst_pd) goto copy_failed;
             memset(dst_pd, 0, 4096);
             dst_pdpt[j] = (uint64_t)dst_pd | (src_pdpt[j] & 0xFFF);
 
             for (int k = 0; k < 512; k++) {
                 if (!(src_pd[k] & PAGE_PRESENT)) continue;
 
-                if (src_pd[k] & (1 << 7)) { // Huge page 2MB
-                    if (i == 0 && j == 0 && k == 0) {
-                        dst_pd[k] = src_pd[k]; // Identity map share
-                        continue;
-                    }
-                    dst_pd[k] = src_pd[k]; 
-                    continue;
-                }
+                if (src_pd[k] & (1 << 7)) goto copy_failed;
 
                 uint64_t* src_pt = (uint64_t*)(src_pd[k] & ~0xFFF);
                 uint64_t* dst_pt = (uint64_t*)pmm_alloc_block();
+                if (!dst_pt) goto copy_failed;
                 memset(dst_pt, 0, 4096);
                 dst_pd[k] = (uint64_t)dst_pt | (src_pd[k] & 0xFFF);
 
@@ -263,9 +359,18 @@ uint64_t* vmm_copy_p4(uint64_t* src_p4) {
                     if (!(src_pt[l] & PAGE_PRESENT)) continue;
 
                     if (src_pt[l] & PAGE_USER) {
-                        void* new_page = pmm_alloc_block();
-                        local_memcpy(new_page, (void*)(src_pt[l] & ~0xFFF), 4096);
-                        dst_pt[l] = (uint64_t)new_page | (src_pt[l] & 0xFFF);
+                        uint64_t phys = src_pt[l] & PTE_PHYS_MASK;
+                        uint64_t shared_entry = src_pt[l];
+
+                        if (pmm_retain_block((void*)phys) != 0) {
+                            goto copy_failed;
+                        }
+                        if (shared_entry & (PAGE_WRITABLE | PAGE_COW)) {
+                            shared_entry =
+                                (shared_entry & ~PAGE_WRITABLE) | PAGE_COW;
+                            src_pt[l] = shared_entry;
+                        }
+                        dst_pt[l] = shared_entry;
                     } else {
                         dst_pt[l] = src_pt[l];
                     }
@@ -273,5 +378,11 @@ uint64_t* vmm_copy_p4(uint64_t* src_p4) {
             }
         }
     }
+    asm volatile("mov %%cr3, %%rax; mov %%rax, %%cr3" ::: "rax", "memory");
     return dst_p4;
+
+copy_failed:
+    vmm_destroy_user_space(dst_p4);
+    asm volatile("mov %%cr3, %%rax; mov %%rax, %%cr3" ::: "rax", "memory");
+    return NULL;
 }

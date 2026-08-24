@@ -63,10 +63,31 @@ int64_t sys_write(struct syscall_regs* regs) {
     if (entry->kind == FD_KIND_NULL) {
         return (int64_t)len;
     }
+    if (entry->kind == FD_KIND_RANDOM) {
+        return (int64_t)len;
+    }
     if (entry->kind == FD_KIND_SOCKET) {
         return socket_send_data(get_socket_by_index(entry->handle_index),
                                 (const uint8_t*)buf,
                                 len);
+    }
+    if (entry->kind == FD_KIND_EVENTFD) {
+        struct eventfd_object* eventfd =
+            get_eventfd_object_by_index(entry->handle_index);
+        uint64_t value;
+
+        if (!eventfd) return -(int64_t)LINUX_EBADF;
+        if (len < sizeof(value)) return -(int64_t)LINUX_EINVAL;
+        local_memcpy(&value, buf, sizeof(value));
+        if (value == UINT64_MAX) return -(int64_t)LINUX_EINVAL;
+        if (eventfd->counter > (UINT64_MAX - 1) - value) {
+            if (eventfd->nonblocking) return -(int64_t)LINUX_EAGAIN;
+            if (regs->rcx >= 2) regs->rcx -= 2;
+            schedule(regs);
+            return -(int64_t)LINUX_EAGAIN;
+        }
+        eventfd->counter += value;
+        return (int64_t)sizeof(value);
     }
     if (entry->kind != FD_KIND_STDOUT && entry->kind != FD_KIND_STDERR && entry->kind != FD_KIND_TTY) {
         return -(int64_t)LINUX_EBADF;

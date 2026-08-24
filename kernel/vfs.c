@@ -8,6 +8,7 @@
 #include <ext4.h>
 #include <fat32.h>
 #include <tmpfs.h>
+#include <process.h>
 
 #define MAX_VFS_PATH 256
 #define VFS_SYNTH_ROOT_INO 1
@@ -30,6 +31,8 @@
 #define LINUX_DTYPE_REG 8
 #define LINUX_DTYPE_DIR 4
 #define LINUX_DTYPE_CHR 2
+#define LINUX_DTYPE_LNK 10
+#define VFS_SYMLINK_LIMIT 16
 
 struct vfs_mount {
     uint8_t in_use;
@@ -406,6 +409,7 @@ static void fill_synthetic_dir(struct vfs_node* out, uint64_t inode, const char*
     local_memset(out, 0, sizeof(*out));
     out->type = VFS_NODE_TYPE_DIRECTORY;
     out->backend = VFS_BACKEND_SYNTHETIC;
+    out->mode = 0755U;
     out->inode = inode;
     copy_path_string(out->path, sizeof(out->path), path);
 }
@@ -414,6 +418,7 @@ static void fill_synthetic_char_device(struct vfs_node* out, uint64_t device_id,
     local_memset(out, 0, sizeof(*out));
     out->type = VFS_NODE_TYPE_CHAR_DEVICE;
     out->backend = VFS_BACKEND_SYNTHETIC;
+    out->mode = 0666U;
     out->inode = 0xD000 + device_id;
     out->u.first_cluster = (uint32_t)device_id;
     copy_path_string(out->path, sizeof(out->path), path);
@@ -429,6 +434,7 @@ void vfs_init_mounts(void) {
     (void)vfs_mount("main", VFS_BACKEND_AOSFS, "main");
     (void)vfs_mount("etc", VFS_BACKEND_AOSFS, "etc");
     (void)vfs_mount("tmp", VFS_BACKEND_TMPFS, "tmp");
+    (void)vfs_mount("proc", VFS_BACKEND_PROCFS, "proc");
     (void)vfs_mount("trash", VFS_BACKEND_FAT32, "");
     (void)vfs_mount("fat32", VFS_BACKEND_FAT32, "fat32");
     (void)vfs_mount("mnt/fat32", VFS_BACKEND_FAT32, "fat32");
@@ -502,6 +508,7 @@ static int lookup_fat32_node(const char* normalized, struct vfs_node* out) {
     local_memset(out, 0, sizeof(*out));
     out->type = is_dir ? VFS_NODE_TYPE_DIRECTORY : VFS_NODE_TYPE_REGULAR;
     out->backend = VFS_BACKEND_FAT32;
+    out->mode = is_dir ? 0755U : 0644U;
     out->size = size;
     out->inode = first_cluster ? first_cluster : 3;
     out->u.first_cluster = first_cluster;
@@ -521,6 +528,7 @@ static int lookup_ext4_node(const char* normalized, struct vfs_node* out) {
     local_memset(out, 0, sizeof(*out));
     out->type = is_dir ? VFS_NODE_TYPE_DIRECTORY : VFS_NODE_TYPE_REGULAR;
     out->backend = VFS_BACKEND_EXT4;
+    out->mode = is_dir ? 0755U : 0644U;
     out->size = size;
     out->inode = inode;
     copy_path_string(out->path, sizeof(out->path), normalized);
@@ -534,6 +542,35 @@ static int lookup_tmpfs_node(const char* normalized, struct vfs_node* out) {
     return tmpfs_lookup_path(normalized, out);
 }
 
+static int lookup_procfs_node(const char* normalized, struct vfs_node* out) {
+    const char* command;
+
+    if (!normalized || !out) return -1;
+    if (path_equals(normalized, "proc")) {
+        fill_synthetic_dir(out, 0x50524F43ULL, normalized);
+        out->backend = VFS_BACKEND_PROCFS;
+        return 0;
+    }
+    if (path_equals(normalized, "proc/self")) {
+        fill_synthetic_dir(out, 0x50524F44ULL, normalized);
+        out->backend = VFS_BACKEND_PROCFS;
+        return 0;
+    }
+    if (!path_equals(normalized, "proc/self/exe")) return -1;
+
+    command = process_get_command();
+    if (!command || command[0] == '\0') return -1;
+    local_memset(out, 0, sizeof(*out));
+    out->type = VFS_NODE_TYPE_SYMLINK;
+    out->backend = VFS_BACKEND_PROCFS;
+    out->mode = 0777U;
+    out->size = (uint32_t)local_strlen(command) +
+                (command[0] == '/' ? 0U : 1U);
+    out->inode = 0x50524F45ULL;
+    copy_path_string(out->path, sizeof(out->path), normalized);
+    return 0;
+}
+
 static int lookup_initrd_node(const char* normalized, struct vfs_node* out) {
     uint8_t* data = NULL;
     uint32_t size = 0;
@@ -545,6 +582,7 @@ static int lookup_initrd_node(const char* normalized, struct vfs_node* out) {
         local_memset(out, 0, sizeof(*out));
         out->type = VFS_NODE_TYPE_DIRECTORY;
         out->backend = VFS_BACKEND_INITRD;
+        out->mode = 0755U;
         out->inode = 0x1A17D;
         copy_path_string(out->path, sizeof(out->path), "");
         return 0;
@@ -556,6 +594,7 @@ static int lookup_initrd_node(const char* normalized, struct vfs_node* out) {
     local_memset(out, 0, sizeof(*out));
     out->type = VFS_NODE_TYPE_REGULAR;
     out->backend = VFS_BACKEND_INITRD;
+    out->mode = 0555U;
     out->size = size;
     out->inode = 0x1A000 + (uint64_t)(uintptr_t)data;
     out->u.data = data;
@@ -563,17 +602,9 @@ static int lookup_initrd_node(const char* normalized, struct vfs_node* out) {
     return 0;
 }
 
-int vfs_lookup(const char* path, struct vfs_node* out) {
-    char normalized[MAX_VFS_PATH];
+static int lookup_normalized(const char* normalized, struct vfs_node* out) {
     char backend_path[MAX_VFS_PATH];
     const struct vfs_mount* mount;
-
-    if (!out) {
-        return -1;
-    }
-    if (normalize_path(path, normalized, sizeof(normalized)) != 0) {
-        return -1;
-    }
 
     if (*normalized == '\0') {
         return aosfs_lookup_path("", out);
@@ -595,11 +626,18 @@ int vfs_lookup(const char* path, struct vfs_node* out) {
         fill_synthetic_char_device(out, VFS_DEV_NULL, normalized);
         return 0;
     }
+    if (path_equals(normalized, "dev/urandom")) {
+        fill_synthetic_char_device(out, VFS_DEV_URANDOM, normalized);
+        return 0;
+    }
 
     mount = find_mount_for_path(normalized, backend_path, sizeof(backend_path));
     if (mount) {
         if (mount->backend == VFS_BACKEND_TMPFS) {
             return lookup_tmpfs_node(backend_path, out);
+        }
+        if (mount->backend == VFS_BACKEND_PROCFS) {
+            return lookup_procfs_node(backend_path, out);
         }
         if (mount->backend == VFS_BACKEND_INITRD) {
             return lookup_initrd_node(backend_path, out);
@@ -621,6 +659,149 @@ int vfs_lookup(const char* path, struct vfs_node* out) {
     }
 
     return aosfs_lookup_path(normalized, out);
+}
+
+static int append_text(char* out, size_t out_size, size_t* length,
+                       const char* text) {
+    size_t at = 0;
+    while (text && text[at]) {
+        if (*length + 1 >= out_size) return -1;
+        out[(*length)++] = text[at++];
+    }
+    out[*length] = '\0';
+    return 0;
+}
+
+static int readlink_node(const struct vfs_node* node, char* buffer,
+                         size_t capacity, size_t* size) {
+    if (!node || node->type != VFS_NODE_TYPE_SYMLINK || !size) {
+        return -1;
+    }
+    if (node->backend == VFS_BACKEND_AOSFS) {
+        return aosfs_readlink_path(node->path, buffer, capacity, size);
+    }
+    if (node->backend == VFS_BACKEND_PROCFS &&
+        path_equals(node->path, "proc/self/exe")) {
+        const char* command = process_get_command();
+        size_t command_size = local_strlen(command);
+        size_t target_size = command_size +
+                             (command[0] == '/' ? 0U : 1U);
+        size_t copied = target_size < capacity ? target_size : capacity;
+        size_t at = 0;
+
+        if (!buffer && copied != 0) return -1;
+        if (command[0] != '/' && at < copied) buffer[at++] = '/';
+        for (size_t i = 0; at < copied && i < command_size; i++) {
+            buffer[at++] = command[i];
+        }
+        *size = copied;
+        return 0;
+    }
+    return -1;
+}
+
+static int build_link_destination(const char* link_path,
+                                  const char* target,
+                                  const char* remaining,
+                                  char* out, size_t out_size) {
+    char parent[MAX_VFS_PATH];
+    char combined[MAX_VFS_PATH];
+    size_t length = 0;
+
+    combined[0] = '\0';
+    if (target[0] != '/') {
+        if (parent_path_of(link_path, parent, sizeof(parent)) != 0 ||
+            append_text(combined, sizeof(combined), &length, parent) != 0) {
+            return -1;
+        }
+        if (length != 0 && target[0] != '\0') {
+            if (length + 1 >= sizeof(combined)) return -1;
+            combined[length++] = '/';
+            combined[length] = '\0';
+        }
+    }
+    if (append_text(combined, sizeof(combined), &length, target) != 0) {
+        return -1;
+    }
+    if (remaining && remaining[0]) {
+        if (length != 0) {
+            if (length + 1 >= sizeof(combined)) return -1;
+            combined[length++] = '/';
+            combined[length] = '\0';
+        }
+        if (append_text(combined, sizeof(combined), &length, remaining) != 0) {
+            return -1;
+        }
+    }
+    return normalize_path(combined, out, out_size);
+}
+
+static int lookup_with_links(const char* path, struct vfs_node* out,
+                             int follow_final) {
+    char current[MAX_VFS_PATH];
+
+    if (!out || normalize_path(path, current, sizeof(current)) != 0) {
+        return -1;
+    }
+    for (unsigned int hop = 0; hop <= VFS_SYMLINK_LIMIT; hop++) {
+        char prefix[MAX_VFS_PATH];
+        const char* cursor = current;
+        size_t prefix_length = 0;
+        int followed = 0;
+
+        prefix[0] = '\0';
+        while (*cursor) {
+            const char* component = cursor;
+            size_t component_length = 0;
+            struct vfs_node node;
+            const char* remaining;
+            int final_component;
+
+            while (component[component_length] &&
+                   component[component_length] != '/') {
+                component_length++;
+            }
+            if (append_path_component(prefix, sizeof(prefix),
+                                      &prefix_length, component,
+                                      component_length) != 0) {
+                return -1;
+            }
+            remaining = component + component_length;
+            while (*remaining == '/') remaining++;
+            final_component = *remaining == '\0';
+
+            if (lookup_normalized(prefix, &node) != 0) return -1;
+            if (node.type == VFS_NODE_TYPE_SYMLINK &&
+                (follow_final || !final_component)) {
+                char target[MAX_VFS_PATH];
+                size_t target_size = 0;
+
+                if (hop == VFS_SYMLINK_LIMIT ||
+                    readlink_node(&node, target, sizeof(target) - 1,
+                                  &target_size) != 0) {
+                    return -1;
+                }
+                target[target_size] = '\0';
+                if (build_link_destination(prefix, target, remaining,
+                                           current, sizeof(current)) != 0) {
+                    return -1;
+                }
+                followed = 1;
+                break;
+            }
+            cursor = remaining;
+        }
+        if (!followed) return lookup_normalized(current, out);
+    }
+    return -1;
+}
+
+int vfs_lookup(const char* path, struct vfs_node* out) {
+    return lookup_with_links(path, out, 1);
+}
+
+int vfs_lstat(const char* path, struct vfs_node* out) {
+    return lookup_with_links(path, out, 0);
 }
 
 int vfs_access_path(const char* path, uint64_t mode) {
@@ -694,6 +875,31 @@ int vfs_write_node(const struct vfs_node* node, uint64_t offset, const uint8_t* 
     return -1;
 }
 
+int vfs_mkdir_path(const char* path, uint16_t mode,
+                   uint32_t uid, uint32_t gid) {
+    char normalized[MAX_VFS_PATH];
+    char backend_path[MAX_VFS_PATH];
+    const struct vfs_mount* mount;
+    struct vfs_node existing;
+
+    if (normalize_path(path, normalized, sizeof(normalized)) != 0 ||
+        normalized[0] == '\0' || vfs_lstat(normalized, &existing) == 0) {
+        return -1;
+    }
+    mount = find_mount_for_path(normalized, backend_path,
+                                sizeof(backend_path));
+    if (mount && mount->backend == VFS_BACKEND_TMPFS) {
+        return tmpfs_mkdir_path_mode(backend_path, mode, uid, gid);
+    }
+    if (mount && mount->backend == VFS_BACKEND_AOSFS) {
+        return aosfs_mkdir_path_mode(backend_path, mode, uid, gid);
+    }
+    if (!mount) {
+        return aosfs_mkdir_path_mode(normalized, mode, uid, gid);
+    }
+    return -1;
+}
+
 int vfs_unlink_path(const char* path) {
     char normalized[MAX_VFS_PATH];
     char backend_path[MAX_VFS_PATH];
@@ -703,7 +909,9 @@ int vfs_unlink_path(const char* path) {
     if (normalize_path(path, normalized, sizeof(normalized)) != 0 || normalized[0] == '\0') {
         return -1;
     }
-    if (vfs_lookup(normalized, &node) != 0 || node.type != VFS_NODE_TYPE_REGULAR) {
+    if (vfs_lstat(normalized, &node) != 0 ||
+        (node.type != VFS_NODE_TYPE_REGULAR &&
+         node.type != VFS_NODE_TYPE_SYMLINK)) {
         return -1;
     }
 
@@ -712,7 +920,7 @@ int vfs_unlink_path(const char* path) {
         return tmpfs_unlink_path(backend_path);
     }
     if (mount && mount->backend == VFS_BACKEND_AOSFS) {
-        return aosfs_unlink_path(backend_path);
+        return aosfs_unlink_path(node.path);
     }
     if (!mount && node.backend == VFS_BACKEND_TMPFS) {
         return tmpfs_unlink_path(normalized);
@@ -732,16 +940,80 @@ int vfs_rmdir_path(const char* path) {
     if (normalize_path(path, normalized, sizeof(normalized)) != 0 || normalized[0] == '\0') {
         return -1;
     }
-    if (vfs_lookup(normalized, &node) != 0 || node.type != VFS_NODE_TYPE_DIRECTORY) {
+    if (vfs_lstat(normalized, &node) != 0 ||
+        node.type != VFS_NODE_TYPE_DIRECTORY) {
         return -1;
     }
 
     mount = find_mount_for_path(normalized, backend_path, sizeof(backend_path));
+    if (mount && mount->backend == VFS_BACKEND_TMPFS) {
+        return tmpfs_rmdir_path(backend_path);
+    }
     if (mount && mount->backend == VFS_BACKEND_AOSFS) {
-        return aosfs_rmdir_path(backend_path);
+        return aosfs_rmdir_path(node.path);
     }
     if (!mount && node.backend == VFS_BACKEND_AOSFS) {
         return aosfs_rmdir_path(normalized);
+    }
+    return -1;
+}
+
+int vfs_symlink_path(const char* target, const char* path,
+                     uint32_t uid, uint32_t gid) {
+    char normalized[MAX_VFS_PATH];
+    char backend_path[MAX_VFS_PATH];
+    const struct vfs_mount* mount;
+    struct vfs_node existing;
+
+    if (!target || !target[0] ||
+        normalize_path(path, normalized, sizeof(normalized)) != 0 ||
+        normalized[0] == '\0' || vfs_lstat(normalized, &existing) == 0) {
+        return -1;
+    }
+    mount = find_mount_for_path(normalized, backend_path,
+                                sizeof(backend_path));
+    if (mount && mount->backend == VFS_BACKEND_AOSFS) {
+        return aosfs_symlink_path(target, backend_path, uid, gid);
+    }
+    if (!mount) {
+        return aosfs_symlink_path(target, normalized, uid, gid);
+    }
+    return -1;
+}
+
+int vfs_readlink_path(const char* path, char* buffer, size_t capacity,
+                      size_t* size) {
+    struct vfs_node node;
+
+    if (vfs_lstat(path, &node) != 0) return -1;
+    return readlink_node(&node, buffer, capacity, size);
+}
+
+int vfs_chmod_path(const char* path, uint16_t mode, int nofollow) {
+    struct vfs_node node;
+    int result = nofollow ? vfs_lstat(path, &node) : vfs_lookup(path, &node);
+
+    if (result != 0) return -1;
+    if (node.backend == VFS_BACKEND_TMPFS) {
+        return tmpfs_chmod_path(node.path, mode);
+    }
+    if (node.backend == VFS_BACKEND_AOSFS) {
+        return aosfs_chmod_path(node.path, mode);
+    }
+    return -1;
+}
+
+int vfs_chown_path(const char* path, uint32_t uid, uint32_t gid,
+                   int nofollow) {
+    struct vfs_node node;
+    int result = nofollow ? vfs_lstat(path, &node) : vfs_lookup(path, &node);
+
+    if (result != 0) return -1;
+    if (node.backend == VFS_BACKEND_TMPFS) {
+        return tmpfs_chown_path(node.path, uid, gid);
+    }
+    if (node.backend == VFS_BACKEND_AOSFS) {
+        return aosfs_chown_path(node.path, uid, gid);
     }
     return -1;
 }
@@ -854,6 +1126,12 @@ int vfs_dirent_at(const struct vfs_node* node, uint64_t index, char* name_buf, s
                 if (d_type) *d_type = LINUX_DTYPE_CHR;
                 return 0;
             }
+            if (index == 5) {
+                copy_path_string(name_buf, name_buf_size, "urandom");
+                if (size) *size = 0;
+                if (d_type) *d_type = LINUX_DTYPE_CHR;
+                return 0;
+            }
             return -1;
         }
 
@@ -872,8 +1150,37 @@ int vfs_dirent_at(const struct vfs_node* node, uint64_t index, char* name_buf, s
         return dirent_mount_child_at(node->path, index - 2, name_buf, name_buf_size, size, d_type);
     }
 
+    if (node->backend == VFS_BACKEND_PROCFS) {
+        if (index == 0) {
+            copy_path_string(name_buf, name_buf_size, ".");
+            if (size) *size = 0;
+            if (d_type) *d_type = LINUX_DTYPE_DIR;
+            return 0;
+        }
+        if (index == 1) {
+            copy_path_string(name_buf, name_buf_size, "..");
+            if (size) *size = 0;
+            if (d_type) *d_type = LINUX_DTYPE_DIR;
+            return 0;
+        }
+        if (path_equals(node->path, "proc") && index == 2) {
+            copy_path_string(name_buf, name_buf_size, "self");
+            if (size) *size = 0;
+            if (d_type) *d_type = LINUX_DTYPE_DIR;
+            return 0;
+        }
+        if (path_equals(node->path, "proc/self") && index == 2) {
+            copy_path_string(name_buf, name_buf_size, "exe");
+            if (size) *size = 0;
+            if (d_type) *d_type = LINUX_DTYPE_LNK;
+            return 0;
+        }
+        return -1;
+    }
+
     if (node->backend == VFS_BACKEND_TMPFS) {
-        return tmpfs_dirent_at_index(index, name_buf, name_buf_size, size, d_type);
+        return tmpfs_dirent_at_index(node->path, index, name_buf,
+                                     name_buf_size, size, d_type);
     }
 
     return -1;

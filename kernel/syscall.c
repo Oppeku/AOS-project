@@ -6,6 +6,7 @@
 
 struct file_handle g_file_handles[MAX_FILE_HANDLES];
 struct pipe_object g_pipe_objects[MAX_PIPE_OBJECTS];
+struct eventfd_object g_eventfd_objects[MAX_EVENTFD_OBJECTS];
 struct socket_object g_socket_objects[MAX_SOCKET_OBJECTS];
 struct dns_cache_entry g_dns_cache[SOCKET_DNS_CACHE_ENTRIES];
 struct arp_cache_entry g_arp_cache[SOCKET_ARP_CACHE_ENTRIES];
@@ -315,6 +316,16 @@ struct pipe_object* get_pipe_for_fd(uint64_t fd, uint8_t expected_kind) {
     return get_pipe_object_by_index(entry->handle_index);
 }
 
+struct eventfd_object* get_eventfd_object_by_index(int32_t eventfd_index) {
+    if (eventfd_index < 0 || eventfd_index >= MAX_EVENTFD_OBJECTS) {
+        return NULL;
+    }
+    if (!g_eventfd_objects[eventfd_index].in_use) {
+        return NULL;
+    }
+    return &g_eventfd_objects[eventfd_index];
+}
+
 struct socket_object* get_socket_by_index(int32_t socket_index) {
     if (socket_index < 0 || socket_index >= MAX_SOCKET_OBJECTS) {
         return NULL;
@@ -374,7 +385,29 @@ void retain_fd_entry_refs(struct fd_entry* entry) {
         if (sock) {
             sock->refcount++;
         }
+        return;
     }
+    if (entry->kind == FD_KIND_EVENTFD) {
+        struct eventfd_object* eventfd =
+            get_eventfd_object_by_index(entry->handle_index);
+        if (eventfd) eventfd->refcount++;
+    }
+}
+
+void release_fd_entry_refs(struct fd_entry* entry) {
+    if (!entry) return;
+    if (entry->kind == FD_KIND_VNODE) {
+        release_file_handle(entry->handle_index);
+    } else if (entry->kind == FD_KIND_PIPE_READER ||
+               entry->kind == FD_KIND_PIPE_WRITER) {
+        release_pipe_ref(entry->handle_index, entry->kind);
+    } else if (entry->kind == FD_KIND_SOCKET) {
+        close_socket_ref(entry->handle_index);
+    } else if (entry->kind == FD_KIND_EVENTFD) {
+        release_eventfd_ref(entry->handle_index);
+    }
+    entry->kind = FD_KIND_FREE;
+    entry->handle_index = -1;
 }
 
 void release_pipe_ref(int32_t pipe_index, uint8_t kind) {
@@ -392,8 +425,21 @@ void release_pipe_ref(int32_t pipe_index, uint8_t kind) {
     }
 }
 
+void release_eventfd_ref(int32_t eventfd_index) {
+    struct eventfd_object* eventfd =
+        get_eventfd_object_by_index(eventfd_index);
+
+    if (!eventfd) return;
+    if (eventfd->refcount > 0) eventfd->refcount--;
+    if (eventfd->refcount == 0) {
+        local_memset(eventfd, 0, sizeof(*eventfd));
+    }
+}
+
 void release_socket_ref(int32_t socket_index) {
     struct socket_object* sock = get_socket_by_index(socket_index);
+    struct fd_entry pending[SOCKET_ANCILLARY_FD_MAX];
+    uint8_t pending_count = 0;
     if (!sock) {
         return;
     }
@@ -401,7 +447,17 @@ void release_socket_ref(int32_t socket_index) {
         sock->refcount--;
     }
     if (sock->refcount == 0) {
+        pending_count = sock->rx_ancillary_fd_count;
+        if (pending_count > SOCKET_ANCILLARY_FD_MAX) {
+            pending_count = SOCKET_ANCILLARY_FD_MAX;
+        }
+        for (uint8_t i = 0; i < pending_count; i++) {
+            pending[i] = sock->rx_ancillary_fds[i];
+        }
         local_memset(sock, 0, sizeof(*sock));
+        for (uint8_t i = 0; i < pending_count; i++) {
+            release_fd_entry_refs(&pending[i]);
+        }
     }
 }
 
@@ -411,7 +467,11 @@ void close_socket_ref(int32_t socket_index) {
         return;
     }
     if (sock->refcount <= 1) {
-        if (sock->state == SOCKET_STATE_CONNECTED) {
+        if (sock->family == LINUX_AF_UNIX) {
+            struct socket_object* peer = get_socket_by_index(sock->peer_index);
+            if (peer) peer->state = SOCKET_STATE_CLOSED;
+            sock->state = SOCKET_STATE_CLOSED;
+        } else if (sock->state == SOCKET_STATE_CONNECTED) {
             (void)socket_send_fin_close(sock);
         } else {
             sock->state = SOCKET_STATE_CLOSED;
@@ -431,6 +491,8 @@ void close_fd_internal(uint64_t fd) {
         release_pipe_ref(entry->handle_index, entry->kind);
     } else if (entry->kind == FD_KIND_SOCKET) {
         close_socket_ref(entry->handle_index);
+    } else if (entry->kind == FD_KIND_EVENTFD) {
+        release_eventfd_ref(entry->handle_index);
     }
     entry->kind = FD_KIND_FREE;
     entry->handle_index = -1;
@@ -491,11 +553,22 @@ uint16_t allocate_socket_port(void) {
 int64_t install_socket_fd(int family, int type, int protocol) {
     int socket_index = -1;
     int fd = -1;
+    int base_type = type & LINUX_SOCK_TYPE_MASK;
 
-    if ((family != LINUX_AF_INET && family != LINUX_AF_INET6) || type != LINUX_SOCK_STREAM) {
+    if ((family != LINUX_AF_UNIX && family != LINUX_AF_INET &&
+         family != LINUX_AF_INET6) ||
+        (family == LINUX_AF_UNIX
+             ? (base_type != LINUX_SOCK_STREAM &&
+                base_type != LINUX_SOCK_DGRAM &&
+                base_type != LINUX_SOCK_SEQPACKET)
+             : base_type != LINUX_SOCK_STREAM) ||
+        (type & ~(LINUX_SOCK_TYPE_MASK | LINUX_SOCK_NONBLOCK |
+                  LINUX_SOCK_CLOEXEC)) != 0) {
         return -(int64_t)LINUX_EINVAL;
     }
-    if (protocol != 0 && protocol != LINUX_IPPROTO_TCP) {
+    if ((family == LINUX_AF_UNIX && protocol != 0) ||
+        (family != LINUX_AF_UNIX && protocol != 0 &&
+         protocol != LINUX_IPPROTO_TCP)) {
         return -(int64_t)LINUX_EINVAL;
     }
 
@@ -518,10 +591,12 @@ int64_t install_socket_fd(int family, int type, int protocol) {
     g_socket_objects[socket_index].in_use = 1;
     g_socket_objects[socket_index].state = SOCKET_STATE_CREATED;
     g_socket_objects[socket_index].family = (uint8_t)family;
-    g_socket_objects[socket_index].type = (uint8_t)type;
-    g_socket_objects[socket_index].protocol = LINUX_IPPROTO_TCP;
+    g_socket_objects[socket_index].type = (uint8_t)base_type;
+    g_socket_objects[socket_index].protocol =
+        family == LINUX_AF_UNIX ? 0 : LINUX_IPPROTO_TCP;
     g_socket_objects[socket_index].dev_index = 0;
     g_socket_objects[socket_index].refcount = 1;
+    g_socket_objects[socket_index].peer_index = -1;
     g_socket_objects[socket_index].local_port = allocate_socket_port();
     g_socket_objects[socket_index].seq = SOCKET_TCP_BASE_SEQ + (uint32_t)(socket_index * 0x1000U);
     g_socket_objects[socket_index].peer_mss = SOCKET_TCP_DEFAULT_PEER_MSS;
@@ -597,7 +672,8 @@ int64_t resolve_path_from_dirfd(int64_t dirfd, const char* path, char* out, size
     return 0;
 }
 
-int64_t open_path_with_flags(const char* path, uint64_t flags) {
+int64_t open_path_with_flags(const char* path, uint64_t flags,
+                             uint16_t mode) {
     struct vfs_node node;
     int lookup_rc = 0;
     uint64_t access_mode = flags & LINUX_O_ACCMODE;
@@ -637,9 +713,13 @@ int64_t open_path_with_flags(const char* path, uint64_t flags) {
             if (vfs_lookup(path, &node) != 0) {
                 return -(int64_t)LINUX_EIO;
             }
-        } else if (tmpfs_create_path(path, &node) == 0) {
+        } else if (tmpfs_create_path_mode(path, mode,
+                                          process_get_euid(),
+                                          process_get_egid(), &node) == 0) {
             /* tmpfs filled the vnode. */
-        } else if (aosfs_create_path(path, &node) != 0) {
+        } else if (aosfs_create_path_mode(path, mode,
+                                          process_get_euid(),
+                                          process_get_egid(), &node) != 0) {
             return -(int64_t)LINUX_EACCES;
         }
         return install_vnode_fd(&node, flags);
@@ -656,6 +736,10 @@ int64_t open_path_with_flags(const char* path, uint64_t flags) {
         if (node.u.first_cluster == VFS_DEV_NULL) {
             return install_device_fd(FD_KIND_NULL, (int32_t)node.u.first_cluster);
         }
+        if (node.u.first_cluster == VFS_DEV_URANDOM) {
+            return install_device_fd(FD_KIND_RANDOM,
+                                     (int32_t)node.u.first_cluster);
+        }
         if (node.u.first_cluster == VFS_DEV_CONSOLE || node.u.first_cluster == VFS_DEV_TTY0) {
             return install_device_fd(FD_KIND_TTY, (int32_t)node.u.first_cluster);
         }
@@ -665,7 +749,7 @@ int64_t open_path_with_flags(const char* path, uint64_t flags) {
         return -(int64_t)LINUX_EISDIR;
     }
 
-    if (mutates && !user_can_mutate_path(path)) {
+    if (mutates && !user_can_mutate_path(node.path)) {
         return -(int64_t)LINUX_EACCES;
     }
 
@@ -680,14 +764,20 @@ int64_t open_path_with_flags(const char* path, uint64_t flags) {
         if ((flags & LINUX_O_EXCL) && (flags & LINUX_O_CREAT)) {
             return -(int64_t)LINUX_EACCES;
         }
-        if ((flags & LINUX_O_TRUNC) && tmpfs_truncate_path(path) == 0) {
+        if (flags & LINUX_O_TRUNC) {
+            if (tmpfs_truncate_path(node.path) != 0) {
+                return -(int64_t)LINUX_EACCES;
+            }
             node.size = 0;
         }
     } else if (node.backend == VFS_BACKEND_AOSFS) {
         if ((flags & LINUX_O_EXCL) && (flags & LINUX_O_CREAT)) {
             return -(int64_t)LINUX_EACCES;
         }
-        if ((flags & LINUX_O_TRUNC) && aosfs_truncate_path(path) == 0) {
+        if (flags & LINUX_O_TRUNC) {
+            if (aosfs_truncate_path(node.path) != 0) {
+                return -(int64_t)LINUX_EACCES;
+            }
             node.size = 0;
         }
     } else if (node.backend == VFS_BACKEND_FAT32) {
@@ -697,10 +787,11 @@ int64_t open_path_with_flags(const char* path, uint64_t flags) {
         if (flags & LINUX_O_TRUNC) {
             uint32_t first_cluster = 0;
             uint32_t size = 0;
-            if (fat32_truncate_path(path, &first_cluster, &size) == 0) {
-                node.u.first_cluster = first_cluster;
-                node.size = size;
+            if (fat32_truncate_path(node.path, &first_cluster, &size) != 0) {
+                return -(int64_t)LINUX_EACCES;
             }
+            node.u.first_cluster = first_cluster;
+            node.size = size;
         }
     } else {
         if ((flags & LINUX_O_EXCL) && (flags & LINUX_O_CREAT)) {
@@ -708,7 +799,7 @@ int64_t open_path_with_flags(const char* path, uint64_t flags) {
         }
         if (flags & LINUX_O_TRUNC) {
             uint32_t size = 0;
-            if (ext4_truncate_path(path, &size) != 0) {
+            if (ext4_truncate_path(node.path, &size) != 0) {
                 return -(int64_t)LINUX_EACCES;
             }
             node.size = size;
@@ -990,6 +1081,13 @@ struct exec_elf64_phdr {
 static uint8_t exec_file_image[EXEC_FILE_IMAGE_MAX];
 static uint8_t exec_interp_image[EXEC_FILE_IMAGE_MAX];
 
+static int exec_vfs_elf_read(void* context, uint64_t offset,
+                             void* buffer, size_t size) {
+    const struct vfs_node* node = (const struct vfs_node*)context;
+    return vfs_read_node(node, offset, (uint8_t*)buffer,
+                         (uint64_t)size) == 0 ? 0 : -1;
+}
+
 int64_t exec_initrd_program(
     const char* normalized,
     const uint64_t* argv_user,
@@ -1018,6 +1116,8 @@ int64_t exec_initrd_program(
     const uint8_t* interp_data = NULL;
     uint32_t elf_size = 0;
     uint32_t interp_size = 0;
+    int stream_program = 0;
+    int stream_interpreter = 0;
     struct vfs_node program_node;
     struct vfs_node interpreter_node;
     const struct elf64_load_options program_options = {
@@ -1057,19 +1157,18 @@ int64_t exec_initrd_program(
         program_node.u.data) {
         elf_data = program_node.u.data;
     } else {
-        if (elf_size > sizeof(exec_file_image) ||
-            vfs_read_node(&program_node, 0, exec_file_image, elf_size) != 0) {
-            return -(int64_t)LINUX_E2BIG;
+        if (elf_size > sizeof(exec_file_image)) {
+            stream_program = 1;
+        } else {
+            if (vfs_read_node(&program_node, 0,
+                              exec_file_image, elf_size) != 0) {
+                return -(int64_t)LINUX_EIO;
+            }
+            elf_data = exec_file_image;
         }
-        elf_data = exec_file_image;
     }
 
     if (elf_size < sizeof(struct exec_elf64_ehdr)) {
-        return -(int64_t)LINUX_EINVAL;
-    }
-
-    const struct exec_elf64_ehdr* ehdr = (const struct exec_elf64_ehdr*)elf_data;
-    if (ehdr->e_phoff + (uint64_t)ehdr->e_phnum * sizeof(struct exec_elf64_phdr) > elf_size) {
         return -(int64_t)LINUX_EINVAL;
     }
 
@@ -1078,8 +1177,12 @@ int64_t exec_initrd_program(
         return -(int64_t)LINUX_ENOMEM;
     }
 
-    if (elf64_load_image_ex(new_p4, elf_data, elf_size,
-                            &program_options, &program_load) != 0) {
+    if ((stream_program
+             ? elf64_load_reader_ex(new_p4, elf_size,
+                                    exec_vfs_elf_read, &program_node,
+                                    &program_options, &program_load)
+             : elf64_load_image_ex(new_p4, elf_data, elf_size,
+                                   &program_options, &program_load)) != 0) {
         goto exec_failed;
     }
     start_entry = program_load.entry;
@@ -1104,18 +1207,28 @@ int64_t exec_initrd_program(
             interp_data = interpreter_node.u.data;
         } else {
             failure_stage = "interpreter read";
-            if (interp_size > sizeof(exec_interp_image) ||
-                vfs_read_node(&interpreter_node, 0, exec_interp_image,
-                              interp_size) != 0) {
-                failure = -(int64_t)LINUX_E2BIG;
-                goto exec_failed;
+            if (interp_size > sizeof(exec_interp_image)) {
+                stream_interpreter = 1;
+            } else {
+                if (vfs_read_node(&interpreter_node, 0,
+                                  exec_interp_image,
+                                  interp_size) != 0) {
+                    failure = -(int64_t)LINUX_EIO;
+                    goto exec_failed;
+                }
+                interp_data = exec_interp_image;
             }
-            interp_data = exec_interp_image;
         }
         failure_stage = "interpreter ELF";
-        if (elf64_load_image_ex(new_p4, interp_data, interp_size,
-                                &interpreter_options,
-                                &interpreter_load) != 0 ||
+        if ((stream_interpreter
+                 ? elf64_load_reader_ex(new_p4, interp_size,
+                                        exec_vfs_elf_read,
+                                        &interpreter_node,
+                                        &interpreter_options,
+                                        &interpreter_load)
+                 : elf64_load_image_ex(new_p4, interp_data, interp_size,
+                                       &interpreter_options,
+                                       &interpreter_load)) != 0 ||
             interpreter_load.interpreter[0] != '\0') {
             goto exec_failed;
         }
@@ -1174,8 +1287,9 @@ int64_t exec_initrd_program(
 
     proc->p4_table = new_p4;
     switch_page_table(new_p4);
-    vmm_destroy_user_space(old_p4);
+    process_release_address_space(old_p4, proc);
     process_load_fs_base(0);
+    process_complete_vfork(proc);
 
     serial_print("AOS: execve -> ");
     serial_print(normalized);
@@ -1193,7 +1307,6 @@ exec_failed:
     vmm_destroy_user_space(new_p4);
     return failure;
 }
-//DONT MIND MEEE
 //OREWA OPPEKO THE FREIZA FORCE
 
 
@@ -1224,3 +1337,4 @@ void syscall_retain_fd_table_entries(struct fd_entry* table, size_t count) {
         }
     }
 }
+//Pov me checking my code our "TRYNA FIGURE THIS MESS OUT"

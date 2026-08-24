@@ -25,7 +25,8 @@
 #define ELF_DT_RELAENT 9
 #define ELF_R_X86_64_RELATIVE 8
 #define ELF_R_X86_64_IRELATIVE 37
-#define MAX_LOADER_PAGES 8192
+#define MAX_LOADER_PAGES 131072
+#define MAX_PROGRAM_HEADERS 256
 
 
 struct elf64_ehdr {
@@ -89,6 +90,9 @@ struct mapped_page {
     uint64_t flags;
 };
 
+static struct mapped_page loader_pages[MAX_LOADER_PAGES];
+static struct elf64_phdr reader_phdrs[MAX_PROGRAM_HEADERS];
+
 static void* local_memcpy(void* dst, const void* src, size_t n) {
     uint8_t* d = (uint8_t*)dst;
     const uint8_t* s = (const uint8_t*)src;
@@ -125,18 +129,30 @@ static int add_u64_overflow(uint64_t a, uint64_t b, uint64_t* out) {
 
 static struct mapped_page* find_page(struct mapped_page* pages,
                                      size_t page_count, uint64_t va) {
-    for (size_t i = 0; i < page_count; i++) {
-        if (pages[i].va == va) return &pages[i];
+    size_t low = 0;
+    size_t high = page_count;
+
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        if (pages[middle].va == va) return &pages[middle];
+        if (pages[middle].va < va) low = middle + 1;
+        else high = middle;
     }
     return NULL;
 }
 
 static int record_page(struct mapped_page* pages, size_t* page_count,
                        uint64_t va, uint8_t* phys, uint64_t flags) {
+    size_t insert_at = *page_count;
+
     if (*page_count >= MAX_LOADER_PAGES) return -1;
-    pages[*page_count].va = va;
-    pages[*page_count].phys = phys;
-    pages[*page_count].flags = flags;
+    while (insert_at > 0 && pages[insert_at - 1].va > va) {
+        pages[insert_at] = pages[insert_at - 1];
+        insert_at--;
+    }
+    pages[insert_at].va = va;
+    pages[insert_at].phys = phys;
+    pages[insert_at].flags = flags;
     (*page_count)++;
     return 0;
 }
@@ -144,12 +160,8 @@ static int record_page(struct mapped_page* pages, size_t* page_count,
 static uint8_t* translate_va(struct mapped_page* pages, size_t page_count, uint64_t va) {
     uint64_t page_va = align_down_4k(va);
     uint64_t page_off = va - page_va;
-    for (size_t i = 0; i < page_count; i++) {
-        if (pages[i].va == page_va) {
-            return pages[i].phys + page_off;
-        }
-    }
-    return NULL;
+    struct mapped_page* page = find_page(pages, page_count, page_va);
+    return page ? page->phys + page_off : NULL;
 }
 
 static int read_va(struct mapped_page* pages, size_t page_count, uint64_t va, void* out, size_t n) {
@@ -175,6 +187,34 @@ static int write_u64_va(struct mapped_page* pages, size_t page_count, uint64_t v
     return 0;
 }
 
+static int apply_rela_entry(
+    const struct elf64_rela* rela,
+    uint64_t load_bias,
+    struct mapped_page* pages,
+    size_t page_count
+) {
+    uint32_t type = (uint32_t)(rela->r_info & 0xFFFFFFFFU);
+
+    if (type == ELF_R_X86_64_RELATIVE) {
+        uint64_t reloc_target = rela->r_offset + load_bias;
+        uint64_t relocated_value = load_bias + (uint64_t)rela->r_addend;
+        return write_u64_va(pages, page_count, reloc_target,
+                            relocated_value);
+    }
+
+    if (type == ELF_R_X86_64_IRELATIVE) {
+        uint64_t reloc_target = rela->r_offset + load_bias;
+        uint64_t resolver_va = load_bias + (uint64_t)rela->r_addend;
+        uint64_t (*resolver)(void) =
+            (uint64_t (*)(void))(uintptr_t)resolver_va;
+        uint64_t resolved_value = resolver();
+        return write_u64_va(pages, page_count, reloc_target,
+                            resolved_value);
+    }
+
+    return type == 0 ? 0 : -1;
+}
+
 static int apply_rela_entries(
     const struct elf64_rela* rela_entries,
     uint64_t rela_count,
@@ -183,27 +223,8 @@ static int apply_rela_entries(
     size_t page_count
 ) {
     for (uint64_t i = 0; i < rela_count; i++) {
-        const struct elf64_rela* rela = &rela_entries[i];
-        uint32_t type = (uint32_t)(rela->r_info & 0xFFFFFFFFU);
-
-        if (type == ELF_R_X86_64_RELATIVE) {
-            uint64_t reloc_target = rela->r_offset + load_bias;
-            uint64_t relocated_value = load_bias + (uint64_t)rela->r_addend;
-            if (write_u64_va(pages, page_count, reloc_target, relocated_value) != 0) return -1;
-            continue;
-        }
-
-        if (type == ELF_R_X86_64_IRELATIVE) {
-            uint64_t reloc_target = rela->r_offset + load_bias;
-            uint64_t resolver_va = load_bias + (uint64_t)rela->r_addend;
-            uint64_t (*resolver)(void) = (uint64_t (*)(void))(uintptr_t)resolver_va;
-            uint64_t resolved_value = resolver();
-            if (write_u64_va(pages, page_count, reloc_target, resolved_value) != 0) return -1;
-            continue;
-        }
-
-        if (type == 0) continue;
-        return -1;
+        if (apply_rela_entry(&rela_entries[i], load_bias,
+                             pages, page_count) != 0) return -1;
     }
 
     return 0;
@@ -374,6 +395,258 @@ static int compute_program_headers(const struct elf64_ehdr* ehdr,
     return 0;
 }
 
+static int read_image_bytes(elf64_read_callback read, void* context,
+                            uint64_t image_size, uint64_t offset,
+                            void* buffer, size_t size) {
+    if (!read || !buffer || offset > image_size ||
+        (uint64_t)size > image_size - offset) {
+        return -1;
+    }
+    return size == 0 ? 0 : read(context, offset, buffer, size);
+}
+
+static int copy_interpreter_path_reader(
+    const struct elf64_phdr* phdrs,
+    uint16_t phnum,
+    uint64_t image_size,
+    elf64_read_callback read,
+    void* context,
+    char out[ELF64_INTERPRETER_PATH_MAX]
+) {
+    out[0] = '\0';
+    for (uint16_t i = 0; i < phnum; i++) {
+        const struct elf64_phdr* phdr = &phdrs[i];
+        size_t length;
+
+        if (phdr->p_type != ELF_PT_INTERP) continue;
+        if (phdr->p_filesz < 2 ||
+            phdr->p_filesz > ELF64_INTERPRETER_PATH_MAX) {
+            return -1;
+        }
+        length = (size_t)phdr->p_filesz;
+        if (read_image_bytes(read, context, image_size,
+                             phdr->p_offset, out, length) != 0 ||
+            out[length - 1] != '\0') {
+            return -1;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+static int apply_reader_section_relocations(
+    const struct elf64_ehdr* ehdr,
+    uint64_t image_size,
+    elf64_read_callback read,
+    void* context,
+    uint64_t load_bias,
+    struct mapped_page* pages,
+    size_t page_count,
+    int* applied_any
+) {
+    uint64_t table_size;
+    uint64_t table_end;
+
+    if (applied_any) *applied_any = 0;
+    if (!ehdr->e_shoff || ehdr->e_shnum == 0) return 0;
+    if (ehdr->e_shentsize != sizeof(struct elf64_shdr)) return -1;
+    table_size = (uint64_t)ehdr->e_shnum * sizeof(struct elf64_shdr);
+    if (add_u64_overflow(ehdr->e_shoff, table_size, &table_end) ||
+        table_end > image_size) {
+        return -1;
+    }
+
+    for (uint16_t i = 0; i < ehdr->e_shnum; i++) {
+        struct elf64_shdr shdr;
+        uint64_t shdr_offset = ehdr->e_shoff +
+                               (uint64_t)i * sizeof(struct elf64_shdr);
+        uint64_t section_end;
+
+        if (read_image_bytes(read, context, image_size, shdr_offset,
+                             &shdr, sizeof(shdr)) != 0) {
+            return -1;
+        }
+        if (shdr.sh_type != ELF_SHT_RELA || shdr.sh_size == 0) continue;
+        if (shdr.sh_entsize != sizeof(struct elf64_rela) ||
+            shdr.sh_size % shdr.sh_entsize != 0 ||
+            add_u64_overflow(shdr.sh_offset, shdr.sh_size,
+                             &section_end) ||
+            section_end > image_size) {
+            return -1;
+        }
+        for (uint64_t offset = 0; offset < shdr.sh_size;
+             offset += sizeof(struct elf64_rela)) {
+            struct elf64_rela rela;
+            if (read_image_bytes(read, context, image_size,
+                                 shdr.sh_offset + offset,
+                                 &rela, sizeof(rela)) != 0 ||
+                apply_rela_entry(&rela, load_bias,
+                                 pages, page_count) != 0) {
+                return -1;
+            }
+        }
+        if (applied_any) *applied_any = 1;
+    }
+    return 0;
+}
+
+int elf64_load_reader_ex(uint64_t* pml4,
+                         uint64_t image_size,
+                         elf64_read_callback read,
+                         void* read_context,
+                         const struct elf64_load_options* options,
+                         struct elf64_load_result* result) {
+    const struct elf64_load_options defaults = {
+        .dynamic_base = ELF64_DEFAULT_DYNAMIC_BASE,
+        .apply_relocations = 1,
+    };
+    struct elf64_ehdr ehdr;
+    struct mapped_page* pages = loader_pages;
+    size_t page_count = 0;
+    uint64_t load_bias = 0;
+    uint64_t image_end = 0;
+
+    if (!pml4 || !read || !result ||
+        image_size < sizeof(struct elf64_ehdr)) return -1;
+    if (!options) options = &defaults;
+    local_memset(result, 0, sizeof(*result));
+    if (read_image_bytes(read, read_context, image_size, 0,
+                         &ehdr, sizeof(ehdr)) != 0) return -1;
+    if (ehdr.e_ident[0] != 0x7F || ehdr.e_ident[1] != 'E' ||
+        ehdr.e_ident[2] != 'L' || ehdr.e_ident[3] != 'F' ||
+        ehdr.e_ident[4] != ELF_CLASS_64 ||
+        ehdr.e_ident[5] != ELF_DATA_LSB ||
+        (ehdr.e_type != ELF_TYPE_EXEC && ehdr.e_type != ELF_TYPE_DYN) ||
+        ehdr.e_machine != ELF_MACHINE_X86_64 ||
+        ehdr.e_phentsize != sizeof(struct elf64_phdr) ||
+        ehdr.e_phnum == 0 || ehdr.e_phnum > MAX_PROGRAM_HEADERS) {
+        return -1;
+    }
+    {
+        uint64_t ph_size = (uint64_t)ehdr.e_phnum *
+                           sizeof(struct elf64_phdr);
+        if (read_image_bytes(read, read_context, image_size,
+                             ehdr.e_phoff, reader_phdrs,
+                             (size_t)ph_size) != 0) {
+            return -1;
+        }
+    }
+
+    if (ehdr.e_type == ELF_TYPE_DYN) {
+        uint64_t min_vaddr = UINT64_MAX;
+        uint64_t dynamic_base = options->dynamic_base
+                                    ? options->dynamic_base
+                                    : ELF64_DEFAULT_DYNAMIC_BASE;
+        int found_load = 0;
+        for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
+            const struct elf64_phdr* phdr = &reader_phdrs[i];
+            uint64_t segment_start;
+            if (phdr->p_type != ELF_PT_LOAD || phdr->p_memsz == 0) continue;
+            segment_start = align_down_4k(phdr->p_vaddr);
+            if (segment_start < min_vaddr) min_vaddr = segment_start;
+            found_load = 1;
+        }
+        if (!found_load || dynamic_base < min_vaddr) return -1;
+        load_bias = dynamic_base - min_vaddr;
+    }
+
+    if (copy_interpreter_path_reader(reader_phdrs, ehdr.e_phnum,
+                                     image_size, read, read_context,
+                                     result->interpreter) != 0) {
+        return -1;
+    }
+
+    for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
+        const struct elf64_phdr* phdr = &reader_phdrs[i];
+        uint64_t source_end;
+        uint64_t segment_vaddr;
+        uint64_t segment_file_end;
+        uint64_t segment_memory_end;
+        uint64_t segment_start;
+        uint64_t segment_end;
+        uint64_t map_flags = PAGE_PRESENT | PAGE_USER;
+
+        if (phdr->p_type != ELF_PT_LOAD || phdr->p_memsz == 0) continue;
+        if (phdr->p_filesz > phdr->p_memsz ||
+            add_u64_overflow(phdr->p_offset, phdr->p_filesz,
+                             &source_end) || source_end > image_size ||
+            add_u64_overflow(phdr->p_vaddr, load_bias,
+                             &segment_vaddr) ||
+            add_u64_overflow(segment_vaddr, phdr->p_filesz,
+                             &segment_file_end) ||
+            add_u64_overflow(segment_vaddr, phdr->p_memsz,
+                             &segment_memory_end)) {
+            return -1;
+        }
+        if (segment_memory_end > image_end) image_end = segment_memory_end;
+        segment_start = align_down_4k(segment_vaddr);
+        segment_end = align_up_4k(segment_memory_end);
+        if (segment_end < segment_memory_end) return -1;
+        if (phdr->p_flags & ELF_PF_W) map_flags |= PAGE_WRITABLE;
+
+        for (uint64_t va = segment_start; va < segment_end; va += 4096) {
+            struct mapped_page* page = find_page(pages, page_count, va);
+            uint64_t page_end = va + 4096;
+            uint64_t copy_start = va > segment_vaddr ? va : segment_vaddr;
+            uint64_t copy_end = min_u64(page_end, segment_file_end);
+
+            if (!page) {
+                void* physical = pmm_alloc_block();
+                if (!physical) return -1;
+                local_memset(physical, 0, 4096);
+                if (record_page(pages, &page_count, va,
+                                (uint8_t*)physical, map_flags) != 0) {
+                    pmm_free_block(physical);
+                    return -1;
+                }
+                page = find_page(pages, page_count, va);
+                if (!page) return -1;
+            } else {
+                page->flags |= map_flags;
+            }
+            if (copy_end > copy_start) {
+                uint64_t source_offset = phdr->p_offset +
+                                         (copy_start - segment_vaddr);
+                uint64_t destination_offset = copy_start - va;
+                size_t copy_size = (size_t)(copy_end - copy_start);
+                if (read_image_bytes(read, read_context, image_size,
+                                     source_offset,
+                                     page->phys + destination_offset,
+                                     copy_size) != 0) {
+                    return -1;
+                }
+            }
+            vmm_map_page(pml4, va, (uint64_t)page->phys, page->flags);
+        }
+    }
+
+    if (options->apply_relocations && result->interpreter[0] == '\0') {
+        int applied_section_relocations = 0;
+        if (apply_reader_section_relocations(
+                &ehdr, image_size, read, read_context, load_bias,
+                pages, page_count, &applied_section_relocations) != 0) {
+            return -1;
+        }
+        if (!applied_section_relocations &&
+            apply_dynamic_relocations(reader_phdrs, ehdr.e_phnum,
+                                      load_bias, pages,
+                                      page_count) != 0) {
+            return -1;
+        }
+    }
+
+    if (add_u64_overflow(ehdr.e_entry, load_bias, &result->entry) ||
+        compute_program_headers(&ehdr, reader_phdrs, load_bias,
+                                &result->program_headers) != 0) {
+        return -1;
+    }
+    result->load_bias = load_bias;
+    result->image_end = image_end;
+    result->program_header_size = ehdr.e_phentsize;
+    result->program_header_count = ehdr.e_phnum;
+    return 0;
+}
+
 int elf64_load_image_ex(uint64_t* pml4,
                         const uint8_t* image,
                         size_t image_size,
@@ -419,7 +692,7 @@ int elf64_load_image_ex(uint64_t* pml4,
         load_bias = dynamic_base - min_vaddr;
     }
 
-    static struct mapped_page pages[MAX_LOADER_PAGES];
+    struct mapped_page* pages = loader_pages;
     size_t page_count = 0;
     uint64_t image_end = 0;
 
@@ -459,9 +732,11 @@ int elf64_load_image_ex(uint64_t* pml4,
                 local_memset(phys, 0, 4096);
                 if (record_page(pages, &page_count, va, (uint8_t*)phys,
                                 map_flags) != 0) {
+                    pmm_free_block(phys);
                     return -1;
                 }
-                page = &pages[page_count - 1];
+                page = find_page(pages, page_count, va);
+                if (!page) return -1;
             } else {
                 page->flags |= map_flags;
             }
@@ -478,7 +753,6 @@ int elf64_load_image_ex(uint64_t* pml4,
                 local_memcpy(page->phys + dst_off, image + src_off,
                              (size_t)copy_len);
             }
-
             if (page_start >= seg_mem_end) continue;
             vmm_map_page(pml4, va, (uint64_t)page->phys, page->flags);
         }
